@@ -67,6 +67,8 @@ func init() {
 func initConfig() {
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
+	} else if env := os.Getenv("CCX_CONFIG"); env != "" {
+		viper.SetConfigFile(env)
 	} else {
 		configDir := os.Getenv("XDG_CONFIG_HOME")
 		if configDir == "" {

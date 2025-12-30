@@ -16,6 +16,8 @@ func ParseSession(filePath string) (*Session, error) {
 	defer file.Close()
 
 	var messages []*Message
+	var summaryFromFile string
+	logicalParents := make(map[string]string) // compact_boundary UUID -> logical parent UUID
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 10*1024*1024)
@@ -35,6 +37,20 @@ func ParseSession(filePath string) (*Session, error) {
 			continue
 		}
 
+		if raw.Type == "system" && raw.Subtype == "compact_boundary" && raw.UUID != "" {
+			if parent := strings.TrimSpace(raw.LogicalParentUUID); parent != "" {
+				logicalParents[raw.UUID] = parent
+			}
+			continue
+		}
+
+		if raw.Type == "summary" && summaryFromFile == "" {
+			if s := strings.TrimSpace(raw.Summary); s != "" {
+				summaryFromFile = s
+			}
+			continue
+		}
+
 		if raw.Type != "user" && raw.Type != "assistant" {
 			continue
 		}
@@ -49,6 +65,10 @@ func ParseSession(filePath string) (*Session, error) {
 		return nil, err
 	}
 
+	for _, msg := range messages {
+		msg.ParentUUID = resolveLogicalParent(msg.ParentUUID, logicalParents)
+	}
+
 	rootMessages := buildMessageTree(messages)
 	stats := computeStats(messages)
 
@@ -58,7 +78,10 @@ func ParseSession(filePath string) (*Session, error) {
 		endTime = messages[len(messages)-1].Timestamp
 	}
 
-	summary := extractSummary(messages)
+	summary := summaryFromFile
+	if summary == "" {
+		summary = extractSummary(messages)
+	}
 
 	session := &Session{
 		ID:           extractSessionID(filePath),
@@ -73,8 +96,22 @@ func ParseSession(filePath string) (*Session, error) {
 	return session, nil
 }
 
+func resolveLogicalParent(parentUUID string, logicalParents map[string]string) string {
+	const maxHops = 16
+
+	cur := parentUUID
+	for i := 0; i < maxHops; i++ {
+		next, ok := logicalParents[cur]
+		if !ok || next == "" || next == cur {
+			return cur
+		}
+		cur = next
+	}
+	return cur
+}
+
 func parseMessage(raw rawMessage) *Message {
-	ts, _ := time.Parse(time.RFC3339, raw.Timestamp)
+	ts, _ := time.Parse(time.RFC3339Nano, raw.Timestamp)
 
 	msg := &Message{
 		UUID:        raw.UUID,
@@ -361,7 +398,7 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 			continue
 		}
 
-		if ts, err := time.Parse(time.RFC3339, raw.Timestamp); err == nil {
+		if ts, err := time.Parse(time.RFC3339Nano, raw.Timestamp); err == nil {
 			if firstTime.IsZero() {
 				firstTime = ts
 			}

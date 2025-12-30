@@ -296,7 +296,6 @@ func handleWatch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -576,19 +575,54 @@ func handleAPIFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Security: only allow files under claudeHome (agents/skills)
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	absHome, _ := filepath.Abs(claudeHome)
-	if !strings.HasPrefix(absPath, absHome) {
+
+	absPath = filepath.Clean(absPath)
+	info, err := os.Stat(absPath)
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	if info.IsDir() {
+		http.Error(w, "path is a directory", http.StatusBadRequest)
+		return
+	}
+
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	allowedRoots := []string{
+		filepath.Join(claudeHome, "agents"),
+		filepath.Join(claudeHome, "skills"),
+	}
+	allowed := false
+	for _, root := range allowedRoots {
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		resolvedRoot, err := filepath.EvalSymlinks(filepath.Clean(absRoot))
+		if err != nil {
+			continue
+		}
+		if isSubpath(resolvedPath, resolvedRoot) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
 		http.Error(w, "access denied", http.StatusForbidden)
 		return
 	}
 
-	content, err := os.ReadFile(absPath)
+	content, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
@@ -596,9 +630,23 @@ func handleAPIFile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"path":    absPath,
+		"path":    resolvedPath,
 		"content": string(content),
 	})
+}
+
+func isSubpath(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	if rel == "." || rel == "" {
+		return true
+	}
+	if rel == ".." {
+		return false
+	}
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func truncate(s string, n int) string {

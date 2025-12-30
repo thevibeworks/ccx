@@ -1,7 +1,10 @@
 package parser
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestClassifyMessage(t *testing.T) {
@@ -396,6 +399,83 @@ func TestExtractTextFromContent(t *testing.T) {
 				t.Errorf("extractTextFromContent() = %q, want %q", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestParseSession_TimestampRFC3339Nano_AndSummaryLine(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "test.jsonl")
+
+	content := `{"type":"summary","summary":"Test session for JSONL parsing","leafUuid":"test-leaf-uuid"}
+{"type":"user","timestamp":"2025-12-24T10:00:00.000Z","uuid":"u1","message":{"role":"user","content":"Create a hello world function"}}
+{"type":"assistant","timestamp":"2025-12-24T10:00:05.000Z","uuid":"a1","parentUuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+`
+	if err := os.WriteFile(sessionPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := ParseSession(sessionPath)
+	if err != nil {
+		t.Fatalf("ParseSession() error: %v", err)
+	}
+
+	if session.Summary != "Test session for JSONL parsing" {
+		t.Fatalf("Summary = %q, want %q", session.Summary, "Test session for JSONL parsing")
+	}
+
+	wantStart, err := time.Parse(time.RFC3339Nano, "2025-12-24T10:00:00.000Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEnd, err := time.Parse(time.RFC3339Nano, "2025-12-24T10:00:05.000Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !session.StartTime.Equal(wantStart) {
+		t.Fatalf("StartTime = %s, want %s", session.StartTime.Format(time.RFC3339Nano), wantStart.Format(time.RFC3339Nano))
+	}
+	if !session.EndTime.Equal(wantEnd) {
+		t.Fatalf("EndTime = %s, want %s", session.EndTime.Format(time.RFC3339Nano), wantEnd.Format(time.RFC3339Nano))
+	}
+
+	qSummary, qStart, qEnd, _ := quickParseSession(sessionPath)
+	if qSummary != "Test session for JSONL parsing" {
+		t.Fatalf("quickParseSession summary = %q, want %q", qSummary, "Test session for JSONL parsing")
+	}
+	if qStart.IsZero() || qEnd.IsZero() {
+		t.Fatalf("quickParseSession returned zero timestamps: start=%s end=%s", qStart, qEnd)
+	}
+}
+
+func TestParseSession_CompactionBoundaryRewritesParentUUID(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "test.jsonl")
+
+	content := `{"type":"user","timestamp":"2025-12-24T10:00:00.000Z","uuid":"u1","message":{"role":"user","content":"Hi"}}
+{"type":"system","subtype":"compact_boundary","timestamp":"2025-12-24T10:00:01.000Z","uuid":"b1","logicalParentUuid":"u1","content":"compacted"}
+{"type":"assistant","timestamp":"2025-12-24T10:00:02.000Z","uuid":"a1","parentUuid":"b1","message":{"role":"assistant","content":"Hello"}}
+`
+	if err := os.WriteFile(sessionPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := ParseSession(sessionPath)
+	if err != nil {
+		t.Fatalf("ParseSession() error: %v", err)
+	}
+
+	if len(session.RootMessages) != 1 {
+		t.Fatalf("len(RootMessages) = %d, want 1", len(session.RootMessages))
+	}
+	root := session.RootMessages[0]
+	if root.UUID != "u1" {
+		t.Fatalf("root.UUID = %q, want %q", root.UUID, "u1")
+	}
+	if len(root.Children) != 1 {
+		t.Fatalf("len(root.Children) = %d, want 1", len(root.Children))
+	}
+	if root.Children[0].UUID != "a1" {
+		t.Fatalf("root.Children[0].UUID = %q, want %q", root.Children[0].UUID, "a1")
 	}
 }
 

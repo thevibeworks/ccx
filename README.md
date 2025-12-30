@@ -81,6 +81,14 @@ export:
   default_format: html
 ```
 
+## Data Safety
+
+ccx treats `CLAUDE_CODE_HOME` as read-only. It never modifies Claude Code session JSONL files or Claude Code config.
+
+ccx only writes:
+- `~/.config/ccx/` (config + SQLite data if you run `ccx web`)
+- Export output files you explicitly request
+
 ## Session Tree Model
 
 ccx understands Claude Code's session structure:

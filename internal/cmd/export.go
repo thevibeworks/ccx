@@ -27,13 +27,13 @@ Examples:
 }
 
 var (
-	exportFormat         string
-	exportOutput         string
-	exportProject        string
-	exportTheme          string
+	exportFormat          string
+	exportOutput          string
+	exportProject         string
+	exportTheme           string
 	exportIncludeThinking bool
-	exportIncludeAgents  bool
-	exportTemplate       string
+	exportIncludeAgents   bool
+	exportTemplate        string
 )
 
 func init() {
@@ -88,7 +88,11 @@ func runExport(cmd *cobra.Command, args []string) error {
 	output := exportOutput
 	if output == "" {
 		ext := formatToExt(format)
-		output = fmt.Sprintf("session-%s%s", session.ID[:8], ext)
+		id := session.ID
+		if len(id) > 8 {
+			id = id[:8]
+		}
+		output = fmt.Sprintf("session-%s%s", id, ext)
 	}
 
 	opts := render.ExportOptions{

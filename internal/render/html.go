@@ -140,7 +140,7 @@ func renderHTMLBlock(b *strings.Builder, block parser.ContentBlock, opts ExportO
 	case "image":
 		if block.ImageData != "" {
 			b.WriteString(fmt.Sprintf("<img src=\"data:%s;base64,%s\" class=\"inline-image\">\n",
-				block.MediaType, block.ImageData))
+				html.EscapeString(block.MediaType), html.EscapeString(block.ImageData)))
 		}
 	}
 }

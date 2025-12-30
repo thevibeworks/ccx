@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -371,5 +372,114 @@ func TestHandleGetStars(t *testing.T) {
 	var stars []any
 	if err := json.Unmarshal(w.Body.Bytes(), &stars); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
+	}
+}
+
+func TestHandleAPIFile_AllowsAgentsFile(t *testing.T) {
+	dir := setupTestDir(t)
+	projectsDir = filepath.Join(dir, "projects")
+	claudeHome = dir
+
+	agentsDir := filepath.Join(dir, "agents")
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	agentFile := filepath.Join(agentsDir, "agent.md")
+	if err := os.WriteFile(agentFile, []byte("agent content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/file?path="+url.QueryEscape(agentFile), nil)
+	w := httptest.NewRecorder()
+
+	handleAPIFile(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleAPIFile returned %d, want %d. Body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp["content"] != "agent content" {
+		t.Fatalf("content = %q, want %q", resp["content"], "agent content")
+	}
+}
+
+func TestHandleAPIFile_DeniesProjectsFile(t *testing.T) {
+	dir := setupTestDir(t)
+	projectsDir = filepath.Join(dir, "projects")
+	claudeHome = dir
+
+	sessionFile := filepath.Join(projectsDir, "-test-project", "test-session-123.jsonl")
+	req := httptest.NewRequest("GET", "/api/file?path="+url.QueryEscape(sessionFile), nil)
+	w := httptest.NewRecorder()
+
+	handleAPIFile(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("handleAPIFile returned %d, want %d. Body: %s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+}
+
+func TestHandleAPIFile_DeniesPrefixConfusion(t *testing.T) {
+	dir := t.TempDir()
+	claudeHome = dir
+
+	agentsDir := filepath.Join(dir, "agents")
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	evilDir := dir + "_evil"
+	if err := os.MkdirAll(evilDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	evilFile := filepath.Join(evilDir, "evil.md")
+	if err := os.WriteFile(evilFile, []byte("nope"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/file?path="+url.QueryEscape(evilFile), nil)
+	w := httptest.NewRecorder()
+
+	handleAPIFile(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("handleAPIFile returned %d, want %d. Body: %s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+}
+
+func TestHandleAPIFile_DeniesSymlinkEscape(t *testing.T) {
+	dir := t.TempDir()
+	claudeHome = dir
+
+	agentsDir := filepath.Join(dir, "agents")
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	outsideDir := filepath.Join(dir, "outside")
+	if err := os.MkdirAll(outsideDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	outsideFile := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	linkPath := filepath.Join(agentsDir, "link.txt")
+	if err := os.Symlink(outsideFile, linkPath); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/file?path="+url.QueryEscape(linkPath), nil)
+	w := httptest.NewRecorder()
+
+	handleAPIFile(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("handleAPIFile returned %d, want %d. Body: %s", w.Code, http.StatusForbidden, w.Body.String())
 	}
 }
