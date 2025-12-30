@@ -17,6 +17,7 @@ func ParseSession(filePath string) (*Session, error) {
 
 	var messages []*Message
 	var summaryFromFile string
+	var totalInputTokens, totalOutputTokens, totalCacheRead, totalCacheCreate int
 	logicalParents := make(map[string]string) // compact_boundary UUID -> logical parent UUID
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
@@ -35,6 +36,14 @@ func ParseSession(filePath string) (*Session, error) {
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
 			parseErrors++
 			continue
+		}
+
+		// Accumulate usage stats from any message with usage data
+		if raw.Usage != nil {
+			totalInputTokens += raw.Usage.InputTokens
+			totalOutputTokens += raw.Usage.OutputTokens
+			totalCacheRead += raw.Usage.CacheReadInputTokens
+			totalCacheCreate += raw.Usage.CacheCreationInputTokens
 		}
 
 		if raw.Type == "system" && raw.Subtype == "compact_boundary" && raw.UUID != "" {
@@ -72,10 +81,17 @@ func ParseSession(filePath string) (*Session, error) {
 	rootMessages := buildMessageTree(messages)
 	stats := computeStats(messages)
 
+	// Add token usage stats
+	stats.InputTokens = totalInputTokens
+	stats.OutputTokens = totalOutputTokens
+	stats.CacheReadTokens = totalCacheRead
+	stats.CacheCreateTokens = totalCacheCreate
+
 	var startTime, endTime time.Time
 	if len(messages) > 0 {
 		startTime = messages[0].Timestamp
 		endTime = messages[len(messages)-1].Timestamp
+		stats.DurationSeconds = endTime.Sub(startTime).Seconds()
 	}
 
 	summary := summaryFromFile

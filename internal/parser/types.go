@@ -51,6 +51,15 @@ type SessionStats struct {
 	ToolCalls       int
 	Continuations   int
 	AgentSidechains int
+
+	// Token usage (from API responses)
+	InputTokens       int
+	OutputTokens      int
+	CacheReadTokens   int
+	CacheCreateTokens int
+
+	// Duration
+	DurationSeconds float64
 }
 
 type Message struct {
@@ -103,6 +112,14 @@ type rawMessage struct {
 	Content          string         `json:"content"` // For system messages
 	Summary          string         `json:"summary"` // For summary type
 	LeafUUID         string         `json:"leafUuid"` // For summary type
+	Usage            *usageData     `json:"usage"`    // Token usage from API
+}
+
+type usageData struct {
+	InputTokens             int `json:"input_tokens"`
+	OutputTokens            int `json:"output_tokens"`
+	CacheReadInputTokens    int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 }
 
 type messagePayload struct {

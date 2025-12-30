@@ -228,8 +228,25 @@ func renderSessionPage(session *parser.Session, projectName string, showThinking
 		html.EscapeString(projectName), html.EscapeString(projDisplay)))
 	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Session</span><code>%s</code></div>`, html.EscapeString(session.ID)))
 	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Started</span>%s</div>`, session.StartTime.Format("2006-01-02 15:04")))
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Duration</span>%s</div>`, formatDuration(session.Stats.DurationSeconds)))
+	b.WriteString(`<div class="info-divider"></div>`)
 	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Messages</span>%d</div>`, session.Stats.MessageCount))
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Tools</span>%d</div>`, session.Stats.ToolCalls))
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">User prompts</span>%d</div>`, session.Stats.UserPrompts))
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Tool calls</span>%d</div>`, session.Stats.ToolCalls))
+	if session.Stats.AgentSidechains > 0 {
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Agent tasks</span>%d</div>`, session.Stats.AgentSidechains))
+	}
+	// Token usage (if available)
+	totalTokens := session.Stats.InputTokens + session.Stats.OutputTokens
+	if totalTokens > 0 {
+		b.WriteString(`<div class="info-divider"></div>`)
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Input tokens</span>%s</div>`, formatTokens(session.Stats.InputTokens)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Output tokens</span>%s</div>`, formatTokens(session.Stats.OutputTokens)))
+		if session.Stats.CacheReadTokens > 0 {
+			b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Cache read</span>%s</div>`, formatTokens(session.Stats.CacheReadTokens)))
+		}
+		b.WriteString(fmt.Sprintf(`<div class="info-row info-total"><span class="info-label">Total tokens</span><strong>%s</strong></div>`, formatTokens(totalTokens)))
+	}
 	b.WriteString(`</div>`)
 
 	b.WriteString(`</div>`)
@@ -896,6 +913,37 @@ func formatRelativeTime(t time.Time) string {
 	}
 }
 
+func formatDuration(seconds float64) string {
+	if seconds <= 0 {
+		return "-"
+	}
+	d := time.Duration(seconds * float64(time.Second))
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		m := int(d.Minutes())
+		s := int(d.Seconds()) % 60
+		if s > 0 {
+			return fmt.Sprintf("%dm %ds", m, s)
+		}
+		return fmt.Sprintf("%dm", m)
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	return fmt.Sprintf("%dh %dm", h, m)
+}
+
+func formatTokens(n int) string {
+	if n >= 1000000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1000000)
+	}
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%d", n)
+}
+
 func renderContentBlock(b *strings.Builder, block parser.ContentBlock, showThinking, showTools bool) {
 	switch block.Type {
 	case "text":
@@ -1064,18 +1112,24 @@ func renderNavChild(b *strings.Builder, msg *parser.Message) {
 	case parser.KindAssistant:
 		hasTool := false
 		toolName := ""
+		toolPreview := ""
 		for _, block := range msg.Content {
 			if block.Type == "tool_use" {
 				hasTool = true
 				toolName = block.ToolName
+				toolPreview = compactToolPreview(block.ToolName, block.ToolInput)
 				break
 			}
 		}
 		if hasTool {
-			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-tool" data-msg="%s">`,
-				msg.UUID, msg.UUID))
+			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-tool" data-msg="%s" title="%s">`,
+				msg.UUID, msg.UUID, html.EscapeString(toolPreview)))
+			navText := toolName
+			if toolPreview != "" && len(toolPreview) < 30 {
+				navText = fmt.Sprintf("%s(%s)", toolName, toolPreview)
+			}
 			b.WriteString(fmt.Sprintf(`<span class="nav-icon">●</span><span class="nav-text">%s</span></a>`,
-				html.EscapeString(toolName)))
+				html.EscapeString(navText)))
 		} else {
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-response" data-msg="%s">`,
 				msg.UUID, msg.UUID))
@@ -1525,7 +1579,7 @@ func renderTopNav(projectName, sessionID string) string {
 	b.WriteString(`<div class="top-nav-inner">`)
 	b.WriteString(`<div class="nav-left">`)
 	b.WriteString(`<a href="/" class="brand"><span class="brand-icon">◈</span> ccx</a>`)
-	b.WriteString(`<span class="brand-sub">Claude Code eXplorer</span>`)
+	b.WriteString(`<span class="brand-sub"><span class="brand-claude">Claude</span> <span class="brand-code">Code</span> e<span class="brand-x">X</span><span class="brand-plorer">plorer</span></span>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="nav-center">`)
 	b.WriteString(`<div class="global-search">`)
@@ -1625,11 +1679,14 @@ const loadingOverlay = document.getElementById('loading-overlay');
 window.showLoading = function() { loadingOverlay?.classList.add('active'); };
 window.hideLoading = function() { loadingOverlay?.classList.remove('active'); };
 
-// Show loading on navigation
+// Show loading on navigation (skip downloads/API links)
 document.querySelectorAll('a[href^="/"]').forEach(a => {
   a.addEventListener('click', function(e) {
-    // Skip if modifier key or external link
+    const href = this.getAttribute('href') || '';
+    // Skip: modifier keys, API/export links, anchor links
     if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+    if (href.startsWith('/api/')) return;
+    if (href.startsWith('#')) return;
     window.showLoading();
   });
 });
@@ -1799,9 +1856,13 @@ code, pre, .session-id, .model-badge {
 .brand-icon { font-size: 20px; }
 .brand-sub {
   font-size: 12px;
-  color: var(--text-muted);
   font-weight: 400;
+  letter-spacing: 0.5px;
 }
+.brand-sub .brand-claude { color: #da7756; }
+.brand-sub .brand-code { color: var(--assistant-border); }
+.brand-sub .brand-x { color: var(--primary); font-weight: 700; }
+.brand-sub .brand-plorer { color: var(--text-muted); }
 
 .nav-link {
   color: var(--text-muted);
@@ -2178,12 +2239,13 @@ code, pre, .session-id, .model-badge {
   max-width: 400px;
 }
 .info-panel.show { display: block; }
-.info-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
-.info-row:last-child { border-bottom: none; }
+.info-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 12px; }
 .info-label { color: var(--text-muted); }
-.info-row code { font-size: 11px; }
+.info-row code { font-size: 10px; }
 .info-row a { color: var(--primary); text-decoration: none; }
 .info-row a:hover { text-decoration: underline; }
+.info-divider { height: 1px; background: var(--border); margin: 8px 0; }
+.info-total { font-size: 13px; margin-top: 4px; }
 
 /* Session page */
 .session-layout {
@@ -2388,8 +2450,8 @@ code, pre, .session-id, .model-badge {
 }
 .thread-responses::before { display: none; }
 
-/* Thread folding - collapse middle responses (not remove) */
-.thread.folded .thread-responses .turn:not(:last-child) {
+/* Thread folding - collapse middle responses (direct children only) */
+.thread.folded > .thread-responses > .turn:not(:last-child) {
   max-height: 0;
   overflow: hidden;
   opacity: 0;
@@ -2397,13 +2459,25 @@ code, pre, .session-id, .model-badge {
   padding: 0;
   transition: max-height 0.2s, opacity 0.2s, margin 0.2s;
 }
-.thread:not(.folded) .thread-responses .turn {
-  max-height: 2000px;
+.thread:not(.folded) > .thread-responses > .turn {
+  max-height: none;
   opacity: 1;
-  transition: max-height 0.3s, opacity 0.2s;
+  transition: opacity 0.2s;
 }
-.thread.folded .fold-indicator::after { content: ' [+' attr(data-hidden) ']'; }
-.thread:not(.folded) .fold-indicator::after { content: ' [-]'; }
+/* Fold indicator styling */
+.fold-indicator {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  margin-left: 8px;
+  padding: 2px 6px;
+  background: var(--bg-secondary);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.thread.folded .fold-indicator { background: var(--primary); color: white; }
+.thread.folded .fold-indicator::after { content: '+' attr(data-hidden); }
+.thread:not(.folded) .fold-indicator::after { content: '−'; }
 
 /* Level indentation */
 .level-1 { margin-left: 0; }
@@ -2507,14 +2581,6 @@ details.turn-user[open] .turn-role { display: none; }
 }
 .turn-user .turn-icon { color: var(--user-border); font-size: 14px; }
 .turn-user .turn-preview { font-weight: 500; }
-/* Thread fold toggle */
-.turn-user .fold-indicator {
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-left: 8px;
-  opacity: 0.6;
-}
-.turn-user:hover .fold-indicator { opacity: 1; }
 
 /* Assistant response - CLI style with ● prefix */
 .turn-assistant {
