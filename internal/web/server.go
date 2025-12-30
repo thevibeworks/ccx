@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -80,8 +81,31 @@ func Serve(addr, projDir string) error {
 	// File content API (for agents/skills)
 	mux.HandleFunc("/api/file", handleAPIFile)
 
-	fmt.Printf("Listening on %s\n", addr)
-	return http.ListenAndServe(addr, mux)
+	// Wrap with logging middleware
+	handler := logRequest(mux)
+
+	server := &http.Server{
+		Addr:         addr,
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 60 * time.Second, // longer for SSE
+		IdleTimeout:  120 * time.Second,
+	}
+
+	log.Printf("ccx web server listening on http://%s", addr)
+	return server.ListenAndServe()
+}
+
+// logRequest logs HTTP requests with method, path, and duration
+func logRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		// Skip logging for SSE (long-running)
+		if !strings.HasPrefix(r.URL.Path, "/api/watch/") {
+			log.Printf("%s %s %v", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
+		}
+	})
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +243,7 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 	showTools := q.Get("tools") == "1" // default: only active tools expanded
 	theme := q.Get("theme")
 	if theme == "" {
-		theme = "light"
+		theme = config.Theme() // respect user config
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

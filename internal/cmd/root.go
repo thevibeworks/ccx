@@ -11,12 +11,10 @@ import (
 )
 
 var (
-	cfgFile    string
+	cfgFile   string
 	claudeHome string
-	verbose    bool
-	quiet      bool
-	version    string
-	buildTime  string
+	version   string
+	buildTime string
 )
 
 var rootCmd = &cobra.Command{
@@ -51,8 +49,6 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: $XDG_CONFIG_HOME/ccx/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&claudeHome, "claude-home", "", "override CLAUDE_CODE_HOME")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
-	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "minimal output")
 
 	_ = viper.BindPFlag("claude_code_home", rootCmd.PersistentFlags().Lookup("claude-home"))
 

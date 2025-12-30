@@ -172,6 +172,9 @@ func renderSessionPage(session *parser.Session, projectName string, showThinking
 	renderMessages(&b, session.RootMessages, 0, showThinking, showTools)
 	b.WriteString(`</div>`)
 
+	// Tail spinner for watch mode
+	b.WriteString(`<div class="tail-spinner"><span class="cli-spinner-char"></span> Watching for updates...</div>`)
+
 	// Tail output container for watch mode
 	b.WriteString(`<div class="tail-output" id="tail-output" style="display:none"></div>`)
 
@@ -682,8 +685,10 @@ func renderMarkdown(text string) string {
 	inCodeBlock := false
 	codeBlockLang := ""
 	var codeLines []string
+	inTable := false
+	var tableRows []string
 
-	for _, line := range lines {
+	for i, line := range lines {
 		if strings.HasPrefix(line, "```") {
 			if inCodeBlock {
 				b.WriteString(fmt.Sprintf(`<pre class="code-block"><code class="lang-%s">%s</code></pre>`,
@@ -702,6 +707,28 @@ func renderMarkdown(text string) string {
 
 		if inCodeBlock {
 			codeLines = append(codeLines, line)
+			continue
+		}
+
+		// Table detection: line starts with | and contains |
+		isTableLine := strings.HasPrefix(strings.TrimSpace(line), "|") && strings.Contains(line, "|")
+		isSeparatorLine := isTableLine && strings.Contains(line, "---")
+
+		if isTableLine {
+			if !inTable {
+				inTable = true
+				tableRows = nil
+			}
+			if !isSeparatorLine {
+				tableRows = append(tableRows, line)
+			}
+			// Check if next line is not a table line
+			if i+1 >= len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[i+1]), "|") {
+				// End of table, render it
+				b.WriteString(renderTable(tableRows))
+				inTable = false
+				tableRows = nil
+			}
 			continue
 		}
 
@@ -724,6 +751,47 @@ func renderMarkdown(text string) string {
 	}
 
 	return b.String()
+}
+
+// renderTable converts markdown table rows to HTML table
+func renderTable(rows []string) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<table class="md-table">`)
+
+	for i, row := range rows {
+		cells := parseTableRow(row)
+		if i == 0 {
+			b.WriteString(`<thead><tr>`)
+			for _, cell := range cells {
+				escaped := html.EscapeString(strings.TrimSpace(cell))
+				escaped = processInlineCode(escaped)
+				escaped = processBold(escaped)
+				b.WriteString(`<th>` + escaped + `</th>`)
+			}
+			b.WriteString(`</tr></thead><tbody>`)
+		} else {
+			b.WriteString(`<tr>`)
+			for _, cell := range cells {
+				escaped := html.EscapeString(strings.TrimSpace(cell))
+				escaped = processInlineCode(escaped)
+				escaped = processBold(escaped)
+				b.WriteString(`<td>` + escaped + `</td>`)
+			}
+			b.WriteString(`</tr>`)
+		}
+	}
+	b.WriteString(`</tbody></table>`)
+	return b.String()
+}
+
+// parseTableRow splits a markdown table row into cells
+func parseTableRow(row string) []string {
+	row = strings.TrimSpace(row)
+	row = strings.Trim(row, "|")
+	return strings.Split(row, "|")
 }
 
 // processInlineCode converts `code` to <code>code</code>
@@ -1521,22 +1589,14 @@ func pageHeader(title, theme string) string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>%s</title>
 %s
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-tailwind.config = {
-  darkMode: ['selector', '[data-theme="dark"]'],
-  theme: {
-    extend: {
-      colors: {
-        ccx: { DEFAULT: '#da7756', dark: '#c5634a' }
-      }
-    }
-  }
-}
-</script>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 <style type="text/tailwindcss">
-@layer utilities {
-  .scrollbar-thin { scrollbar-width: thin; }
+@theme {
+  --color-ccx: #da7756;
+  --color-ccx-dark: #c5634a;
+}
+@utility scrollbar-thin {
+  scrollbar-width: thin;
 }
 </style>
 <style>
@@ -1552,7 +1612,30 @@ func faviconLink() string {
 }
 
 func pageFooter() string {
-	return `</body></html>`
+	return `
+<div id="loading-overlay" class="loading-overlay">
+  <div class="cli-spinner">
+    <span class="cli-spinner-char"></span>
+    <span>Loading...</span>
+  </div>
+</div>
+<script>
+// Global loading overlay control
+const loadingOverlay = document.getElementById('loading-overlay');
+window.showLoading = function() { loadingOverlay?.classList.add('active'); };
+window.hideLoading = function() { loadingOverlay?.classList.remove('active'); };
+
+// Show loading on navigation
+document.querySelectorAll('a[href^="/"]').forEach(a => {
+  a.addEventListener('click', function(e) {
+    // Skip if modifier key or external link
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+    window.showLoading();
+  });
+});
+window.addEventListener('pageshow', function() { window.hideLoading(); });
+</script>
+</body></html>`
 }
 
 func cssStyles() string {
@@ -1665,7 +1748,9 @@ code, pre, .session-id, .model-badge {
 }
 .search-results.active { display: block; }
 .search-result {
-  display: block;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   text-decoration: none;
@@ -1673,10 +1758,34 @@ code, pre, .session-id, .model-badge {
 }
 .search-result:last-child { border-bottom: none; }
 .search-result:hover { background: var(--bg-secondary); }
-.search-result .result-title { font-weight: 500; font-size: 14px; }
+.search-result .result-body { flex: 1; min-width: 0; }
+.search-result .result-title { font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .search-result .result-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-.search-result .result-snippet { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.search-result .result-snippet { font-size: 12px; color: var(--text-muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .search-result .result-snippet mark { background: #ffe066; color: #000; padding: 0 2px; }
+.result-badge {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  border-radius: 4px;
+  color: white;
+}
+.badge-project { background: var(--primary); }
+.badge-session { background: var(--assistant-border); }
+.badge-message { background: var(--tool-border); }
+.search-loading, .search-empty {
+  padding: 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.search-loading { display: flex; align-items: center; justify-content: center; gap: 8px; }
 
 .brand {
   font-weight: 700;
@@ -1780,8 +1889,9 @@ code, pre, .session-id, .model-badge {
 .dock-group { display: flex; align-items: center; gap: 2px; }
 .dock-sep { width: 1px; height: 24px; background: var(--border); margin: 0 6px; }
 .dock-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   padding: 6px 10px;
   border: none;
@@ -1792,12 +1902,14 @@ code, pre, .session-id, .model-badge {
   font-size: 12px;
   font-family: var(--font-sans);
   transition: all 0.15s;
+  line-height: 1;
+  vertical-align: middle;
 }
 .dock-btn:hover { background: var(--bg-tertiary); color: var(--text); }
 .dock-btn.active, .dock-btn.toggle.active { background: var(--primary); color: white; }
-.dock-icon { font-size: 14px; }
-.dock-label { font-size: 11px; font-weight: 500; }
-.dock-key { font-size: 9px; opacity: 0.5; font-family: var(--font-mono); }
+.dock-icon { font-size: 14px; line-height: 1; display: inline-flex; align-items: center; }
+.dock-label { font-size: 11px; font-weight: 500; line-height: 1; }
+.dock-key { font-size: 9px; opacity: 0.5; font-family: var(--font-mono); line-height: 1; }
 .dock-btn:hover .dock-key { opacity: 0.8; }
 
 /* Live button pulse animation */
@@ -1952,7 +2064,7 @@ code, pre, .session-id, .model-badge {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(var(--bg), 0.8);
+  background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -1960,8 +2072,9 @@ code, pre, .session-id, .model-badge {
   z-index: 1000;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.2s, visibility 0.2s;
+  transition: opacity 0.15s, visibility 0.15s;
 }
+[data-theme="dark"] .loading-overlay { background: rgba(26, 26, 31, 0.9); }
 .loading-overlay.active { opacity: 1; visibility: visible; }
 
 .sort-controls { display: flex; align-items: center; gap: 6px; }
@@ -2275,6 +2388,18 @@ code, pre, .session-id, .model-badge {
 }
 .thread-responses::before { display: none; }
 
+/* Thread folding - hide middle responses, show only last */
+.thread.folded .thread-responses .turn:not(:last-child) {
+  display: none;
+}
+.thread.folded .thread-responses .turn:last-child {
+  border-left: 2px solid var(--assistant-border);
+  padding-left: 8px;
+  margin-left: -8px;
+}
+.thread.folded .fold-indicator::after { content: ' [+' attr(data-hidden) ' hidden]'; }
+.thread:not(.folded) .fold-indicator::after { content: ' [-]'; }
+
 /* Level indentation */
 .level-1 { margin-left: 0; }
 .level-2 { margin-left: 16px; opacity: 0.95; }
@@ -2364,11 +2489,36 @@ details.turn-user[open] .turn-role { display: none; }
 .turn-body.raw-mode { background: var(--bg-tertiary); border-radius: var(--radius); }
 .turn-body.raw-mode pre.raw-content { margin: 0; padding: 8px; font-size: 10px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
 
-/* User prompt - CLI style with > prefix */
-.turn-user { margin: 16px 0 4px 0; }
-.turn-user .turn-header { padding: 4px 0; }
+/* User prompt - CLI style with > prefix and separator */
+.turn-user {
+  margin: 20px 0 4px 0;
+  padding-top: 16px;
+  border-top: 2px solid var(--user-border);
+  position: relative;
+}
+.turn-user::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 0;
+  width: 60px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--user-border), transparent);
+}
+.turn-user .turn-header {
+  padding: 4px 0;
+  cursor: pointer;
+}
 .turn-user .turn-icon { color: var(--user-border); font-size: 14px; }
 .turn-user .turn-preview { font-weight: 500; }
+/* Thread fold toggle */
+.turn-user .fold-indicator {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 8px;
+  opacity: 0.6;
+}
+.turn-user:hover .fold-indicator { opacity: 1; }
 
 /* Assistant response - CLI style with ● prefix */
 .turn-assistant {
@@ -2418,6 +2568,17 @@ body.watching .live-indicator { display: block; }
   0% { background-position: 0% 0%; }
   100% { background-position: 200% 0%; }
 }
+
+/* Tail spinner at bottom during watch mode */
+.tail-spinner {
+  display: none;
+  padding: 20px;
+  text-align: center;
+  color: var(--assistant-border);
+  font-size: 14px;
+}
+.tail-spinner .cli-spinner-char { color: var(--assistant-border); font-size: 16px; }
+body.watching .tail-spinner { display: flex; align-items: center; justify-content: center; gap: 8px; }
 
 /* Agent (sidechain) - indented, purple accent */
 .turn-agent {
@@ -2488,6 +2649,26 @@ body.watching .live-indicator { display: block; }
   font-size: 12px;
   font-family: var(--font-mono);
 }
+
+/* Markdown table */
+.md-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.md-table th, .md-table td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+}
+.md-table th {
+  background: var(--bg-secondary);
+  font-weight: 600;
+  font-size: 12px;
+}
+.md-table tr:nth-child(even) td { background: var(--bg-secondary); }
+.md-table tr:hover td { background: var(--bg-tertiary); }
 
 /* Thinking block - CLI style single-line */
 .block-thinking {
@@ -2952,44 +3133,61 @@ if (themeToggle) {
   if (saved) document.documentElement.setAttribute('data-theme', saved);
 }
 
-// Global search (also in sessionJS)
+// Global search with debounce and request cancellation
 const globalSearchInput = document.getElementById('global-search');
 const searchResults = document.getElementById('search-results');
 let globalSearchTimeout;
+let searchAbort = null;
 
 if (globalSearchInput && searchResults) {
   globalSearchInput.addEventListener('input', function(e) {
     clearTimeout(globalSearchTimeout);
+    if (searchAbort) { searchAbort.abort(); searchAbort = null; }
+
     const query = e.target.value.trim();
     if (!query) {
       searchResults.classList.remove('active');
       return;
     }
+
+    // Show loading state
+    searchResults.innerHTML = '<div class="search-loading"><span class="cli-spinner-char"></span> Searching...</div>';
+    searchResults.classList.add('active');
+
     globalSearchTimeout = setTimeout(async () => {
+      searchAbort = new AbortController();
       try {
-        const res = await fetch('/api/search?q=' + encodeURIComponent(query));
+        const res = await fetch('/api/search?q=' + encodeURIComponent(query), { signal: searchAbort.signal });
         const data = await res.json();
         if (data.results && data.results.length > 0) {
           searchResults.innerHTML = data.results.map(r => {
+            const badge = r.type === 'project' ? '<span class="result-badge badge-project">P</span>' :
+                          r.type === 'session' ? '<span class="result-badge badge-session">S</span>' :
+                          '<span class="result-badge badge-message">M</span>';
             let html = '<a href="' + r.url + '" class="search-result">';
-            html += '<div class="result-title">' + escapeHtml(r.summary) + '</div>';
-            html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' • ' + escapeHtml(r.time) : '') + '</div>';
+            html += badge;
+            html += '<div class="result-body">';
+            html += '<div class="result-title">' + escapeHtml(r.summary || r.title || 'Untitled') + '</div>';
+            html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' · ' + escapeHtml(r.time) : '') + '</div>';
             if (r.snippet) {
               html += '<div class="result-snippet">' + escapeHtml(r.snippet) + '</div>';
             }
-            html += '</a>';
+            html += '</div></a>';
             return html;
           }).join('');
           searchResults.classList.add('active');
         } else {
-          searchResults.innerHTML = '<div class="search-result"><div class="result-title">No results</div></div>';
+          searchResults.innerHTML = '<div class="search-empty">No results for "' + escapeHtml(query) + '"</div>';
           searchResults.classList.add('active');
         }
-      } catch (err) { console.error('Search:', err); }
-    }, 200);
+      } catch (err) {
+        if (err.name !== 'AbortError') console.error('Search:', err);
+      }
+    }, 300); // 300ms debounce
   });
+
   globalSearchInput.addEventListener('blur', function() {
-    setTimeout(() => searchResults.classList.remove('active'), 150);
+    setTimeout(() => searchResults.classList.remove('active'), 200);
   });
 }
 
@@ -3418,6 +3616,33 @@ function toggleWatch() {
 
 if (btnWatch) btnWatch.addEventListener('click', toggleWatch);
 if (tbWatch) tbWatch.addEventListener('click', toggleWatch);
+
+// Thread folding - click user block to fold/unfold middle responses
+document.querySelectorAll('.thread').forEach(thread => {
+  const userHeader = thread.querySelector('.turn-user .turn-header');
+  const responses = thread.querySelector('.thread-responses');
+  if (!userHeader || !responses) return;
+
+  const turns = responses.querySelectorAll('.turn');
+  if (turns.length <= 1) return; // no folding needed for single response
+
+  // Add fold indicator
+  const indicator = document.createElement('span');
+  indicator.className = 'fold-indicator';
+  indicator.dataset.hidden = turns.length - 1;
+  userHeader.appendChild(indicator);
+
+  // Start folded by default for threads with many responses
+  if (turns.length > 2) {
+    thread.classList.add('folded');
+  }
+
+  userHeader.addEventListener('click', function(e) {
+    // Don't interfere with raw/copy buttons
+    if (e.target.closest('.turn-actions')) return;
+    thread.classList.toggle('folded');
+  });
+});
 
 const btnExport = document.getElementById('btn-export');
 const exportMenu = document.getElementById('export-menu');

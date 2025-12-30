@@ -28,14 +28,12 @@ Otherwise, show recent sessions across all projects.`,
 var (
 	sessionsSort  string
 	sessionsLimit int
-	sessionsAll   bool
 	sessionsJSON  bool
 )
 
 func init() {
 	sessionsCmd.Flags().StringVar(&sessionsSort, "sort", "time", "sort by: time, messages")
 	sessionsCmd.Flags().IntVar(&sessionsLimit, "limit", 20, "limit number of sessions (0 = no limit)")
-	sessionsCmd.Flags().BoolVar(&sessionsAll, "all", false, "include agent sidechains")
 	sessionsCmd.Flags().BoolVar(&sessionsJSON, "json", false, "output as JSON")
 }
 
