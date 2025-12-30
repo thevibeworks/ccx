@@ -87,8 +87,8 @@ func Serve(addr, projDir string) error {
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      handler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second, // longer for SSE
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 0, // disabled for SSE and large exports
 		IdleTimeout:  120 * time.Second,
 	}
 

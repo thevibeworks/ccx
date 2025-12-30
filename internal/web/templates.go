@@ -2382,22 +2382,27 @@ code, pre, .session-id, .model-badge {
 }
 .thread-responses {
   position: relative;
-  padding-left: 16px;
-  margin-left: 4px;
-  border-left: 1px solid var(--border);
+  padding-left: 12px;
+  margin-left: 8px;
+  border-left: 1px dotted var(--border);
 }
 .thread-responses::before { display: none; }
 
-/* Thread folding - hide middle responses, show only last */
+/* Thread folding - collapse middle responses (not remove) */
 .thread.folded .thread-responses .turn:not(:last-child) {
-  display: none;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  margin: 0;
+  padding: 0;
+  transition: max-height 0.2s, opacity 0.2s, margin 0.2s;
 }
-.thread.folded .thread-responses .turn:last-child {
-  border-left: 2px solid var(--assistant-border);
-  padding-left: 8px;
-  margin-left: -8px;
+.thread:not(.folded) .thread-responses .turn {
+  max-height: 2000px;
+  opacity: 1;
+  transition: max-height 0.3s, opacity 0.2s;
 }
-.thread.folded .fold-indicator::after { content: ' [+' attr(data-hidden) ' hidden]'; }
+.thread.folded .fold-indicator::after { content: ' [+' attr(data-hidden) ']'; }
 .thread:not(.folded) .fold-indicator::after { content: ' [-]'; }
 
 /* Level indentation */
@@ -2489,22 +2494,13 @@ details.turn-user[open] .turn-role { display: none; }
 .turn-body.raw-mode { background: var(--bg-tertiary); border-radius: var(--radius); }
 .turn-body.raw-mode pre.raw-content { margin: 0; padding: 8px; font-size: 10px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
 
-/* User prompt - CLI style with > prefix and separator */
+/* User prompt - CLI style with subtle separator */
 .turn-user {
-  margin: 20px 0 4px 0;
-  padding-top: 16px;
-  border-top: 2px solid var(--user-border);
-  position: relative;
+  margin: 16px 0 4px 0;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
 }
-.turn-user::before {
-  content: '';
-  position: absolute;
-  top: -2px;
-  left: 0;
-  width: 60px;
-  height: 2px;
-  background: linear-gradient(90deg, var(--user-border), transparent);
-}
+.turn-user:first-child { border-top: none; padding-top: 0; }
 .turn-user .turn-header {
   padding: 4px 0;
   cursor: pointer;
@@ -2572,12 +2568,12 @@ body.watching .live-indicator { display: block; }
 /* Tail spinner at bottom during watch mode */
 .tail-spinner {
   display: none;
-  padding: 20px;
+  padding: 16px 20px 80px 20px; /* extra bottom padding to clear toolbar */
   text-align: center;
   color: var(--assistant-border);
-  font-size: 14px;
+  font-size: 13px;
 }
-.tail-spinner .cli-spinner-char { color: var(--assistant-border); font-size: 16px; }
+.tail-spinner .cli-spinner-char { color: var(--assistant-border); font-size: 14px; }
 body.watching .tail-spinner { display: flex; align-items: center; justify-content: center; gap: 8px; }
 
 /* Agent (sidechain) - indented, purple accent */
