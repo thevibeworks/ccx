@@ -1,0 +1,59 @@
+#+TITLE: ccx Development Log
+#+AUTHOR: Claude Code Explorer Team
+#+STARTUP: overview
+
+* About
+
+ccx (Claude Code Explorer) - A Go CLI for exploring and inspecting Claude Code sessions.
+
+* Roadmap
+
+** DONE v0.1.0 - Initial Release
+- [X] Core CLI commands (projects, sessions, view, export)
+- [X] JSONL parser with tree-aware message structure
+- [X] Web UI with modern design
+- [X] Export formats (HTML, MD, Org, JSON)
+- [X] Realtime watch mode via SSE
+- [X] SQLite star/favorite system
+- [X] Global search across projects/sessions
+- [X] Dark/light theme toggle
+
+** TODO v0.2.0 - Enhanced Features
+- [ ] Full-text search within session content
+- [ ] Agent/skill discovery from CLAUDE_CODE_HOME
+- [ ] Session diff/compare view
+- [ ] Statistics dashboard
+- [ ] Custom tagging system
+- [ ] Keyboard shortcuts help overlay
+
+** TODO v0.3.0 - Power Features
+- [ ] Session replay mode
+- [ ] Cost estimation display
+- [ ] API integration hooks
+- [ ] MCP server mode
+
+* Entries
+
+#+INCLUDE: "./devlog/20251228-initial.org"
+
+* Architecture
+
+#+BEGIN_SRC
+ccx/
+  cmd/ccx/main.go        Entry point
+  internal/
+    cmd/                  Cobra commands
+    parser/               JSONL parsing + tree building
+    render/               Output formats
+    web/                  HTTP server + templates
+    db/                   SQLite persistence
+    config/               Configuration paths
+#+END_SRC
+
+Key insight: Claude Code sessions are *trees*, not flat lists.
+Uses parentUuid, isCompactSummary, isSidechain for structure.
+
+* References
+
+- GitHub CLI patterns
+- Atlas CLI patterns

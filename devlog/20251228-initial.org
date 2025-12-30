@@ -1,0 +1,586 @@
+* 2025-12-28 Initial Implementation
+
+** Context
+
+Goal: Go-native tool for exploring Claude Code sessions with modern web UI.
+
+CLAUDE_CODE_HOME: ~/.claude/projects/<encoded-path>/<uuid>.jsonl
+
+Design principles:
+- Single binary (no external deps)
+- Tree-first data model (not flat chat logs)
+- Progressive disclosure (quick parse -> full parse)
+- Terminal-friendly (ASCII icons, keyboard nav)
+
+** Dependencies & Build
+
+*** Go Module Dependencies
+
+Direct dependencies:
+- github.com/spf13/cobra v1.8.0 - CLI framework
+- github.com/spf13/viper v1.18.2 - Configuration management
+- github.com/mattn/go-sqlite3 v1.14.22 - SQLite driver (CGO required)
+
+No frontend dependencies - all CSS/JS embedded.
+
+*** Build Instructions
+
+#+BEGIN_SRC bash
+# Development build
+go build -o bin/ccx ./cmd/ccx
+
+# Production build (optimized)
+go build -ldflags="-s -w" -o bin/ccx ./cmd/ccx
+
+# Cross-compile for Linux
+GOOS=linux GOARCH=amd64 go build -o bin/ccx-linux ./cmd/ccx
+
+# Run tests
+go test ./...
+
+# Install globally
+go install ./cmd/ccx
+#+END_SRC
+
+*** Build Requirements
+
+- Go 1.22+
+- GCC (for SQLite CGO binding)
+- ~2MB disk space for binary
+
+*** Directory Structure
+
+#+BEGIN_SRC
+ccx/
+├── cmd/ccx/main.go              Entry point
+├── internal/
+│   ├── cmd/                     Cobra commands (7 files)
+│   ├── parser/                  JSONL parsing + tree logic
+│   │   ├── session.go           Full + quick parse
+│   │   ├── project.go           Project discovery
+│   │   ├── types.go             Data structures
+│   │   └── encoding.go          Path encoding
+│   ├── render/                  Output formats
+│   │   ├── terminal.go          CLI rendering
+│   │   ├── html.go              HTML export
+│   │   ├── markdown.go          Markdown export
+│   │   └── org.go               Org-mode export
+│   ├── web/                     HTTP server
+│   │   ├── server.go            Handlers + SSE
+│   │   └── templates.go         Embedded HTML/CSS/JS
+│   ├── db/                      SQLite persistence
+│   │   └── db.go                Stars + tags
+│   └── config/                  Configuration
+│       └── config.go            CLAUDE_CODE_HOME logic
+├── go.mod                       Go modules
+├── go.sum                       Checksums
+├── SPEC.md                      Technical spec
+├── DEVLOG.org                   This file (index)
+└── devlog/
+    └── 20251228-initial.org     Implementation log
+#+END_SRC
+
+** Key Decisions
+
+*** Session Tree Model
+
+The most critical insight: Claude Code sessions are *trees*, not flat message lists.
+
+#+BEGIN_SRC
+message {
+  uuid: "abc-123"
+  parentUuid: "xyz-789"      // tree structure
+  isCompactSummary: true     // context compaction marker
+  isSidechain: true          // agent branch
+}
+#+END_SRC
+
+This affects everything - parsing, rendering, navigation.
+We build the tree in buildMessageTree() using parentUuid lookups.
+
+*** Encoding Scheme
+
+Projects stored as path-encoded folder names:
+  /Users/eric/projects/myapp -> -Users-eric-projects-myapp
+
+*** Web Architecture
+
+Single-binary server, no external deps for frontend.
+All CSS/JS embedded in templates.go (~1200 lines).
+
+SSE for realtime updates (watch mode).
+SQLite for persistence (stars, tags).
+
+** What We Built
+
+*** CLI Commands
+
+| Command   | Purpose                        | Flags                               |
+|-----------+--------------------------------+-------------------------------------|
+| projects  | List all projects              | --sort=(time\|name\|sessions)       |
+| sessions  | List sessions (with picker)    | --project, --sort=(time\|messages)  |
+| view      | Interactive session viewer     | --project, --session, --follow      |
+| export    | Export to HTML/MD/Org/JSON     | --format, --output, --session       |
+| config    | Show configuration             | --json                              |
+| doctor    | Health check                   | (validates CLAUDE_CODE_HOME)        |
+| web       | Start web server               | --addr (default :8080)              |
+
+*** CLI Workflow Examples
+
+#+BEGIN_SRC bash
+# List all projects sorted by activity
+ccx projects --sort=time
+
+# Pick and view a session interactively
+ccx sessions
+ccx view
+
+# Export specific session to HTML
+ccx export --session=abc-123-uuid --format=html --output=session.html
+
+# Watch session in realtime (follows updates)
+ccx view --session=abc-123 --follow
+
+# Start web UI
+ccx web
+# Visit http://localhost:8080
+#+END_SRC
+
+*** Web Features
+
+Fixed header with theme toggle [*] and settings [=]
+
+Left sidebar navigation:
+- Projects (with session counts)
+- Search (global across all sessions)
+- Settings (view ~/.claude/settings.json)
+
+Session view components:
+- Tool sidebar (collapsible, shows tool call index)
+- Message tree with depth indicators
+- Thinking blocks (expandable)
+- Tool call/result display
+- Image preview for screenshots
+
+Navigation controls:
+- Export dropdown: HTML, Markdown, Org, JSON
+- Back-to-top button [^]
+- Breadcrumbs: Home > Project > Session
+
+Keyboard shortcuts:
+| Key     | Action                    |
+|---------+---------------------------|
+| j/k     | Scroll down/up            |
+| g/G     | Jump to top/bottom        |
+| /       | Focus search              |
+| t       | Toggle thinking blocks    |
+| w       | Toggle watch mode         |
+| Esc     | Close modals              |
+| [/]     | Prev/next message         |
+
+Theme system:
+- Light/dark toggle persisted in localStorage
+- CSS custom properties for colors
+- Respects prefers-color-scheme media query
+- Smooth transitions (200ms)
+
+*** Parser Features
+
+- Tree-aware message structure
+- Model ID extraction (claude-sonnet-4-5-20250929)
+- Tool call counting
+- Summary extraction
+- Sidechain detection (agent branches)
+- Compaction marker handling
+
+** Design Choices
+
+*** Depth Cap for Indentation
+
+Problem: Deep nesting becomes unreadable after 3-4 levels.
+Solution: Cap visual indent at depth-3, show depth badge for deeper messages.
+
+#+BEGIN_SRC css
+.depth-1 { margin-left: 16px; }
+.depth-2 { margin-left: 32px; }
+.depth-3 { margin-left: 48px; }
+.depth-max {
+    border-left-style: dashed;  /* Visual indicator for depth>3 */
+}
+#+END_SRC
+
+Messages deeper than level 3 show a badge like [depth:5] and use dashed border.
+This keeps the UI readable even for deeply nested agent chains.
+
+*** Claude-ish Styling
+
+Primary color: #da7756 (warm terracotta)
+Mono fonts: SF Mono, Consolas, Liberation Mono
+Clean, minimal chrome.
+
+*** ASCII Icons
+
+Using ASCII for buttons to stay terminal-friendly:
+- [*] theme toggle
+- [=] settings
+- [^] back to top
+- [<]/[>] collapse toggle
+
+** Performance Notes
+
+*** Two-Level Parsing Strategy
+
+Quick parse (quickParseSession) - single-pass, lightweight:
+- Scans JSONL without full message tree reconstruction
+- Extracts summary from first non-XML user message (max 100 chars)
+- Captures first/last timestamps for session duration
+- Counts messages, tool calls, continuations, sidechains
+- Used for project listings and session lists
+- O(lines) complexity per file
+
+Full parse (ParseSession) - complete tree reconstruction:
+- Parses all messages into structured ContentBlock arrays
+- Builds parent-child tree via buildMessageTree() using parentUuid
+- Handles text, tool_use, tool_result, thinking, image blocks
+- Extracts model IDs (claude-sonnet-4-5-20250929)
+- Used only when viewing individual sessions
+- O(messages) complexity with UUID map lookups
+
+*** Scanner Buffer Tuning
+
+#+BEGIN_SRC go
+scanner := bufio.NewScanner(file)
+buf := make([]byte, 0, 64*1024)
+scanner.Buffer(buf, 10*1024*1024)  // 10MB max line size
+#+END_SRC
+
+Large buffer handles massive tool results (e.g., Read tool output).
+
+*** Global Search
+
+O(projects * sessions) - acceptable for typical usage:
+- ~/.claude/projects/ typically has 10-50 projects
+- Each project has 5-100 sessions
+- Quick parse keeps search snappy even with 1000+ sessions
+
+** Files Changed
+
+| File                           | Lines | Purpose                     |
+|--------------------------------+-------+-----------------------------|
+| internal/parser/session.go     | 359   | JSONL parsing, tree build   |
+| internal/parser/project.go     | 167   | Project discovery           |
+| internal/parser/types.go       | 94    | Data structures             |
+| internal/parser/encoding.go    | 132   | Path encoding/decoding      |
+| internal/web/server.go         | 698   | HTTP handlers, SSE, export  |
+| internal/web/templates.go      | 1391  | HTML/CSS/JS generation      |
+| internal/db/db.go              | 234   | SQLite stars/tags           |
+| internal/cmd/root.go           | 44    | Root cobra command          |
+| internal/cmd/projects.go       | 125   | Projects list command       |
+| internal/cmd/sessions.go       | 143   | Sessions list command       |
+| internal/cmd/view.go           | 138   | Interactive session viewer  |
+| internal/cmd/export.go         | 138   | Export command              |
+| internal/cmd/config.go         | 128   | Config display command      |
+| internal/cmd/doctor.go         | 57    | Health check command        |
+| internal/cmd/web.go            | 71    | Web server command          |
+| internal/render/terminal.go    | 218   | Terminal-based rendering    |
+| internal/render/html.go        | 283   | HTML export                 |
+| internal/render/markdown.go    | 113   | Markdown export             |
+| internal/render/org.go         | 148   | Org-mode export             |
+| internal/render/export.go      | 82    | Export orchestration        |
+| internal/config/config.go      | 47    | CLAUDE_CODE_HOME logic      |
+| cmd/ccx/main.go                | 13    | Binary entry point          |
+|--------------------------------+-------+-----------------------------|
+| Total                          | 4873  |                             |
+
+** Technical Challenges Solved
+
+*** 1. Massive Tool Results
+
+Problem: Tool results can exceed default scanner buffer (64KB).
+Example: Read tool reading 100KB+ files, Grep results with thousands of matches.
+
+Solution: Increase scanner buffer to 10MB max line size.
+
+#+BEGIN_SRC go
+scanner.Buffer(buf, 10*1024*1024)
+#+END_SRC
+
+*** 2. Orphaned Messages
+
+Problem: Messages with parentUuid pointing to non-existent parent.
+Occurs when sessions are interrupted or compacted.
+
+Solution: Treat orphaned messages as roots in buildMessageTree().
+
+#+BEGIN_SRC go
+} else {
+    // Orphaned message (parent not found) -> treat as root
+    roots = append(roots, msg)
+}
+#+END_SRC
+
+*** 3. Summary Extraction
+
+Problem: First user message often contains XML metadata like <system-reminder>.
+Can't use raw first message as summary.
+
+Solution: Skip XML-like content (starts with "<"), take first clean user text.
+
+#+BEGIN_SRC go
+if strings.HasPrefix(text, "<") {
+    continue
+}
+#+END_SRC
+
+*** 4. Path Encoding Collisions
+
+Problem: Project paths like /Users/eric/foo and /users/eric/foo conflict on case-insensitive FS.
+
+Solution: Use simple slash->dash encoding (-Users-eric-foo).
+Collisions extremely rare in practice for real project paths.
+
+*** 5. Single Binary Deployment
+
+Problem: How to serve CSS/JS without external files or CDN deps?
+
+Solution: Embed templates in Go code (templates.go ~1400 lines).
+Trade-off: Larger binary (~2MB) for zero runtime dependencies.
+
+** Lessons Learned
+
+1. Read the data format first. Session trees != chat logs.
+2. Embedded CSS/JS keeps deployment simple (single binary).
+3. ASCII icons work surprisingly well for a CLI-adjacent tool.
+4. Quick parse + full parse pattern optimizes for list vs detail.
+5. Two-pass tree building (UUID map -> link) handles orphans gracefully.
+6. Large scanner buffers essential for tool-heavy sessions.
+
+** Implementation Details
+
+*** Tree Building Algorithm
+
+buildMessageTree() constructs parent-child relationships:
+
+#+BEGIN_SRC go
+func buildMessageTree(messages []*Message) []*Message {
+    byUUID := make(map[string]*Message)
+    for _, msg := range messages {
+        if msg.UUID != "" {
+            byUUID[msg.UUID] = msg
+        }
+    }
+
+    var roots []*Message
+    for _, msg := range messages {
+        if msg.ParentUUID == "" {
+            roots = append(roots, msg)
+        } else if parent, ok := byUUID[msg.ParentUUID]; ok {
+            parent.Children = append(parent.Children, msg)
+        } else {
+            // Orphaned message (parent not found) -> treat as root
+            roots = append(roots, msg)
+        }
+    }
+    return roots
+}
+#+END_SRC
+
+Two-pass algorithm:
+1. Build UUID index map
+2. Link children to parents via parentUuid field
+3. Orphaned messages (missing parent) become roots
+
+*** Content Block Parsing
+
+Handles 5 content block types:
+
+| Type        | Fields                          | Usage                      |
+|-------------+---------------------------------+----------------------------|
+| text        | Text                            | User/assistant messages    |
+| thinking    | Text                            | Extended thinking blocks   |
+| tool_use    | ToolName, ToolID, ToolInput     | Function calls             |
+| tool_result | ToolID, ToolResult, IsError     | Function returns           |
+| image       | MediaType, ImageData            | Screenshot/image content   |
+
+*** SSE Watch Mode
+
+Server-Sent Events for realtime session updates:
+
+#+BEGIN_SRC go
+w.Header().Set("Content-Type", "text/event-stream")
+w.Header().Set("Cache-Control", "no-cache")
+w.Header().Set("Connection", "keep-alive")
+
+flusher, ok := w.(http.Flusher)
+if !ok {
+    http.Error(w, "SSE not supported", http.StatusInternalServerError)
+    return
+}
+#+END_SRC
+
+Watches .jsonl file, streams new lines as SSE events.
+Client auto-appends to message tree.
+
+*** Data Model
+
+#+BEGIN_SRC go
+type Message struct {
+    UUID       string          // Unique message ID
+    ParentUUID string          // Tree link
+    Type       string          // "user" | "assistant"
+    Timestamp  time.Time       // RFC3339
+    Content    []ContentBlock  // Structured content
+    Children   []*Message      // Tree children
+
+    IsCompacted bool           // Context compaction marker
+    IsSidechain bool           // Agent/skill branch
+    AgentID     string         // Agent UUID (if sidechain)
+    Model       string         // claude-sonnet-4-5-20250929
+}
+
+type SessionStats struct {
+    MessageCount    int
+    UserPrompts     int
+    ToolCalls       int
+    Continuations   int  // Compacted messages
+    AgentSidechains int  // Agent branch count
+}
+#+END_SRC
+
+*** Export Formats
+
+All exports render the full message tree:
+
+- HTML: Styled standalone page with embedded CSS
+- Markdown: Nested headers (###) for tree depth
+- Org-mode: * heading depth, #+BEGIN_SRC blocks for code
+- JSON: Raw Session struct serialization
+
+*** Database Schema
+
+SQLite for persistence:
+
+#+BEGIN_SRC sql
+CREATE TABLE stars (
+    project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    starred_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (project_id, session_id)
+);
+
+CREATE TABLE tags (
+    project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (project_id, session_id, tag)
+);
+#+END_SRC
+
+Stored at ~/.claude/ccx.db
+
+*** HTTP API Endpoints
+
+Web server exposes REST + SSE API:
+
+**** Pages
+
+| Endpoint       | Method | Purpose                  |
+|----------------+--------+--------------------------|
+| /              | GET    | Home (project list)      |
+| /project/:name | GET    | Project detail           |
+| /session/:id   | GET    | Session viewer           |
+| /settings      | GET    | Settings page            |
+| /search        | GET    | Global search page       |
+
+**** API
+
+| Endpoint              | Method | Purpose                     |
+|-----------------------+--------+-----------------------------|
+| /api/projects         | GET    | List all projects (JSON)    |
+| /api/sessions/:proj   | GET    | List sessions for project   |
+| /api/session/:id      | GET    | Get full session tree       |
+| /api/stats            | GET    | Global statistics           |
+| /api/settings         | GET    | ~/.claude/settings.json     |
+| /api/export/:id       | GET    | Export session (?format=)   |
+| /api/search           | GET    | Search sessions (?q=)       |
+| /api/watch/:id        | GET    | SSE stream for session      |
+| /api/star             | POST   | Star/unstar session         |
+| /api/stars            | GET    | Get all starred sessions    |
+
+Example API usage:
+
+#+BEGIN_SRC bash
+# Get all projects
+curl http://localhost:8080/api/projects
+
+# Get session tree
+curl http://localhost:8080/api/session/abc-123-uuid
+
+# Export to markdown
+curl http://localhost:8080/api/export/abc-123?format=md > session.md
+
+# Watch session updates (SSE)
+curl -N http://localhost:8080/api/watch/abc-123
+
+# Star a session
+curl -X POST http://localhost:8080/api/star \
+  -d '{"project":"myproject","session":"abc-123","starred":true}'
+#+END_SRC
+
+** Stats & Metrics
+
+*** Codebase
+
+| Metric                  | Count |
+|-------------------------+-------|
+| Total Go LOC            | 4873  |
+| Packages                | 6     |
+| CLI commands            | 7     |
+| Export formats          | 4     |
+| Content block types     | 5     |
+| Keyboard shortcuts      | 8     |
+| API endpoints           | 10    |
+| Database tables         | 2     |
+
+*** Binary
+
+| Metric            | Value      |
+|-------------------+------------|
+| Compiled size     | ~2MB       |
+| Runtime deps      | 0          |
+| Go version        | 1.21+      |
+| Build time        | ~3s        |
+
+*** Web UI
+
+| Metric                | Value  |
+|-----------------------+--------|
+| Templates LOC         | 1391   |
+| Embedded CSS          | ~400   |
+| Embedded JS           | ~600   |
+| Theme colors          | 12     |
+| Depth levels rendered | 3+cap  |
+
+*** Performance (typical session with 100 messages)
+
+| Operation       | Time    | Notes                           |
+|-----------------+---------+---------------------------------|
+| Quick parse     | ~5ms    | Summary + stats only            |
+| Full parse      | ~20ms   | Complete tree reconstruction    |
+| Render terminal | ~10ms   | CLI view output                 |
+| Render HTML     | ~15ms   | Export with embedded CSS        |
+| SSE update      | <1ms    | Single message append           |
+
+** Next Steps
+
+v0.2.0 planning:
+
+- Full-text search in session content (grep-style within messages)
+- Agent/skill listing from CLAUDE_CODE_HOME/agents/
+- Session diff view (tree-aware comparison between sessions)
+- Cost estimation (model ID -> pricing, estimate from message counts)
+- Export to PDF with syntax highlighting (via wkhtmltopdf or similar)
+- Statistics dashboard (top tools, session duration histograms)
+- Custom tagging system (beyond stars)
+- Keyboard shortcuts help overlay (? key)

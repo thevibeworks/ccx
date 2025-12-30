@@ -1,0 +1,201 @@
+* [2025-12-29] Dev Log: UI/JS Implementation Failures Analysis      :LESSONS:
+
+** Context
+Web UI implementation for ccx session viewer (/cmd/ccx/web.go, embedded templates).
+
+** Why
+Repeated UI/JS bugs from incorrect assumptions and API misuse causing broken navigation, state loss, and poor UX.
+
+** What - Failures Catalog
+*** F1: User Navigation Selector Bug                                   :BUG:
+- Used =.block-user= CSS selector without verifying actual HTML structure
+- Actual HTML uses =.turn-user= class
+- Result: Navigation buttons did nothing, silent failure
+
+*** F2: Watch Mode State Loss                                          :BUG:
+- Used =location.reload()= to refresh content in watch mode
+- Killed all JS state (scroll position, active section, UI toggles)
+- Didn't think through state lifecycle: what survives reload?
+- Result: Jarring UX, lost context on every update
+
+*** F3: Scrollspy Position Calculation                                 :BUG:
+- Used =element.offsetTop= (parent-relative coordinate)
+- Needed =element.getBoundingClientRect().top= (viewport-relative)
+- Didn't understand API semantics before using
+- Result: Incorrect active section highlighting
+
+*** F4: Toolbar Icon Cryptic Symbols                                    :UX:
+- Used Unicode symbols (↑ ↓ ⋮) instead of text labels
+- Assumed symbols were self-documenting
+- Result: Users confused about button purpose
+
+*** F5: Sidebar Positioning Confusion                                  :BUG:
+- Confused =position: fixed= vs =position: sticky=
+- Didn't clarify user intent (viewport-anchored vs scroll-anchored)
+- Result: Wrong positioning behavior
+
+** How - Root Cause Analysis
+*** Pattern: Assumption-Driven Coding
+- Writing selectors without inspecting actual DOM
+- Using APIs without reading documentation
+- Implementing features without understanding requirements
+
+*** Pattern: Symptom Fixing
+- Patching surface issues without diagnosing root cause
+- Not asking "why did this happen?" before fixing
+- Accumulating technical debt from quick fixes
+
+*** Pattern: API Misuse
+- =offsetTop= vs =getBoundingClientRect()= - didn't understand coordinate systems
+- =location.reload()= - didn't consider state preservation
+- =fixed= vs =sticky= - didn't understand CSS positioning contexts
+
+*** Pattern: Overengineering
+- Complex scroll math when =scrollIntoView()= exists
+- Manual state management when simpler solutions available
+- Adding features without validating necessity
+
+** Result
+*** Failures Summary
+| Failure | Impact | Time Wasted | Fix Complexity |
+|---------+--------+-------------+----------------|
+| F1      | High   | 15min       | Trivial        |
+| F2      | High   | 30min       | Medium         |
+| F3      | Medium | 20min       | Trivial        |
+| F4      | Low    | 10min       | Trivial        |
+| F5      | Medium | 15min       | Trivial        |
+
+Total time wasted: ~90min on preventable bugs.
+
+*** Actual Fixes
+#+BEGIN_SRC diff
+--- a/templates/session.html
++++ b/templates/session.html
+@@ -1,7 +1,7 @@
+ // F1: Wrong selector
+-const userBlocks = document.querySelectorAll('.block-user');
++const userBlocks = document.querySelectorAll('.turn-user');
+
+ // F2: State-killing reload
+-location.reload();
++fetch('/api/session/' + sessionId).then(r => r.text()).then(html => {
++  document.querySelector('#content').innerHTML = html;
++  // Preserve scroll position, active section, etc.
++});
+
+ // F3: Wrong coordinate system
+-const scrollTop = element.offsetTop;
++const rect = element.getBoundingClientRect();
++const scrollTop = rect.top + window.scrollY;
+
+ // F4: Cryptic symbols
+-<button>↑</button>
++<button>Previous User Turn</button>
+
+ // F5: Positioning confusion
+-position: fixed;  /* User wanted scroll-anchored */
++position: sticky; /* Correct for content-relative positioning */
+#+END_SRC
+
+** Lessons - Operational Discipline
+*** L1: Verify Before Code
+- Inspect actual HTML/DOM before writing selectors
+- Read API docs before using unfamiliar functions
+- Run mental execution trace: "What will this actually do?"
+
+**** Checklist
+- [ ] Inspected actual DOM structure?
+- [ ] Read API documentation?
+- [ ] Traced code path mentally?
+- [ ] Identified edge cases?
+
+*** L2: Understand State Lifecycle
+- Map out what state exists (scroll, UI toggles, selections)
+- Identify what survives reload (nothing) vs stays (localStorage, URL params)
+- Choose state preservation strategy upfront
+
+**** State Survival Matrix
+| State Type       | Survives reload() | Preservation Strategy          |
+|------------------+-------------------+--------------------------------|
+| Scroll position  | No                | Save/restore in sessionStorage |
+| UI toggles       | No                | URL params or localStorage     |
+| Form data        | No                | FormData backup before reload  |
+| Active section   | No                | Anchor hash in URL             |
+
+*** L3: API Selection Discipline
+- Use simplest API that solves problem
+- Understand coordinate systems (viewport vs parent vs document)
+- Prefer high-level APIs over manual math
+
+**** Examples
+| Need                  | Wrong API      | Right API               | Why                      |
+|-----------------------+----------------+-------------------------+--------------------------|
+| Viewport position     | offsetTop      | getBoundingClientRect() | Different coord systems  |
+| Scroll to element     | Manual math    | scrollIntoView()        | Built-in handles edge    |
+| Refresh content       | location.reload| fetch() + innerHTML     | Preserves state          |
+
+*** L4: UX Clarity Over Cleverness
+- Text labels > Unicode symbols
+- Explicit > implicit behavior
+- Users shouldn't guess what buttons do
+
+**** Before/After
+#+BEGIN_SRC html
+<!-- Before: Cryptic -->
+<button title="Previous">↑</button>
+<button title="Next">↓</button>
+<button title="Menu">⋮</button>
+
+<!-- After: Clear -->
+<button>↑ Prev User</button>
+<button>↓ Next User</button>
+<button>☰ Menu</button>
+#+END_SRC
+
+*** L5: Clarify Intent Before Implementation
+- When user says "fixed position", ask: "Relative to what?"
+- When requirements unclear, ask ONE decision-relevant question
+- Implement after understanding, not before
+
+**** Disambiguation Questions
+| Vague Request      | Clarifying Question                           |
+|--------------------+-----------------------------------------------|
+| "Make it fixed"    | Fixed to viewport or to scrolling content?    |
+| "Add navigation"   | Between all turns or only user turns?         |
+| "Auto-refresh"     | Preserve scroll position and UI state?        |
+
+** Decisions
+| Decision                          | Alternatives           | Rationale                          | DRI   | Timestamp (UTC)      |
+|-----------------------------------+------------------------+------------------------------------+-------+----------------------|
+| Use text labels not Unicode       | Keep symbols           | Clarity > aesthetics               | @eric | 2025-12-29T14:30:00Z |
+| Fetch API for refresh not reload  | location.reload()      | State preservation required        | @eric | 2025-12-29T14:30:00Z |
+| getBoundingClientRect for scrolly | offsetTop              | Viewport coords needed             | @eric | 2025-12-29T14:30:00Z |
+
+** WIP
+- [X] Document failure patterns
+- [X] Extract operational lessons
+- [X] Create verification checklist
+- [ ] Apply lessons to remaining UI work
+- [ ] Code review existing templates against checklist
+
+** Notes
+*** Assumptions That Failed
+- "CSS selector names are self-documenting" - NO, verify actual HTML
+- "location.reload() is simplest refresh" - NO, kills state
+- "offsetTop gives scroll position" - NO, parent-relative not viewport-relative
+- "Unicode symbols are universal" - NO, context-dependent meaning
+
+*** Constraints
+- No external JS frameworks (vanilla JS only)
+- Must work without JS (progressive enhancement)
+- Single binary deployment (no CDN dependencies)
+
+*** Open Questions
+- Should we add E2E tests to catch selector bugs? (@eric decides)
+- Worth adding TypeScript for better API safety? (probably overkill for embedded templates)
+
+*** Gotchas
+- =offsetTop= is relative to =offsetParent=, not document or viewport
+- =location.reload()= kills ALL JavaScript state, no exceptions
+- CSS =position: fixed= is viewport-relative, =sticky= is content-relative
+- =scrollIntoView()= has =block= and =inline= params that matter

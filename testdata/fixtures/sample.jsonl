@@ -1,0 +1,4 @@
+{"type":"user","timestamp":"2025-12-28T10:00:00Z","uuid":"user-1","message":{"role":"user","content":"Build a JSONL parser"}}
+{"type":"assistant","timestamp":"2025-12-28T10:00:05Z","uuid":"assist-1","parentUuid":"user-1","message":{"role":"assistant","content":[{"type":"text","text":"I'll create a JSONL parser for you."},{"type":"tool_use","name":"Write","id":"tool-1","input":{"file_path":"parser.go","content":"package parser"}}]}}
+{"type":"user","timestamp":"2025-12-28T10:01:00Z","uuid":"user-2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"File written successfully"}]}}
+{"type":"assistant","timestamp":"2025-12-28T10:01:05Z","uuid":"assist-2","message":{"role":"assistant","content":[{"type":"text","text":"The parser has been created."}]}}
