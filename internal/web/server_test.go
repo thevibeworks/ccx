@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/claude-code/ccx/internal/db"
+	"github.com/thevibeworks/ccx/internal/db"
 )
 
 func setupTestDir(t *testing.T) string {

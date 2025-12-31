@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/claude-code/ccx/internal/config"
-	"github.com/claude-code/ccx/internal/db"
-	"github.com/claude-code/ccx/internal/web"
+	"github.com/thevibeworks/ccx/internal/config"
+	"github.com/thevibeworks/ccx/internal/db"
+	"github.com/thevibeworks/ccx/internal/web"
 )
 
 var webCmd = &cobra.Command{

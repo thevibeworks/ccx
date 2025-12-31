@@ -1,4 +1,4 @@
-module github.com/claude-code/ccx
+module github.com/thevibeworks/ccx
 
 go 1.22
 

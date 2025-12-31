@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/claude-code/ccx/internal/config"
-	"github.com/claude-code/ccx/internal/db"
-	"github.com/claude-code/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/config"
+	"github.com/thevibeworks/ccx/internal/db"
+	"github.com/thevibeworks/ccx/internal/parser"
 )
 
 var (

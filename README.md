@@ -7,12 +7,12 @@ Inspired by [Simon Willison's claude-code-transcripts](https://github.com/simonw
 ## Installation
 
 ```bash
-go install github.com/claude-code/ccx/cmd/ccx@latest
+go install github.com/thevibeworks/ccx/cmd/ccx@latest
 ```
 
 Or build from source:
 ```bash
-git clone https://github.com/claude-code/ccx
+git clone https://github.com/thevibeworks/ccx
 cd ccx
 make install
 ```

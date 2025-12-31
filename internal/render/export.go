@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/claude-code/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/parser"
 )
 
 type ExportOptions struct {

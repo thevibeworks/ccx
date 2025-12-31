@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/claude-code/ccx/internal/config"
-	"github.com/claude-code/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/config"
+	"github.com/thevibeworks/ccx/internal/parser"
 )
 
 var doctorCmd = &cobra.Command{

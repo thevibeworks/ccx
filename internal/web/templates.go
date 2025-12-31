@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/claude-code/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/parser"
 )
 
 var idSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_-]`)

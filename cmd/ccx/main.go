@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/claude-code/ccx/internal/cmd"
+	"github.com/thevibeworks/ccx/internal/cmd"
 )
 
 var (
