@@ -36,6 +36,12 @@ type Session struct {
 	RootMessages []*Message
 	Stats        SessionStats
 	Branches     []Branch // For resume view tree structure
+
+	// Metadata from session messages
+	Slug      string // Human-readable name like "melodic-cooking-piglet"
+	Version   string // Claude Code version used
+	GitBranch string // Git branch at session start
+	CWD       string // Working directory
 }
 
 // Branch represents a conversation branch (for resume tree view)
@@ -113,6 +119,12 @@ type rawMessage struct {
 	Summary          string         `json:"summary"` // For summary type
 	LeafUUID         string         `json:"leafUuid"` // For summary type
 	Usage            *usageData     `json:"usage"`    // Token usage from API
+
+	// Session metadata (extracted from first messages)
+	Slug      string `json:"slug"`      // Human-readable name like "melodic-cooking-piglet"
+	Version   string `json:"version"`   // Claude Code version
+	GitBranch string `json:"gitBranch"` // Git branch at session start
+	CWD       string `json:"cwd"`       // Working directory
 }
 
 type usageData struct {

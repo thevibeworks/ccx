@@ -340,6 +340,9 @@ func handleWatch(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "event: connected\ndata: {\"status\":\"watching\"}\n\n")
 	flusher.Flush()
 
+	const maxChunkSize = 1 << 20 // 1MB cap to prevent DoS
+	var partialLine string
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -358,23 +361,38 @@ func handleWatch(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
+			// Cap chunk size to prevent huge allocations
+			chunkSize := newSize - lastSize
+			if chunkSize > maxChunkSize {
+				chunkSize = maxChunkSize
+			}
+
 			// Read new content
 			file, err := os.Open(filePath)
 			if err != nil {
 				continue
 			}
 			file.Seek(lastSize, 0)
-			newBytes := make([]byte, newSize-lastSize)
+			newBytes := make([]byte, chunkSize)
 			n, err := file.Read(newBytes)
 			file.Close()
 			if err != nil || n == 0 {
 				continue
 			}
-			lastSize = newSize
+			lastSize += int64(n)
 
-			// Send each new line as separate event with actual content
-			lines := strings.Split(string(newBytes[:n]), "\n")
-			for _, line := range lines {
+			// Combine with any partial line from previous read
+			data := partialLine + string(newBytes[:n])
+			partialLine = ""
+
+			// Send each complete line
+			lines := strings.Split(data, "\n")
+			for i, line := range lines {
+				// Last element may be partial if chunk didn't end with newline
+				if i == len(lines)-1 && !strings.HasSuffix(data, "\n") {
+					partialLine = line
+					continue
+				}
 				line = strings.TrimSpace(line)
 				if line == "" {
 					continue

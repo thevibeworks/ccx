@@ -4,18 +4,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/claude-code/ccx/internal/parser"
 )
 
+var idSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
+func sanitizeID(s string) string {
+	return idSanitizer.ReplaceAllString(s, "")
+}
+
 const maxIndentDepth = 3
 
 func renderIndexPage(projects []*parser.Project, totalSessions int, search, sortBy string) string {
 	var b strings.Builder
 
-	b.WriteString(pageHeader("ccx - Claude Code Explorer", "light"))
+	b.WriteString(pageHeader("ccx", "light"))
 	b.WriteString(renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
 	b.WriteString(renderSidebar("projects"))
@@ -173,7 +180,7 @@ func renderSessionPage(session *parser.Session, projectName string, showThinking
 	b.WriteString(`</div>`)
 
 	// Tail spinner for watch mode
-	b.WriteString(`<div class="tail-spinner"><span class="cli-spinner-char"></span> Watching for updates...</div>`)
+	b.WriteString(`<div class="tail-spinner"><span class="cli-spinner-char"></span> Tailing session...</div>`)
 
 	// Tail output container for watch mode
 	b.WriteString(`<div class="tail-output" id="tail-output" style="display:none"></div>`)
@@ -199,11 +206,11 @@ func renderSessionPage(session *parser.Session, projectName string, showThinking
 		toolsActive = " active"
 	}
 	b.WriteString(fmt.Sprintf(`<button class="dock-btn toggle%s" id="tb-thinking" title="Thinking (t)"><span class="dock-icon">∴</span><span class="dock-label">Think</span></button>`, thinkingActive))
-	b.WriteString(fmt.Sprintf(`<button class="dock-btn toggle%s" id="tb-tools" title="Tools (o)"><span class="dock-icon">⚙</span><span class="dock-label">Tools</span></button>`, toolsActive))
+	b.WriteString(fmt.Sprintf(`<button class="dock-btn toggle%s" id="tb-tools" title="Tools (o)"><span class="dock-icon">◎</span><span class="dock-label">Tools</span></button>`, toolsActive))
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="dock-sep"></div>`)
 	b.WriteString(`<div class="dock-group dock-live">`)
-	b.WriteString(`<button class="dock-btn live-btn" id="tb-watch" title="Watch live (w)"><span class="dock-pulse"></span><span class="dock-icon">◉</span><span class="dock-label">Live</span></button>`)
+	b.WriteString(`<button class="dock-btn live-btn" id="tb-watch" title="Watch live (w)"><span class="dock-icon">◉</span><span class="dock-label">Live</span></button>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="dock-sep"></div>`)
 	b.WriteString(`<div class="dock-group dock-actions">`)
@@ -226,7 +233,23 @@ func renderSessionPage(session *parser.Session, projectName string, showThinking
 	b.WriteString(`<div class="info-panel" id="info-panel">`)
 	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Project</span><a href="/project/%s">%s</a></div>`,
 		html.EscapeString(projectName), html.EscapeString(projDisplay)))
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Session</span><code>%s</code></div>`, html.EscapeString(session.ID)))
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Session</span><code class="copyable">%s</code><button class="copy-btn-sm" data-copy="%s">⧉</button></div>`,
+		html.EscapeString(session.ID), html.EscapeString(session.ID)))
+	if session.Slug != "" {
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Slug</span><code class="copyable">%s</code><button class="copy-btn-sm" data-copy="%s">⧉</button></div>`,
+			html.EscapeString(session.Slug), html.EscapeString(session.Slug)))
+	}
+	if session.Version != "" {
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Version</span>%s</div>`, html.EscapeString(session.Version)))
+	}
+	if session.GitBranch != "" {
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Branch</span><code>%s</code></div>`, html.EscapeString(session.GitBranch)))
+	}
+	if session.CWD != "" {
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">CWD</span><code class="info-cwd" title="%s">%s</code></div>`,
+			html.EscapeString(session.CWD), html.EscapeString(truncatePath(session.CWD, 40))))
+	}
+	b.WriteString(`<div class="info-divider"></div>`)
 	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Started</span>%s</div>`, session.StartTime.Format("2006-01-02 15:04")))
 	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Duration</span>%s</div>`, formatDuration(session.Stats.DurationSeconds)))
 	b.WriteString(`<div class="info-divider"></div>`)
@@ -388,7 +411,7 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 		if cmdName == "" {
 			cmdName = "/command"
 		}
-		b.WriteString(fmt.Sprintf(`<div class="turn turn-command%s" id="msg-%s">`, levelClass, msg.UUID))
+		b.WriteString(fmt.Sprintf(`<div class="turn turn-command%s" id="msg-%s">`, levelClass, sanitizeID(msg.UUID)))
 		b.WriteString(`<div class="turn-header">`)
 		b.WriteString(`<span class="turn-icon">⌘</span>`)
 		b.WriteString(fmt.Sprintf(`<span class="turn-role">%s</span>`, html.EscapeString(cmdName)))
@@ -434,13 +457,13 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 	// USER blocks are collapsible
 	if msg.Kind == parser.KindUserPrompt {
 		preview := getFirstTextPreview(msg, 60)
-		b.WriteString(fmt.Sprintf(`<details class="%s" id="msg-%s" open>`, turnClass, msg.UUID))
+		b.WriteString(fmt.Sprintf(`<details class="%s" id="msg-%s" open>`, turnClass, sanitizeID(msg.UUID)))
 		b.WriteString(`<summary class="turn-header">`)
 		b.WriteString(fmt.Sprintf(`<span class="turn-icon">%s</span>`, icon))
 		b.WriteString(fmt.Sprintf(`<span class="turn-role">%s</span>`, role))
 		b.WriteString(fmt.Sprintf(`<span class="turn-preview">%s</span>`, html.EscapeString(preview)))
 		b.WriteString(fmt.Sprintf(`<span class="turn-time">%s</span>`, msg.Timestamp.Format("15:04:05")))
-		b.WriteString(fmt.Sprintf(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(this)">copy</button></span>`))
+		b.WriteString(fmt.Sprintf(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>`))
 		b.WriteString(`</summary>`)
 		b.WriteString(fmt.Sprintf(`<div class="turn-body" data-raw="%s">`, html.EscapeString(rawContent)))
 		for _, block := range msg.Content {
@@ -451,7 +474,7 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 		return
 	}
 
-	b.WriteString(fmt.Sprintf(`<div class="%s" id="msg-%s">`, turnClass, msg.UUID))
+	b.WriteString(fmt.Sprintf(`<div class="%s" id="msg-%s">`, turnClass, sanitizeID(msg.UUID)))
 
 	b.WriteString(`<div class="turn-header">`)
 	b.WriteString(fmt.Sprintf(`<span class="turn-icon">%s</span>`, icon))
@@ -460,7 +483,7 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 	if msg.Model != "" {
 		b.WriteString(fmt.Sprintf(`<span class="turn-model">%s</span>`, html.EscapeString(msg.Model)))
 	}
-	b.WriteString(fmt.Sprintf(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(this)">copy</button></span>`))
+	b.WriteString(fmt.Sprintf(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>`))
 	b.WriteString(`</div>`)
 
 	b.WriteString(fmt.Sprintf(`<div class="turn-body" data-raw="%s">`, html.EscapeString(rawContent)))
@@ -500,9 +523,9 @@ func renderBlock(b *strings.Builder, block parser.ContentBlock, showThinking, sh
 		}
 		// Compact preview for common tools
 		preview := compactToolPreview(block.ToolName, block.ToolInput)
-		b.WriteString(fmt.Sprintf(`<details class="block-tool" id="tool-%s"%s>`, block.ToolID, openAttr))
-		b.WriteString(fmt.Sprintf(`<summary><span class="block-icon">●</span> %s<span class="tool-preview">%s</span><span class="tool-actions"><button class="raw-toggle" onclick="toggleRaw(event, '%s')">raw</button><button class="copy-btn" onclick="copyBlock(event)">copy</button></span></summary>`,
-			html.EscapeString(block.ToolName), html.EscapeString(preview), block.ToolID))
+		b.WriteString(fmt.Sprintf(`<details class="block-tool" id="tool-%s" data-tool-id="%s"%s>`, sanitizeID(block.ToolID), html.EscapeString(block.ToolID), openAttr))
+		b.WriteString(fmt.Sprintf(`<summary><span class="block-icon">●</span> %s<span class="tool-preview">%s</span><span class="tool-actions"><button class="raw-toggle">raw</button><button class="copy-btn">copy</button></span></summary>`,
+			html.EscapeString(block.ToolName), html.EscapeString(preview)))
 
 		// Tool input section
 		if block.ToolInput != nil {
@@ -934,6 +957,14 @@ func formatDuration(seconds float64) string {
 	return fmt.Sprintf("%dh %dm", h, m)
 }
 
+func truncatePath(path string, maxLen int) string {
+	if len(path) <= maxLen {
+		return path
+	}
+	// Show end of path (most relevant part)
+	return "..." + path[len(path)-maxLen+3:]
+}
+
 func formatTokens(n int) string {
 	if n >= 1000000 {
 		return fmt.Sprintf("%.1fM", float64(n)/1000000)
@@ -1046,12 +1077,12 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 		switch g.user.Kind {
 		case parser.KindCompactSummary:
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-compact" data-msg="%s">`,
-				g.user.UUID, g.user.UUID))
+				sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
 			b.WriteString(`<span class="nav-icon">◇</span><span class="nav-text">COMPACT</span></a>`)
 
 		case parser.KindCommand:
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-command" data-msg="%s">`,
-				g.user.UUID, g.user.UUID))
+				sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
 			b.WriteString(fmt.Sprintf(`<span class="nav-icon">⌘</span><span class="nav-text">%s</span></a>`,
 				html.EscapeString(g.user.CommandName)))
 
@@ -1062,7 +1093,7 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 			if childCount == 0 {
 				// No children - simple link
 				b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-user" data-msg="%s">`,
-					g.user.UUID, g.user.UUID))
+					sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
 				b.WriteString(fmt.Sprintf(`<span class="nav-icon">▶</span><span class="nav-text">%s</span></a>`,
 					html.EscapeString(preview)))
 			} else {
@@ -1072,7 +1103,7 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 					openAttr = " open"
 				}
 				b.WriteString(fmt.Sprintf(`<details class="nav-group"%s>`, openAttr))
-				b.WriteString(fmt.Sprintf(`<summary class="nav-item nav-user" data-msg="%s">`, g.user.UUID))
+				b.WriteString(fmt.Sprintf(`<summary class="nav-item nav-user" data-msg="%s">`, html.EscapeString(sanitizeID(g.user.UUID))))
 				b.WriteString(fmt.Sprintf(`<span class="nav-icon">▶</span><span class="nav-text">%s</span>`,
 					html.EscapeString(preview)))
 				b.WriteString(fmt.Sprintf(`<span class="nav-count">%d</span>`, childCount))
@@ -1123,7 +1154,7 @@ func renderNavChild(b *strings.Builder, msg *parser.Message) {
 		}
 		if hasTool {
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-tool" data-msg="%s" title="%s">`,
-				msg.UUID, msg.UUID, html.EscapeString(toolPreview)))
+				sanitizeID(msg.UUID), html.EscapeString(sanitizeID(msg.UUID)), html.EscapeString(toolPreview)))
 			navText := toolName
 			if toolPreview != "" && len(toolPreview) < 30 {
 				navText = fmt.Sprintf("%s(%s)", toolName, toolPreview)
@@ -1132,12 +1163,12 @@ func renderNavChild(b *strings.Builder, msg *parser.Message) {
 				html.EscapeString(navText)))
 		} else {
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-response" data-msg="%s">`,
-				msg.UUID, msg.UUID))
+				sanitizeID(msg.UUID), html.EscapeString(sanitizeID(msg.UUID))))
 			b.WriteString(`<span class="nav-icon">○</span><span class="nav-text">response</span></a>`)
 		}
 	case parser.KindMeta:
 		b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-meta" data-msg="%s">`,
-			msg.UUID, msg.UUID))
+			sanitizeID(msg.UUID), html.EscapeString(sanitizeID(msg.UUID))))
 		b.WriteString(`<span class="nav-icon">▽</span><span class="nav-text">system</span></a>`)
 	}
 }
@@ -1205,19 +1236,20 @@ function renderResults(results) {
   }
   let html = '<div class="search-list">';
   for (const r of results) {
-    if (r.type === 'project') {
-      html += '<a href="/project/' + r.project_encoded + '" class="search-item search-project">';
-      html += '<span class="search-type">[P]</span>';
-      html += '<span class="search-title">' + escapeHtml(r.title) + '</span>';
-      html += '<span class="search-snippet">' + escapeHtml(r.snippet) + '</span>';
-      html += '</a>';
-    } else {
-      html += '<a href="/session/' + r.project_encoded + '/' + r.session_id + '" class="search-item search-session">';
-      html += '<span class="search-type">[S]</span>';
-      html += '<span class="search-title">' + escapeHtml(r.title) + '</span>';
-      html += '<span class="search-snippet">' + escapeHtml(r.project_name) + ' | ' + escapeHtml(r.snippet) + '</span>';
-      html += '</a>';
+    const badge = r.type === 'project' ? '<span class="result-badge badge-project">P</span>' :
+                  r.type === 'session' ? '<span class="result-badge badge-session">S</span>' :
+                  '<span class="result-badge badge-message">M</span>';
+    const url = r.type === 'project' ? '/project/' + r.project_encoded :
+                '/session/' + r.project_encoded + '/' + r.session_id;
+    html += '<a href="' + url + '" class="search-result">';
+    html += badge;
+    html += '<div class="result-body">';
+    html += '<div class="result-title">' + escapeHtml(r.title || r.summary || 'Untitled') + '</div>';
+    html += '<div class="result-meta">' + escapeHtml(r.project_name || '') + (r.time ? ' · ' + escapeHtml(r.time) : '') + '</div>';
+    if (r.snippet) {
+      html += '<div class="result-snippet">' + escapeHtml(r.snippet) + '</div>';
     }
+    html += '</div></a>';
   }
   html += '</div>';
   resultsDiv.innerHTML = html;
@@ -1261,23 +1293,19 @@ if (%q) doSearch(%q);
 .search-hint, .search-empty, .search-error { color: var(--text-muted); font-size: 13px; }
 .search-error { color: var(--error-border); }
 .search-list { display: flex; flex-direction: column; gap: 8px; }
-.search-item {
+.search-list .search-result {
   display: flex;
   gap: 10px;
-  align-items: center;
+  align-items: flex-start;
   padding: 12px;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   text-decoration: none;
   color: inherit;
+  position: static;
 }
-.search-item:hover { border-color: var(--primary); }
-.search-type { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
-.search-title { flex: 1; font-weight: 500; }
-.search-snippet { font-size: 12px; color: var(--text-muted); }
-.search-project { border-left: 3px solid var(--primary); }
-.search-session { border-left: 3px solid var(--assistant-border); }
+.search-list .search-result:hover { border-color: var(--primary); background: var(--bg-tertiary); }
 </style>
 `, initialQuery, initialQuery)
 }
@@ -1296,7 +1324,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, agents []Agent
 	// Global Configuration
 	if config != nil {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(`<h2>⚙ Configuration</h2>`)
+		b.WriteString(`<h2><span class="section-icon">●</span> Configuration</h2>`)
 		b.WriteString(`<table class="settings-table">`)
 		b.WriteString(fmt.Sprintf(`<tr><td>Theme</td><td><code>%s</code></td></tr>`, html.EscapeString(config.Theme)))
 		b.WriteString(fmt.Sprintf(`<tr><td>Editor Mode</td><td><code>%s</code></td></tr>`, html.EscapeString(config.EditorMode)))
@@ -1309,7 +1337,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, agents []Agent
 	// Permissions
 	if settings != nil {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(`<h2>🔐 Permissions</h2>`)
+		b.WriteString(`<h2><span class="section-icon">◐</span> Permissions</h2>`)
 		b.WriteString(`<table class="settings-table">`)
 		for k, v := range settings.Permissions {
 			b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td><code>%s</code></td></tr>`, html.EscapeString(k), html.EscapeString(v)))
@@ -1319,7 +1347,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, agents []Agent
 
 		if len(settings.EnabledPlugins) > 0 {
 			b.WriteString(`<section class="settings-section">`)
-			b.WriteString(fmt.Sprintf(`<h2>🔌 Enabled Plugins <span class="count">(%d)</span></h2>`, len(settings.EnabledPlugins)))
+			b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◎</span> Enabled Plugins <span class="count">(%d)</span></h2>`, len(settings.EnabledPlugins)))
 			b.WriteString(`<ul class="plugin-list">`)
 			for plugin, enabled := range settings.EnabledPlugins {
 				if enabled {
@@ -1332,7 +1360,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, agents []Agent
 
 		if len(settings.Env) > 0 {
 			b.WriteString(`<section class="settings-section">`)
-			b.WriteString(`<h2>🌐 Environment</h2>`)
+			b.WriteString(`<h2><span class="section-icon">◇</span> Environment</h2>`)
 			b.WriteString(`<table class="settings-table">`)
 			for k, v := range settings.Env {
 				b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td><code>%s</code></td></tr>`, html.EscapeString(k), html.EscapeString(v)))
@@ -1345,7 +1373,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, agents []Agent
 	// Agents - expandable with file content viewer
 	if len(agents) > 0 {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(fmt.Sprintf(`<h2>◆ Agents <span class="count">(%d)</span></h2>`, len(agents)))
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◆</span> Agents <span class="count">(%d)</span></h2>`, len(agents)))
 		b.WriteString(`<div class="file-card-list">`)
 		for i, agent := range agents {
 			b.WriteString(fmt.Sprintf(`<details class="file-card agent-card" data-path="%s" data-idx="%d">`, html.EscapeString(agent.FilePath), i))
@@ -1362,7 +1390,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, agents []Agent
 	// Skills - expandable with file content viewer
 	if len(skills) > 0 {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(fmt.Sprintf(`<h2>✦ Skills <span class="count">(%d)</span></h2>`, len(skills)))
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◈</span> Skills <span class="count">(%d)</span></h2>`, len(skills)))
 		b.WriteString(`<div class="file-card-list">`)
 		for i, skill := range skills {
 			// For skills, show skill.md inside the directory
@@ -1507,21 +1535,24 @@ function showFormatted(el, raw) {
   el.innerHTML = '<div class="fmt">' + renderMarkdownFull(raw) + '</div>';
 }
 function showRaw(el, raw) {
-  el.innerHTML = '<pre class="source-raw">' + escapeHtml(raw) + '</pre>';
+  el.innerHTML = '<pre class="source-raw">' + escapeHtmlSettings(raw) + '</pre>';
 }
-function escapeHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function escapeHtmlSettings(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function sanitizeLang(lang) {
+  return lang ? lang.replace(/[^a-zA-Z0-9_-]/g, '') : 'text';
 }
 function renderMarkdownFull(s) {
   const BT = '` + "`" + `';
-  // First extract code blocks to protect them
+  // Extract code blocks first
   const codeBlocks = [];
   s = s.replace(new RegExp(BT+BT+BT+'(\\w*)\\n([\\s\\S]*?)'+BT+BT+BT, 'g'), (m, lang, code) => {
-    codeBlocks.push('<pre class="code-block"><code class="lang-'+lang+'">' + escapeHtml(code) + '</code></pre>');
+    codeBlocks.push('<pre class="code-block"><code class="lang-'+sanitizeLang(lang)+'">' + escapeHtmlSettings(code) + '</code></pre>');
     return '%%CODE' + (codeBlocks.length-1) + '%%';
   });
-  // Process markdown
-  s = s
+  // Escape first, then apply formatting
+  s = escapeHtmlSettings(s)
     .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
     .replace(/^### (.+)$/gm, '<h3>$1</h3>')
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')
@@ -1532,7 +1563,12 @@ function renderMarkdownFull(s) {
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(new RegExp(BT+'([^'+BT+']+)'+BT, 'g'), '<code>$1</code>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(m, text, url) {
+      if (/^(https?:\/\/|mailto:)/i.test(url)) {
+        return '<a href="' + url + '" target="_blank">' + text + '</a>';
+      }
+      return text + ' (' + url + ')';
+    })
     .replace(/\n\n+/g, '</p><p>')
     .replace(/\n/g, '<br>');
   // Restore code blocks
@@ -1578,18 +1614,18 @@ func renderTopNav(projectName, sessionID string) string {
 	b.WriteString(`<header class="top-nav">`)
 	b.WriteString(`<div class="top-nav-inner">`)
 	b.WriteString(`<div class="nav-left">`)
-	b.WriteString(`<a href="/" class="brand"><span class="brand-icon">◈</span> ccx</a>`)
-	b.WriteString(`<span class="brand-sub"><span class="brand-claude">Claude</span> <span class="brand-code">Code</span> e<span class="brand-x">X</span><span class="brand-plorer">plorer</span></span>`)
+	b.WriteString(`<a href="/" class="brand"><span class="brand-cc">cc</span><span class="brand-x">x</span></a>`)
+	b.WriteString(`<span class="brand-sub">for Claude Code</span>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="nav-center">`)
 	b.WriteString(`<div class="global-search">`)
-	b.WriteString(`<input type="text" id="global-search" class="global-search-input" placeholder="Search... (/)" autocomplete="off">`)
+	b.WriteString(`<input type="text" id="global-search" class="global-search-input" placeholder="Search all... (press /)" autocomplete="off">`)
 	b.WriteString(`<div id="search-results" class="search-results"></div>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="nav-right">`)
-	b.WriteString(`<button class="icon-btn" id="theme-toggle" title="Toggle theme">◐</button>`)
-	b.WriteString(`<a href="/settings" class="icon-btn" title="Settings">⚙</a>`)
+	b.WriteString(`<button class="icon-btn" id="theme-toggle" title="Toggle theme (d)">◐</button>`)
+	b.WriteString(`<a href="/settings" class="icon-btn" title="Settings">◎</a>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</header>`)
@@ -1641,6 +1677,7 @@ func pageHeader(title, theme string) string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>(function(){var t=localStorage.getItem('ccx-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 <title>%s</title>
 %s
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
@@ -1662,7 +1699,8 @@ func pageHeader(title, theme string) string {
 }
 
 func faviconLink() string {
-	return `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23da7756'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='monospace' font-weight='bold' font-size='14' fill='white'%3Eccx%3C/text%3E%3C/svg%3E">`
+	// Bold favicon: cc in white, x in coral
+	return `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23111'/%3E%3Ctext x='3' y='23' font-family='ui-monospace,monospace' font-weight='800' font-size='14'%3E%3Ctspan fill='%23fff'%3Ecc%3C/tspan%3E%3Ctspan fill='%23da7756'%3Ex%3C/tspan%3E%3C/text%3E%3C/svg%3E">`
 }
 
 func pageFooter() string {
@@ -1845,24 +1883,22 @@ code, pre, .session-id, .model-badge {
 .search-loading { display: flex; align-items: center; justify-content: center; gap: 8px; }
 
 .brand {
-  font-weight: 700;
-  font-size: 18px;
-  color: var(--primary);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-weight: 800;
+  font-size: 24px;
   text-decoration: none;
   display: flex;
-  align-items: center;
-  gap: 4px;
+  align-items: baseline;
+  letter-spacing: -1px;
 }
-.brand-icon { font-size: 20px; }
+.brand-cc { color: var(--text); }
+.brand-x { color: #da7756; }
 .brand-sub {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 400;
-  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-left: 10px;
 }
-.brand-sub .brand-claude { color: #da7756; }
-.brand-sub .brand-code { color: var(--assistant-border); }
-.brand-sub .brand-x { color: var(--primary); font-weight: 700; }
-.brand-sub .brand-plorer { color: var(--text-muted); }
 
 .nav-link {
   color: var(--text-muted);
@@ -1973,23 +2009,17 @@ code, pre, .session-id, .model-badge {
 .dock-key { font-size: 9px; opacity: 0.5; font-family: var(--font-mono); line-height: 1; }
 .dock-btn:hover .dock-key { opacity: 0.8; }
 
-/* Live button pulse animation */
-.dock-pulse {
-  display: none;
-  width: 6px;
-  height: 6px;
-  background: #4f4;
-  border-radius: 50%;
-  animation: pulse 1.5s infinite;
-}
-.dock-btn.active .dock-pulse { display: block; }
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(1.3); }
-}
-.dock-btn.active .dock-icon { color: #4f4; }
+/* Live button pulse animation - animate the ◉ icon directly */
 .live-btn.active { background: rgba(40,80,40,0.9); }
+.live-btn.active .dock-icon {
+  color: #4f4;
+  animation: live-pulse 1.5s infinite;
+}
 .live-btn.active .dock-label { color: #8f8; }
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.15); }
+}
 
 /* Export dropdown */
 .dock-dropdown { position: relative; }
@@ -2246,6 +2276,13 @@ code, pre, .session-id, .model-badge {
 .info-row a:hover { text-decoration: underline; }
 .info-divider { height: 1px; background: var(--border); margin: 8px 0; }
 .info-total { font-size: 13px; margin-top: 4px; }
+.info-cwd { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copy-btn-sm {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; padding: 0 4px; font-size: 12px; opacity: 0.6;
+  margin-left: 4px; vertical-align: middle;
+}
+.copy-btn-sm:hover { opacity: 1; color: var(--primary); }
 
 /* Session page */
 .session-layout {
@@ -2464,7 +2501,7 @@ code, pre, .session-id, .model-badge {
   opacity: 1;
   transition: opacity 0.2s;
 }
-/* Fold indicator styling */
+/* Fold indicator in header */
 .fold-indicator {
   font-size: 11px;
   font-family: var(--font-mono);
@@ -2478,6 +2515,35 @@ code, pre, .session-id, .model-badge {
 .thread.folded .fold-indicator { background: var(--primary); color: white; }
 .thread.folded .fold-indicator::after { content: '+' attr(data-hidden); }
 .thread:not(.folded) .fold-indicator::after { content: '−'; }
+
+/* Fold separator line in middle - clickable */
+.fold-separator {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  margin: 8px 0;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.fold-separator:hover { background: var(--bg-secondary); }
+.thread.folded .fold-separator { display: flex; }
+.fold-sep-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.fold-sep-text {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: white;
+  white-space: nowrap;
+  padding: 4px 10px;
+  background: var(--primary);
+  border-radius: 12px;
+}
+.fold-separator:hover .fold-sep-text { background: var(--primary-hover); }
 
 /* Level indentation */
 .level-1 { margin-left: 0; }
@@ -2634,13 +2700,12 @@ body.watching .live-indicator { display: block; }
 /* Tail spinner at bottom during watch mode */
 .tail-spinner {
   display: none;
-  padding: 16px 20px 80px 20px; /* extra bottom padding to clear toolbar */
-  text-align: center;
+  padding: 12px 0 80px 0; /* bottom padding to clear toolbar */
   color: var(--assistant-border);
   font-size: 13px;
 }
 .tail-spinner .cli-spinner-char { color: var(--assistant-border); font-size: 14px; }
-body.watching .tail-spinner { display: flex; align-items: center; justify-content: center; gap: 8px; }
+body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 
 /* Agent (sidechain) - indented, purple accent */
 .turn-agent {
@@ -2691,8 +2756,13 @@ body.watching .tail-spinner { display: flex; align-items: center; justify-conten
 .turn-body { padding: 4px 0 8px 20px; font-size: 14px; line-height: 1.6; }
 
 /* Block styling */
-.block-text p { margin: 0 0 8px 0; line-height: 1.6; }
+.block-text { white-space: pre-wrap; line-height: 1.5; }
+.block-text p { margin: 0 0 4px 0; }
 .block-text p:last-child { margin-bottom: 0; }
+.block-text .md-h1, .block-text .md-h2, .block-text .md-h3, .block-text .md-h4 { font-weight: 600; margin: 8px 0 4px 0; }
+.block-text .md-h1 { font-size: 1.2em; }
+.block-text .md-h2 { font-size: 1.1em; }
+.block-text .md-li { margin: 2px 0; }
 .block-text code {
   background: var(--bg-tertiary);
   padding: 2px 4px;
@@ -2984,6 +3054,15 @@ body.watching .tail-spinner { display: flex; align-items: center; justify-conten
   margin-bottom: 12px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-icon {
+  font-size: 14px;
+  color: var(--primary);
+  width: 18px;
+  text-align: center;
 }
 
 .settings-table { width: 100%; border-collapse: collapse; }
@@ -3103,18 +3182,24 @@ if (globalSearchInput && searchResults) {
         const data = await res.json();
         if (data.results && data.results.length > 0) {
           searchResults.innerHTML = data.results.map(r => {
-            let html = '<a href="' + r.url + '" class="search-result">';
-            html += '<div class="result-title">' + escapeHtml(r.summary) + '</div>';
-            html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' • ' + escapeHtml(r.time) : '') + '</div>';
+            const badge = r.type === 'project' ? '<span class="result-badge badge-project">P</span>' :
+                          r.type === 'session' ? '<span class="result-badge badge-session">S</span>' :
+                          '<span class="result-badge badge-message">M</span>';
+            const safeUrl = (r.url && r.url[0] === '/' && r.url[1] !== '/') ? escapeHtml(r.url) : '#';
+            let html = '<a href="' + safeUrl + '" class="search-result">';
+            html += badge;
+            html += '<div class="result-body">';
+            html += '<div class="result-title">' + escapeHtml(r.summary || r.title || 'Untitled') + '</div>';
+            html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' · ' + escapeHtml(r.time) : '') + '</div>';
             if (r.snippet) {
               html += '<div class="result-snippet">' + escapeHtml(r.snippet) + '</div>';
             }
-            html += '</a>';
+            html += '</div></a>';
             return html;
           }).join('');
           searchResults.classList.add('active');
         } else {
-          searchResults.innerHTML = '<div class="search-result"><div class="result-title">No results</div></div>';
+          searchResults.innerHTML = '<div class="search-result"><span class="result-badge badge-message">?</span><div class="result-body"><div class="result-title">No results</div></div></div>';
           searchResults.classList.add('active');
         }
       } catch (err) {
@@ -3130,7 +3215,7 @@ if (globalSearchInput && searchResults) {
 
 function escapeHtml(str) {
   if (!str) return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 const themeToggle = document.getElementById('theme-toggle');
@@ -3165,6 +3250,17 @@ const projectName = %q;
 const sessionID = %q;
 let eventSource = null;
 let autoScroll = false;
+
+// Delegated handler for copy buttons with data-copy attribute
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('copy-btn-sm') && e.target.dataset.copy) {
+    navigator.clipboard.writeText(e.target.dataset.copy).then(() => {
+      const orig = e.target.textContent;
+      e.target.textContent = '✓';
+      setTimeout(() => e.target.textContent = orig, 1000);
+    });
+  }
+});
 
 document.getElementById('show-thinking')?.addEventListener('change', function() {
   document.querySelectorAll('.block-thinking').forEach(el => {
@@ -3226,7 +3322,8 @@ if (globalSearchInput && searchResults) {
             const badge = r.type === 'project' ? '<span class="result-badge badge-project">P</span>' :
                           r.type === 'session' ? '<span class="result-badge badge-session">S</span>' :
                           '<span class="result-badge badge-message">M</span>';
-            let html = '<a href="' + r.url + '" class="search-result">';
+            const safeUrl = (r.url && r.url[0] === '/' && r.url[1] !== '/') ? escapeHtml(r.url) : '#';
+            let html = '<a href="' + safeUrl + '" class="search-result">';
             html += badge;
             html += '<div class="result-body">';
             html += '<div class="result-title">' + escapeHtml(r.summary || r.title || 'Untitled') + '</div>';
@@ -3266,7 +3363,22 @@ document.addEventListener('keydown', function(e) {
 
 function escapeHtml(str) {
   if (!str) return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function sanitizeCodeLang(lang) {
+  if (!lang) return 'text';
+  const clean = lang.replace(/[^a-zA-Z0-9_-]/g, '');
+  return clean || 'text';
+}
+
+function sanitizeMediaType(mt) {
+  const allowed = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'];
+  return allowed.includes(mt) ? mt : 'image/png';
+}
+
+function sanitizeID(s) {
+  return s ? s.replace(/[^a-zA-Z0-9_-]/g, '') : '';
 }
 
 function toggleSidebar() {
@@ -3302,14 +3414,14 @@ function copyBlock(e) {
   });
 }
 
-function toggleRaw(e, toolId) {
+function toggleRaw(e) {
   e.stopPropagation();
-  const tool = document.getElementById('tool-' + toolId);
+  const btn = e.target;
+  const tool = btn.closest('.block-tool');
   if (!tool) return;
   const inputSection = tool.querySelector('.tool-input-section');
   if (!inputSection) return;
 
-  const btn = e.target;
   if (inputSection.dataset.showRaw === 'true') {
     if (inputSection.dataset.original) {
       inputSection.innerHTML = inputSection.dataset.original;
@@ -3328,8 +3440,17 @@ function toggleRaw(e, toolId) {
   }
 }
 
-function toggleTurnRaw(btn) {
-  event.stopPropagation();
+// Bind tool action buttons via event delegation
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('raw-toggle')) {
+    toggleRaw(e);
+  } else if (e.target.classList.contains('copy-btn')) {
+    copyBlock(e);
+  }
+});
+
+function toggleTurnRaw(e, btn) {
+  e.stopPropagation();
   const turn = btn.closest('.turn') || btn.closest('details.turn-user');
   if (!turn) return;
   const body = turn.querySelector('.turn-body');
@@ -3344,7 +3465,16 @@ function toggleTurnRaw(btn) {
     btn.classList.remove('active');
   } else {
     body.dataset.original = body.innerHTML;
-    const rawData = body.dataset.raw || '[]';
+    let rawData = body.dataset.raw || '[]';
+    // Decode base64 if encoded (tailed content uses base64)
+    if (body.dataset.rawb64) {
+      try { rawData = decodeURIComponent(escape(atob(body.dataset.rawb64))); } catch(e) {}
+    }
+    // Pretty-print JSON
+    try {
+      const obj = JSON.parse(rawData);
+      rawData = JSON.stringify(obj, null, 2);
+    } catch(e) {}
     body.innerHTML = '<pre class="raw-content">' + escapeHtml(rawData) + '</pre>';
     body.classList.add('raw-mode');
     btn.textContent = 'fmt';
@@ -3352,8 +3482,8 @@ function toggleTurnRaw(btn) {
   }
 }
 
-function copyTurn(btn) {
-  event.stopPropagation();
+function copyTurn(e, btn) {
+  e.stopPropagation();
   const turn = btn.closest('.turn') || btn.closest('details.turn-user');
   if (!turn) return;
   const body = turn.querySelector('.turn-body');
@@ -3361,8 +3491,12 @@ function copyTurn(btn) {
 
   let text;
   if (body.classList.contains('raw-mode')) {
-    // Raw mode: copy JSON
-    text = body.dataset.raw || '';
+    // Raw mode: copy JSON (check both data-rawb64 and data-raw)
+    if (body.dataset.rawb64) {
+      try { text = decodeURIComponent(escape(atob(body.dataset.rawb64))); } catch(x) { text = ''; }
+    } else {
+      text = body.dataset.raw || '';
+    }
   } else {
     // Fmt mode: copy readable text
     text = body.innerText || body.textContent || '';
@@ -3452,6 +3586,15 @@ function startWatch() {
   document.body.classList.add('watching');
   updateWatchUI(true);
 
+  // Auto-enable Think/Tools toggles for full visibility during tailing
+  const thinkCb = document.getElementById('show-thinking');
+  const toolsCb = document.getElementById('show-tools');
+  if (thinkCb && !thinkCb.checked) { thinkCb.checked = true; toggleThinkingBlocks(); }
+  if (toolsCb && !toolsCb.checked) { toolsCb.checked = true; toggleToolBlocks(); }
+  updateToolbarState();
+
+  scrollToBottom();
+
   eventSource.addEventListener('line', function(e) {
     try {
       const data = JSON.parse(e.data);
@@ -3487,31 +3630,46 @@ function appendTailMessage(data) {
 
   // Classify message kind
   let kind = data.type === 'assistant' ? 'assistant' : 'user';
+  let isToolResult = false;
   if (data.type === 'user') {
     // Check if it's tool_result (first block is tool_result)
     if (Array.isArray(content) && content[0]?.type === 'tool_result') {
-      return; // Tool results rendered inline with tool_use
+      isToolResult = true;
+      kind = 'result';
     }
   }
 
   // Build HTML matching Go renderTurnMessage
   let html = '';
   const rawJSON = JSON.stringify(content || []);
+  const rawB64 = btoa(unescape(encodeURIComponent(rawJSON)));
 
   if (kind === 'user') {
     const preview = getTextPreview(content, 60);
-    html = '<details class="turn turn-user" id="msg-' + uuid + '" open>' +
+    html = '<details class="turn turn-user" id="msg-' + sanitizeID(uuid) + '" open>' +
       '<summary class="turn-header">' +
         '<span class="turn-icon">▶</span>' +
         '<span class="turn-role">USER</span>' +
         '<span class="turn-preview">' + escapeHtml(preview) + '</span>' +
         '<span class="turn-time">' + timestamp + '</span>' +
-        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(this)">copy</button></span>' +
+        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>' +
       '</summary>' +
-      '<div class="turn-body" data-raw="' + escapeHtml(rawJSON) + '">' +
+      '<div class="turn-body" data-rawb64="' + rawB64 + '">' +
         renderContentBlocks(content) +
       '</div>' +
     '</details>';
+  } else if (kind === 'result') {
+    html = '<div class="turn turn-result" id="msg-' + sanitizeID(uuid) + '">' +
+      '<div class="turn-header">' +
+        '<span class="turn-icon">○</span>' +
+        '<span class="turn-role">RESULT</span>' +
+        '<span class="turn-time">' + timestamp + '</span>' +
+        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>' +
+      '</div>' +
+      '<div class="turn-body" data-rawb64="' + rawB64 + '">' +
+        renderContentBlocks(content) +
+      '</div>' +
+    '</div>';
   } else {
     let turnClass = 'turn turn-assistant';
     let icon = '●';
@@ -3521,15 +3679,15 @@ function appendTailMessage(data) {
       icon = '◆';
       role = 'AGENT';
     }
-    html = '<div class="' + turnClass + '" id="msg-' + uuid + '">' +
+    html = '<div class="' + turnClass + '" id="msg-' + sanitizeID(uuid) + '">' +
       '<div class="turn-header">' +
         '<span class="turn-icon">' + icon + '</span>' +
         '<span class="turn-role">' + role + '</span>' +
         '<span class="turn-time">' + timestamp + '</span>' +
         (model ? '<span class="turn-model">' + escapeHtml(model) + '</span>' : '') +
-        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(this)">copy</button></span>' +
+        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>' +
       '</div>' +
-      '<div class="turn-body" data-raw="' + escapeHtml(rawJSON) + '">' +
+      '<div class="turn-body" data-rawb64="' + rawB64 + '">' +
         renderContentBlocks(content) +
       '</div>' +
     '</div>';
@@ -3561,7 +3719,6 @@ function renderContentBlocks(content, forceExpand) {
   if (!Array.isArray(content)) return '';
 
   let html = '';
-  // In tail/watch mode: expand everything for verbose real-time view
   const isWatching = !!eventSource;
   const expandAll = forceExpand || isWatching;
   const showThinking = expandAll || document.getElementById('show-thinking')?.checked;
@@ -3582,17 +3739,40 @@ function renderContentBlocks(content, forceExpand) {
         '</details>';
         break;
       case 'tool_use':
-        const toolOpen = showTools ? ' open' : '';
         const toolName = block.name || 'tool';
         const toolId = block.id || 'tool-' + Date.now();
+        const isActive = ['Write','Edit','Bash','Task','TodoWrite','Skill','NotebookEdit'].includes(toolName);
+        const toolOpen = (isActive || showTools) ? ' open' : '';
         const inputPreview = compactToolPreviewJS(toolName, block.input);
-        html += '<details class="block-tool" id="tool-' + toolId + '"' + toolOpen + '>' +
+        html += '<details class="block-tool" id="tool-' + sanitizeID(toolId) + '"' + toolOpen + '>' +
           '<summary><span class="block-icon">●</span> ' + escapeHtml(toolName) +
           '<span class="tool-preview">' + escapeHtml(inputPreview) + '</span></summary>' +
           '<div class="tool-section tool-input-section">' +
             '<div class="section-label">input</div>' +
-            '<pre>' + escapeHtml(JSON.stringify(block.input, null, 2)) + '</pre>' +
+            renderToolInputJS(toolName, block.input) +
           '</div>' +
+        '</details>';
+        break;
+      case 'image':
+        if (block.source && block.source.data) {
+          html += '<img src="data:' + sanitizeMediaType(block.source.media_type) + ';base64,' + block.source.data + '" class="block-image">';
+        }
+        break;
+      case 'tool_result':
+        const resId = block.tool_use_id || '';
+        let resContent = '';
+        if (typeof block.content === 'string') {
+          resContent = block.content;
+        } else if (Array.isArray(block.content)) {
+          for (const c of block.content) {
+            if (c.type === 'text') resContent += c.text + '\n';
+          }
+        }
+        const truncRes = resContent.length > 500 ? resContent.slice(0, 500) + '...' : resContent;
+        html += '<details class="block-tool block-result">' +
+          '<summary><span class="block-icon">○</span> result' +
+          (resId ? ' <span class="tool-id">' + escapeHtml(resId.slice(0, 8)) + '</span>' : '') + '</summary>' +
+          '<pre class="tool-output">' + escapeHtml(truncRes) + '</pre>' +
         '</details>';
         break;
     }
@@ -3600,19 +3780,150 @@ function renderContentBlocks(content, forceExpand) {
   return html;
 }
 
+function renderToolInputJS(toolName, input) {
+  if (!input) return '<pre>{}</pre>';
+
+  switch (toolName) {
+    case 'Edit':
+      let editHtml = '<div class="edit-diff">';
+      if (input.file_path) editHtml += '<div class="diff-file">' + escapeHtml(input.file_path) + '</div>';
+      if (input.old_string) editHtml += '<pre class="diff-old">' + escapeHtml(input.old_string) + '</pre>';
+      if (input.new_string) editHtml += '<pre class="diff-new">' + escapeHtml(input.new_string) + '</pre>';
+      return editHtml + '</div>';
+
+    case 'Write':
+      let writeHtml = '<div class="write-content">';
+      if (input.file_path) writeHtml += '<div class="diff-file">' + escapeHtml(input.file_path) + '</div>';
+      if (input.content) {
+        const c = input.content;
+        if (c.length > 2000) {
+          writeHtml += '<details class="long-output"><summary><pre class="output-preview">' + escapeHtml(c.slice(0,200)) + '...</pre><span class="expand-hint">(' + c.length + ' chars)</span></summary><pre class="diff-new">' + escapeHtml(c) + '</pre></details>';
+        } else {
+          writeHtml += '<pre class="diff-new">' + escapeHtml(c) + '</pre>';
+        }
+      }
+      return writeHtml + '</div>';
+
+    case 'TodoWrite':
+      if (input.todos && Array.isArray(input.todos)) {
+        let todoHtml = '<ul class="todo-checklist">';
+        for (const todo of input.todos) {
+          const status = todo.status || 'pending';
+          const icon = status === 'completed' ? '✓' : status === 'in_progress' ? '◐' : '○';
+          const cls = 'todo-' + (status === 'completed' ? 'completed' : status === 'in_progress' ? 'progress' : 'pending');
+          const checked = status === 'completed' ? ' checked disabled' : '';
+          todoHtml += '<li class="' + cls + '"><span class="todo-icon">' + icon + '</span><input type="checkbox"' + checked + '><span class="todo-text">' + escapeHtml(todo.content || '') + '</span></li>';
+        }
+        return todoHtml + '</ul>';
+      }
+      break;
+
+    case 'Bash':
+      if (input.command) {
+        return '<pre class="tool-input">$ ' + escapeHtml(input.command) + '</pre>';
+      }
+      break;
+  }
+
+  return '<pre class="tool-input">' + escapeHtml(JSON.stringify(input, null, 2)) + '</pre>';
+}
+
 function renderMarkdownJS(text) {
-  // Simple markdown: code blocks, inline code, bold, italic, links
+  // Full markdown: code blocks, tables, headers, lists, inline formatting
   const BT = '`+"`"+`';
-  const codeBlockRe = new RegExp(BT+BT+BT+'(\\w*)\\n([\\s\\S]*?)'+BT+BT+BT, 'g');
-  const inlineCodeRe = new RegExp(BT+'([^'+BT+']+)'+BT, 'g');
-  return text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(codeBlockRe, '<pre class="code-block"><code>$2</code></pre>')
-    .replace(inlineCodeRe, '<code>$1</code>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
-    .replace(/\n/g, '<br>');
+  const lines = text.split('\n');
+  let html = '';
+  let inCodeBlock = false;
+  let codeBlockLang = '';
+  let codeLines = [];
+  let inTable = false;
+  let tableRows = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+
+    // Code blocks
+    if (line.startsWith(BT+BT+BT)) {
+      if (inCodeBlock) {
+        html += '<pre class="code-block"><code class="lang-' + sanitizeCodeLang(codeBlockLang) + '">' + escapeHtml(codeLines.join('\n')) + '</code></pre>';
+        codeLines = [];
+        inCodeBlock = false;
+      } else {
+        inCodeBlock = true;
+        codeBlockLang = line.slice(3);
+      }
+      continue;
+    }
+    if (inCodeBlock) { codeLines.push(line); continue; }
+
+    // Tables
+    const trimmed = line.trim();
+    const isTableLine = trimmed.startsWith('|') && trimmed.includes('|');
+    const isSeparator = isTableLine && trimmed.includes('---');
+
+    if (isTableLine) {
+      if (!inTable) { inTable = true; tableRows = []; }
+      if (!isSeparator) { tableRows.push(line); }
+      const nextLine = lines[i + 1];
+      if (!nextLine || !nextLine.trim().startsWith('|')) {
+        html += renderTableJS(tableRows);
+        inTable = false; tableRows = [];
+      }
+      continue;
+    }
+
+    // Empty lines - collapse multiples
+    if (trimmed === '') {
+      if (!html.endsWith('<br>')) html += '<br>';
+      continue;
+    }
+
+    // Headers
+    if (line.startsWith('#### ')) { html += '<div class="md-h4">' + processInline(line.slice(5)) + '</div>'; continue; }
+    if (line.startsWith('### ')) { html += '<div class="md-h3">' + processInline(line.slice(4)) + '</div>'; continue; }
+    if (line.startsWith('## ')) { html += '<div class="md-h2">' + processInline(line.slice(3)) + '</div>'; continue; }
+    if (line.startsWith('# ')) { html += '<div class="md-h1">' + processInline(line.slice(2)) + '</div>'; continue; }
+
+    // Lists
+    if (line.match(/^[\-\*] /)) { html += '<div class="md-li">• ' + processInline(line.slice(2)) + '</div>'; continue; }
+    if (line.match(/^\d+\. /)) { html += '<div class="md-li">' + processInline(line) + '</div>'; continue; }
+
+    // Regular text - no wrapping, just inline
+    html += processInline(line) + '\n';
+  }
+
+  if (inCodeBlock) {
+    html += '<pre class="code-block"><code class="lang-' + sanitizeCodeLang(codeBlockLang) + '">' + escapeHtml(codeLines.join('\n')) + '</code></pre>';
+  }
+  return html;
+
+  function processInline(s) {
+    const BT = '`+"`"+`';
+    return escapeHtml(s)
+      .replace(new RegExp(BT + '([^' + BT + ']+)' + BT, 'g'), '<code>$1</code>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(m, text, url) {
+        if (/^(https?:\/\/|mailto:)/i.test(url)) {
+          return '<a href="' + url + '">' + text + '</a>';
+        }
+        return text + ' (' + url + ')';
+      });
+  }
+}
+
+function renderTableJS(rows) {
+  if (!rows.length) return '';
+  let html = '<table class="md-table">';
+  rows.forEach((row, i) => {
+    const cells = row.split('|').filter((c, idx, arr) => idx > 0 && idx < arr.length - 1);
+    if (i === 0) {
+      html += '<thead><tr>' + cells.map(c => '<th>' + escapeHtml(c.trim()) + '</th>').join('') + '</tr></thead><tbody>';
+    } else {
+      html += '<tr>' + cells.map(c => '<td>' + escapeHtml(c.trim()) + '</td>').join('') + '</tr>';
+    }
+  });
+  return html + '</tbody></table>';
 }
 
 function compactToolPreviewJS(name, input) {
@@ -3688,11 +3999,21 @@ document.querySelectorAll('.thread').forEach(thread => {
   const turns = responses.querySelectorAll('.turn');
   if (turns.length <= 1) return; // no folding needed for single response
 
-  // Add fold indicator
+  // Add fold indicator in header
   const indicator = document.createElement('span');
   indicator.className = 'fold-indicator';
   indicator.dataset.hidden = turns.length - 1;
   userHeader.appendChild(indicator);
+
+  // Add fold separator line between user and final response (clickable)
+  const separator = document.createElement('div');
+  separator.className = 'fold-separator';
+  separator.innerHTML = '<span class="fold-sep-line"></span><span class="fold-sep-text">+' + (turns.length - 1) + ' ▶ ··· ○</span><span class="fold-sep-line"></span>';
+  separator.title = 'Click to expand';
+  separator.addEventListener('click', function() {
+    thread.classList.remove('folded');
+  });
+  responses.insertBefore(separator, responses.firstChild);
 
   // Start folded by default for threads with many responses
   if (turns.length > 2) {
@@ -3702,6 +4023,8 @@ document.querySelectorAll('.thread').forEach(thread => {
   userHeader.addEventListener('click', function(e) {
     // Don't interfere with raw/copy buttons
     if (e.target.closest('.turn-actions')) return;
+    // Prevent the user details from toggling (we're hijacking the click for thread fold)
+    e.preventDefault();
     thread.classList.toggle('folded');
   });
 });

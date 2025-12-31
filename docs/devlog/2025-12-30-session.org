@@ -1,0 +1,90 @@
+* [2025-12-30] Dev Log: UI Polish & Rebrand Session              :UI:REBRAND:
+
+** Context
+Extended UI polish session addressing 7+ visual/interaction bugs, followed by
+strategic rebrand from "Claude Code Explorer" to just "ccx".
+
+** Why
+User feedback identified multiple UX inconsistencies and visual issues that
+degraded the perceived quality. Rebrand needed to reduce confusion for new users.
+
+** What
+
+*** UI/UX Fixes (12 items)
+| Fix                      | Description                                        |
+|--------------------------+----------------------------------------------------|
+| Live button animation    | Animate existing icon, not add another dot         |
+| Theme flash              | Inline script in <head> before CSS loads           |
+| Search badges            | Unified P/S/M colored badges across all search UIs |
+| Global search format     | Same result format in TopNav and Search page       |
+| Fold/tools conflict      | Fixed broken click handler (checks always true)    |
+| Tail mode scroll         | Auto-scroll to bottom when enabling                |
+| Tail mode toggles        | Auto-enable Think/Tools when tailing starts        |
+| Tail spinner position    | Left-aligned, below last block                     |
+| Fold separator           | Clickable +N pill between user and final response  |
+| Icon system              | SVG brand icon, geometric icons, removed emojis    |
+| Markdown tailing         | Full feature parity (tables, headers, lists)       |
+| Rebrand                  | Removed "Explorer", now "ccx for Claude Code"      |
+
+*** Fold Architecture
+- Thread fold: click user header toggles .thread.folded class
+- Fold separator: clickable pill showing "+N > ... o" between user and response
+- Tool details: independent <details> elements
+- Think/Tools toggles: control block visibility globally
+
+*** Icon System (Unified)
+| Location        | Icons Used                              |
+|-----------------+-----------------------------------------|
+| Brand           | SVG: c(coral) c(green) x(orange)        |
+| Header          | Theme toggle, Settings: geometric       |
+| Toolbar         | Think, Tools, Live, Export: geometric    |
+| Settings page   | Sections: filled/outline diamonds/circles |
+| Turns           | User, Assistant, Command, Meta: geometric |
+
+*** Rebrand
+- Before: "Claude Code Explorer", "ccx is a CLI tool for exploring..."
+- After: "ccx", "Session viewer for Claude Code"
+- Header: ccx [icon] + "for Claude Code"
+
+** Decisions
+| Decision                          | Rationale                                       |
+|-----------------------------------+-------------------------------------------------|
+| Keep "ccx" not "ccex"             | Shorter, X = flexible meaning                   |
+| Remove "Explorer" entirely        | Reduces confusion, cleaner identity             |
+| Geometric icons over emojis       | Consistent, professional, no font dependencies  |
+| Fold separator clickable          | Two ways to unfold = better discovery           |
+| Auto-enable toggles when tailing  | Toolbar should reflect actual content state     |
+
+** Files Changed
+- internal/web/templates.go (major - UI/CSS/JS)
+- internal/cmd/root.go (CLI description)
+- README.md (tagline)
+- DEVLOG.org (about section, entry links)
+- docs/devlog/* (restructured)
+
+** WIP
+- [X] UI/UX fixes (12 items)
+- [X] Rebrand
+- [X] Devlog restructure to docs/devlog/
+- [ ] Shell completions
+- [ ] ccx search CLI command
+
+** Notes
+
+*** Fold Handler Bug (Root Cause)
+The checks =e.target.closest('details')= and =e.target.closest('summary')=
+were ALWAYS true because userHeader IS a <summary> inside a <details>.
+Handler never ran, only browser's default details toggle happened.
+
+*** Markdown Parity
+renderMarkdownJS() now matches Go renderMarkdown():
+- Code blocks with language class
+- Tables with thead/tbody
+- Headers h1-h4
+- Lists ul/li
+- Inline: code, bold, italic, links
+
+*** Devlog Restructure
+Moved from fragmented locations to unified docs/devlog/:
+- /worktree/ccx/devlog/* -> /worktree/ccx/docs/devlog/*
+- /dev-logs/* -> /worktree/ccx/docs/devlog/*

@@ -438,7 +438,7 @@ func TestParseSession_TimestampRFC3339Nano_AndSummaryLine(t *testing.T) {
 		t.Fatalf("EndTime = %s, want %s", session.EndTime.Format(time.RFC3339Nano), wantEnd.Format(time.RFC3339Nano))
 	}
 
-	qSummary, qStart, qEnd, _ := quickParseSession(sessionPath)
+	qSummary, qStart, qEnd, _, _ := quickParseSession(sessionPath)
 	if qSummary != "Test session for JSONL parsing" {
 		t.Fatalf("quickParseSession summary = %q, want %q", qSummary, "Test session for JSONL parsing")
 	}

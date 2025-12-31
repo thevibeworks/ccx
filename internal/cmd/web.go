@@ -2,9 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 
 	"github.com/spf13/cobra"
@@ -50,8 +48,7 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	url := fmt.Sprintf("http://%s", addr)
 
 	// Initialize database
-	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".config", "ccx", "data")
+	dataDir := config.DataDir()
 	if err := db.Init(dataDir); err != nil {
 		fmt.Printf("Warning: Could not initialize database: %v\n", err)
 	}

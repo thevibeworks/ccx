@@ -1,10 +1,10 @@
 #+TITLE: ccx Development Log
-#+AUTHOR: Claude Code Explorer Team
+#+AUTHOR: ccx Team
 #+STARTUP: overview
 
 * About
 
-ccx (Claude Code Explorer) - A Go CLI for exploring and inspecting Claude Code sessions.
+ccx - Session viewer for Claude Code. Browse, inspect, search, and export conversations.
 
 * Roadmap
 
@@ -34,7 +34,11 @@ ccx (Claude Code Explorer) - A Go CLI for exploring and inspecting Claude Code s
 
 * Entries
 
-#+INCLUDE: "./devlog/20251228-initial.org"
+See =docs/devlog/= for daily entries:
+- [[file:docs/devlog/2025-12-28-initial.org][2025-12-28]] Initial implementation
+- [[file:docs/devlog/2025-12-29-ui-failures.org][2025-12-29]] UI/JS lessons learned
+- [[file:docs/devlog/2025-12-30-strategy.org][2025-12-30]] Strategic direction
+- [[file:docs/devlog/2025-12-30-session.org][2025-12-30]] UI polish session
 
 * Architecture
 

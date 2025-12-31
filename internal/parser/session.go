@@ -18,6 +18,7 @@ func ParseSession(filePath string) (*Session, error) {
 	var messages []*Message
 	var summaryFromFile string
 	var totalInputTokens, totalOutputTokens, totalCacheRead, totalCacheCreate int
+	var sessionSlug, sessionVersion, sessionBranch, sessionCWD string
 	logicalParents := make(map[string]string) // compact_boundary UUID -> logical parent UUID
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
@@ -44,6 +45,20 @@ func ParseSession(filePath string) (*Session, error) {
 			totalOutputTokens += raw.Usage.OutputTokens
 			totalCacheRead += raw.Usage.CacheReadInputTokens
 			totalCacheCreate += raw.Usage.CacheCreationInputTokens
+		}
+
+		// Extract session metadata from first message that has it
+		if sessionSlug == "" && raw.Slug != "" {
+			sessionSlug = raw.Slug
+		}
+		if sessionVersion == "" && raw.Version != "" {
+			sessionVersion = raw.Version
+		}
+		if sessionBranch == "" && raw.GitBranch != "" {
+			sessionBranch = raw.GitBranch
+		}
+		if sessionCWD == "" && raw.CWD != "" {
+			sessionCWD = raw.CWD
 		}
 
 		if raw.Type == "system" && raw.Subtype == "compact_boundary" && raw.UUID != "" {
@@ -107,6 +122,10 @@ func ParseSession(filePath string) (*Session, error) {
 		EndTime:      endTime,
 		RootMessages: rootMessages,
 		Stats:        stats,
+		Slug:         sessionSlug,
+		Version:      sessionVersion,
+		GitBranch:    sessionBranch,
+		CWD:          sessionCWD,
 	}
 
 	return session, nil
@@ -378,10 +397,18 @@ func extractSessionID(filePath string) string {
 	return base
 }
 
-func quickParseSession(filePath string) (summary string, startTime, endTime time.Time, stats SessionStats) {
+// SessionMeta holds quick-parsed session metadata
+type SessionMeta struct {
+	Slug      string
+	Version   string
+	GitBranch string
+	CWD       string
+}
+
+func quickParseSession(filePath string) (summary string, startTime, endTime time.Time, stats SessionStats, meta SessionMeta) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return "(no summary)", time.Time{}, time.Time{}, SessionStats{}
+		return "(no summary)", time.Time{}, time.Time{}, SessionStats{}, SessionMeta{}
 	}
 	defer file.Close()
 
@@ -405,6 +432,10 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 			IsSidechain      bool   `json:"isSidechain"`
 			IsMeta           bool   `json:"isMeta"`
 			Summary          string `json:"summary"`
+			Slug             string `json:"slug"`
+			Version          string `json:"version"`
+			GitBranch        string `json:"gitBranch"`
+			CWD              string `json:"cwd"`
 			Message          struct {
 				Content any `json:"content"`
 			} `json:"message"`
@@ -412,6 +443,20 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
 			continue
+		}
+
+		// Extract metadata from first message that has it
+		if meta.Slug == "" && raw.Slug != "" {
+			meta.Slug = raw.Slug
+		}
+		if meta.Version == "" && raw.Version != "" {
+			meta.Version = raw.Version
+		}
+		if meta.GitBranch == "" && raw.GitBranch != "" {
+			meta.GitBranch = raw.GitBranch
+		}
+		if meta.CWD == "" && raw.CWD != "" {
+			meta.CWD = raw.CWD
 		}
 
 		if ts, err := time.Parse(time.RFC3339Nano, raw.Timestamp); err == nil {
@@ -473,7 +518,7 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 		summary = "(no summary)"
 	}
 
-	return summary, firstTime, lastTime, stats
+	return summary, firstTime, lastTime, stats, meta
 }
 
 func countToolCalls(content any) int {

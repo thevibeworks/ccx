@@ -77,7 +77,7 @@ func discoverSessions(projectPath string) ([]*Session, error) {
 
 		sessionPath := filepath.Join(projectPath, name)
 
-		summary, startTime, endTime, stats := quickParseSession(sessionPath)
+		summary, startTime, endTime, stats, meta := quickParseSession(sessionPath)
 		if summary == "" || summary == "(no summary)" {
 			continue
 		}
@@ -93,6 +93,10 @@ func discoverSessions(projectPath string) ([]*Session, error) {
 			StartTime:   startTime,
 			EndTime:     endTime,
 			Stats:       stats,
+			Slug:        meta.Slug,
+			Version:     meta.Version,
+			GitBranch:   meta.GitBranch,
+			CWD:         meta.CWD,
 		}
 		sessions = append(sessions, session)
 	}

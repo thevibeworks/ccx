@@ -19,15 +19,14 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "ccx",
-	Short: "Claude Code Explorer - inspect and export Claude Code sessions",
-	Long: `ccx is a CLI tool for exploring Claude Code conversation sessions.
+	Short: "ccx - session viewer for Claude Code",
+	Long: `ccx is a CLI and web UI for Claude Code sessions.
 
-It provides tree-aware rendering of sessions, multiple export formats,
-and an extensible skills system.
+Browse, inspect, search, and export your Claude Code conversations.
 
 Examples:
   ccx projects              List all projects
-  ccx sessions              List sessions (interactive picker)
+  ccx sessions              List sessions
   ccx view                  View session in terminal
   ccx export -f html        Export session to HTML
   ccx web                   Start web UI`,

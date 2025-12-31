@@ -1,6 +1,8 @@
-# ccx - Claude Code Explorer
+# ccx
 
-Fast CLI for exploring and exporting Claude Code sessions with tree-aware rendering.
+Session viewer for Claude Code. Browse, inspect, search, and export your conversations.
+
+Inspired by [Simon Willison's claude-code-transcripts](https://github.com/simonw/claude-code-transcripts), rebuilt in Go with live tailing, web UI, and skill-ready architecture.
 
 ## Installation
 
@@ -52,6 +54,21 @@ Session identifiers:
 ccx export [session] --format=html|md|org [--output FILE] [--theme dark|light]
 ```
 
+### Search
+```bash
+ccx search QUERY          # Search projects and sessions by name or summary
+ccx search auth           # Find sessions about authentication
+ccx search -t session     # Only search sessions
+ccx search --json         # JSON output
+```
+
+### Shell Completion
+```bash
+ccx completion bash       # Generate bash completion
+ccx completion zsh        # Generate zsh completion
+ccx completion fish       # Generate fish completion
+```
+
 ### Configuration
 ```bash
 ccx config show           # Show current config
@@ -86,7 +103,8 @@ export:
 ccx treats `CLAUDE_CODE_HOME` as read-only. It never modifies Claude Code session JSONL files or Claude Code config.
 
 ccx only writes:
-- `~/.config/ccx/` (config + SQLite data if you run `ccx web`)
+- `$XDG_DATA_HOME/ccx/` or `~/.local/share/ccx/` (SQLite data if you run `ccx web`)
+- `$XDG_CONFIG_HOME/ccx/` or `~/.config/ccx/` (config file)
 - Export output files you explicitly request
 
 ## Session Tree Model

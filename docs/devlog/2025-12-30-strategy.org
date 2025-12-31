@@ -1,0 +1,154 @@
+* [2025-12-30] Dev Log: ccx Strategic Direction & Vision        :STRATEGY:PLANNING:
+
+** Context
+Strategic planning session for ccx (Claude Code eXplorer → Claude Code X) to define product direction, target personas, and roadmap validation approach.
+
+** Why
+Define clear product vision beyond initial session inspection tool, explore expansion into "Claude Code as a Service" territory, and validate market fit before over-building.
+
+** What
+- Product naming: Retained "ccx" (short, memorable, X = flexible/extensible meaning)
+- Rejected "ccex" (phonetically awkward, longer, less memorable)
+- Defined 5 target user personas with distinct needs
+- Mapped 7 use case domains beyond pure coding workflows
+- Established phased approach: validate → share → signal → expand
+
+** How
+*** Strategic Path
+1. Phase 1-4 (Weeks 1-4): Build core inspection value (parser, CLI, export, web) per SPEC.md
+2. Gather early user feedback on session browsing/search/export utility
+3. Add lightweight sharing (read-only session links, no auth initially)
+4. Collect signal on remote execution demand (surveys, usage metrics)
+5. Expand to "CC as a Service" if warranted by signal strength
+
+*** Core Value Proposition (Current)
+- Session inspection: Tree-aware rendering of Claude Code conversations
+- Real-time tailing: Monitor live CC sessions as they run
+- Cross-session search: Find past solutions, tool patterns, decisions
+- Multi-format export: HTML (standalone), Markdown (GFM), Org-mode (Emacs)
+- Structured views: Isolated tool calls, thinking blocks, agent sidechains
+
+*** Future Direction: "Claude Code as a Service"
+- Remote CC execution: Run Claude Code on server, not local machine
+- Multi-user access: Teams share projects, sessions, learnings
+- Centralized management: Org-wide policies, quotas, cost tracking
+- Audit/compliance trails: Immutable logs for regulated industries
+
+** Decisions
+| Decision                     | Alternatives                          | Rationale                                          | DRI   | Timestamp (UTC)    |
+|------------------------------+---------------------------------------+----------------------------------------------------+-------+--------------------|
+| Keep "ccx" naming            | ccex, cce, cc-explorer                | Short, memorable, X = versatile/extensible meaning | @eric | 2025-12-30T00:00Z  |
+| Build Phase 1-4 first        | Jump to remote execution immediately  | Validate core value before adding complexity       | @eric | 2025-12-30T00:00Z  |
+| Target 5 personas initially  | Focus on devs only                    | Broader TAM, non-coder market underserved          | @eric | 2025-12-30T00:00Z  |
+| Lightweight sharing in Phase | Heavy auth/collab from start          | Test demand signal before infrastructure spend     | @eric | 2025-12-30T00:00Z  |
+
+** Target User Personas
+*** 1. Terminal Power Users
+- Need: Session history search, CLI-native workflows
+- Pain: Lost context from old sessions, no grep-able transcript archive
+- Value: =ccx sessions --sort=time | ccx view @1= for instant recall
+
+*** 2. Team Leads / Engineering Managers
+- Need: Visibility into team AI usage, shared learnings library
+- Pain: Each dev has isolated CC knowledge, no cross-pollination
+- Value: Centralized session browser, export curated solutions to wiki
+
+*** 3. Content Creators (Tutorial Writers, Bloggers, Video Producers)
+- Need: Clean transcripts for tutorials, embeddings for blogs/videos
+- Pain: Manual copy-paste from CC UI, messy formatting, lost thinking steps
+- Value: HTML export with syntax highlighting, Markdown for blogs
+
+*** 4. Compliance Officers / Enterprise Auditors
+- Need: Audit trails for AI-generated code, on-prem deployment
+- Pain: SaaS-only tools, no immutable logs, can't meet SOC2/HIPAA
+- Value: Read-only session logs, export to SIEM, air-gapped deployment
+
+*** 5. Non-Coders (PMs, Designers, Analysts)
+- Need: Learn with Claude Code, document AI workflows, share results
+- Pain: Terminal intimidation, no GUI for browsing old sessions
+- Value: =ccx web= for GUI browsing, export to Notion/Confluence
+
+** Use Cases Beyond Coding
+*** 1. Technical Documentation
+- Export CC sessions to Markdown/Org for inclusion in docs repos
+- Generate API reference examples directly from CC exploration
+- Document decision rationale with full AI conversation context
+
+*** 2. Data Analysis / Data Scientists
+- Preserve Jupyter-like exploration sessions with Claude Code
+- Share reproducible analysis workflows via exported sessions
+- Search past analytical approaches across projects
+
+*** 3. DevOps / SRE
+- Incident response documentation with CC assistance captured
+- Runbook generation from CC-guided troubleshooting
+- Post-mortem artifacts from interactive debugging sessions
+
+*** 4. Education / Training
+- Curate exemplar CC sessions for student learning
+- Export step-by-step problem-solving transcripts
+- Build curriculum from real AI-assisted coding workflows
+
+*** 5. Research / Academia
+- Archive research exploration sessions for reproducibility
+- Export to LaTeX/Org for academic paper appendices
+- Share methodology with peer reviewers via CC transcripts
+
+*** 6. Product / Technical PMs
+- Document feature exploration with Claude Code assistance
+- Export requirements refinement sessions to PRD tools
+- Share technical feasibility analysis with stakeholders
+
+*** 7. QA / Test Engineers
+- Capture test strategy brainstorming with Claude Code
+- Export test case generation sessions for review
+- Document bug investigation workflows for knowledge base
+
+** Risks
+| Risk                              | Mitigation                                        | Owner | Status  |
+|-----------------------------------+---------------------------------------------------+-------+---------|
+| Build features nobody wants       | Phase 1-4 validation before "CC as a Service"     | @eric | OPEN    |
+| Overlap with official CC features | Monitor CC roadmap, focus on power-user/team gaps | @eric | OPEN    |
+| Scope creep into IDE territory    | Explicit non-goal: Not building editor/LSP        | @eric | OPEN    |
+| Privacy/security for shared logs  | Start read-only, add auth only when needed        | @eric | OPEN    |
+
+** WIP
+- [ ] Complete Phase 1 (JSONL parser, tree building) per SPEC.md
+- [ ] Validate core value with 5-10 early users (one per persona)
+- [ ] Add telemetry to measure most-used commands (projects vs sessions vs export)
+- [ ] Prototype read-only session sharing (signed URLs, no auth)
+- [ ] Survey demand for remote CC execution (Likert scale, willingness to pay)
+
+** Links
+- SPEC: /Users/eric/wrk/src/github.com/claude-code/WIP/251227_claude-code-transcripts/SPEC.md
+- Project root: /Users/eric/wrk/src/github.com/claude-code/WIP/251227_claude-code-transcripts/
+
+** Notes
+*** Assumptions
+- Claude Code session format (JSONL, parentUuid, isSidechain) remains stable across updates
+- User demand exists for session browsing beyond official CC UI
+- "CC as a Service" has PMF if local inspection proves valuable
+
+*** Constraints
+- Read-only access to CLAUDE_CODE_HOME (~/.claude) - no modifications to CC data
+- CGO dependency (mattn/go-sqlite3) limits pure-Go portability but acceptable
+- Phase 1-4 timeline: 4 weeks for MVP (per SPEC.md implementation phases)
+
+*** Open Questions
+- Q: Does official Claude Code roadmap include session browser/export features?
+- Q: What % of CC users are non-coders (PMs, designers)? TAM sizing needed.
+- Q: Pricing model for "CC as a Service" (per-seat, usage-based, enterprise flat)?
+- Q: Self-hosted vs SaaS preference for compliance persona?
+- Q: Integration points with existing tools (Notion, Confluence, GitHub, Slack)?
+
+*** Gotchas
+- Path encoding algorithm must match Claude Code exactly (reverse-engineer from existing sessions)
+- Agent sidechain linking (agentId field) not yet validated against real CC sessions
+- Skills system (Lua vs Starlark vs Go plugins) punted to Phase 4, needs decision
+- Web UI (Phase 4) competes with =ccx view= terminal rendering - justify both or cut one
+
+*** Non-Goals (Explicit Scope Boundaries)
+- NOT building: IDE plugin, LSP server, code editor
+- NOT replacing: Claude Code itself, just augmenting with inspection/sharing
+- NOT targeting: Non-technical end-users (Excel users, marketers) - too broad
+- NOT doing: Real-time collaboration (Google Docs-style) in Phase 1-4
