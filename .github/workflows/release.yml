@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build all platforms
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          LDFLAGS="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}"
+
+          mkdir -p dist
+
+          # No CGO - pure Go cross-compilation
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/ccx-darwin-arm64 ./cmd/ccx
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/ccx-darwin-amd64 ./cmd/ccx
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/ccx-linux-amd64 ./cmd/ccx
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/ccx-linux-arm64 ./cmd/ccx
+
+      - name: Create archives
+        run: |
+          mkdir -p release
+          VERSION=${GITHUB_REF_NAME#v}
+
+          for binary in dist/ccx-*; do
+            name=$(basename "$binary")
+            parts=(${name//-/ })
+            os=${parts[1]}
+            arch=${parts[2]}
+
+            if [[ "$os" == "darwin" ]]; then
+              os_name="macOS"
+            else
+              os_name="linux"
+            fi
+
+            if [[ "$arch" == "amd64" ]]; then
+              arch_name="x86_64"
+            else
+              arch_name="arm64"
+            fi
+
+            archive_name="ccx_${VERSION}_${os_name}_${arch_name}"
+            mkdir -p "release/${archive_name}"
+            cp "$binary" "release/${archive_name}/ccx"
+            chmod +x "release/${archive_name}/ccx"
+            cp LICENSE README.md "release/${archive_name}/"
+
+            tar -czvf "release/${archive_name}.tar.gz" -C release "${archive_name}"
+          done
+
+          cd release && sha256sum *.tar.gz > checksums.txt
+
+      - name: Package skill bundle
+        run: zip -r release/ccx.skill skills/ccx/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/*.tar.gz
+            release/checksums.txt
+            release/ccx.skill
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

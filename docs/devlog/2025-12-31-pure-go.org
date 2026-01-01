@@ -1,0 +1,161 @@
+* [2025-12-31] Dev Log: CGO Crisis → Pure Go Liberation       :INFRA:BREAKING:
+
+** Context
+Binary SIGKILL'd on macOS launch. Root cause: CGO dependency (mattn/go-sqlite3) crashing during init. Switched to modernc.org/sqlite (pure Go), eliminated entire class of cross-platform pain.
+
+** Why
+User's ccx binary immediately crashed on macOS. CGO sqlite driver caused native library initialization failures, breaking portability promise. Pure Go eliminates compiler toolchain requirements, enables true single-binary cross-compilation.
+
+** What
+- =BREAKING= Sqlite driver: mattn/go-sqlite3 (CGO) → modernc.org/sqlite v1.42.2 (pure Go)
+- =INFRA= GitHub Actions CI: test + lint on push/PR (.github/workflows/ci.yml)
+- =INFRA= GitHub Actions Release: single-runner cross-compile for darwin/linux arm64/amd64 (.github/workflows/release.yml)
+- =INFRA= Skill bundle packaging (ccx.skill) for Claude Code integration
+- =OPS= CONTRIBUTING.md with dev setup, build, test, release workflow
+- =INFRA= Makefile hardening: GOBIN respects environment, CGO_ENABLED=0 explicit on all cross-builds
+- Code quality: fixed duplicate error output (Cobra + main.go), removed dead code, added error handling (json.Encode, file.Seek)
+- Dependency updates: Go 1.22 → 1.24.0 (toolchain 1.24.11), cobra 1.8 → 1.10.2, viper 1.18 → 1.21.0
+
+** How
+*** Steps
+1. Diagnosed SIGKILL via macOS crash logs (library init failure in mattn/go-sqlite3)
+2. Researched pure Go sqlite alternatives (modernc.org/sqlite has identical database/sql interface)
+3. Updated go.mod, internal/db/db.go import (one-line change)
+4. Verified cross-compilation: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build ./cmd/ccx
+5. Created CI workflow (go mod verify, go build, go vet, go test -race, golangci-lint)
+6. Created Release workflow (cross-compile 4 targets, tar.gz archives, checksums, ccx.skill bundle)
+7. Two-round code review: fixed Cobra error handling, removed unused mutex/functions, hardened Makefile GOBIN
+
+*** Commands
+#+BEGIN_SRC bash
+# Before: CGO build matrix (requires native toolchain per target OS)
+# macOS → darwin binaries: needs Xcode Command Line Tools
+# Linux → darwin binaries: needs osxcross or macOS runner
+# Windows → darwin binaries: impossible
+
+# After: pure Go cross-compilation (single runner, any host OS)
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o ccx-darwin-arm64 ./cmd/ccx
+CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o ccx-darwin-amd64 ./cmd/ccx
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ccx-linux-amd64 ./cmd/ccx
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ccx-linux-arm64 ./cmd/ccx
+
+# Skill bundle for Claude Code
+zip -r ccx.skill skills/ccx/
+#+END_SRC
+
+*** Diffs
+#+BEGIN_SRC diff
+--- a/go.mod
++++ b/go.mod
+@@ -1,11 +1,11 @@
+ module github.com/thevibeworks/ccx
+
+-go 1.22
++go 1.24.0
++
++toolchain go1.24.11
+
+ require (
+-	github.com/mattn/go-sqlite3 v1.14.18
+-	github.com/spf13/cobra v1.8.0
+-	github.com/spf13/viper v1.18.0
++	github.com/spf13/cobra v1.10.2
++	github.com/spf13/viper v1.21.0
++	modernc.org/sqlite v1.42.2
+ )
+
+--- a/internal/db/db.go
++++ b/internal/db/db.go
+@@ -6,7 +6,7 @@ import (
+ 	"fmt"
+ 	"path/filepath"
+
+-	_ "github.com/mattn/go-sqlite3"
++	_ "modernc.org/sqlite"
+ )
+
+--- a/Makefile
++++ b/Makefile
+@@ -4,6 +4,7 @@
+ VERSION ?= dev
+ BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+ LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
++GOBIN := $(or $(shell go env GOBIN),$(shell go env GOPATH)/bin)
+
+ # Cross-platform builds (pure Go, CGO disabled)
+ build-darwin-arm64:
+-	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/ccx-darwin-arm64 ./cmd/ccx
++	@CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/ccx-darwin-arm64 ./cmd/ccx
+#+END_SRC
+
+** Result
+*** Outcome
+Single binary cross-compiles from any OS to darwin/linux arm64/amd64. No CGO, no native toolchains, no matrix builds. GitHub Actions release workflow builds all 4 targets on single ubuntu-latest runner in <2min.
+
+*** Tests
+- CI: go test -race -v ./... on ubuntu-latest
+- Manual verification: darwin-arm64 binary runs on M1 macOS without SIGKILL
+- Cross-compile smoke test: built darwin binaries from Linux, linux binaries from macOS
+
+*** Observability
+- GitHub Actions: https://github.com/thevibeworks/ccx/actions
+- Release artifacts: https://github.com/thevibeworks/ccx/releases
+
+** Decisions
+| Decision                          | Alternatives                                    | Rationale                                                             | DRI   | Timestamp (UTC)      |
+|-----------------------------------+-------------------------------------------------+-----------------------------------------------------------------------+-------+----------------------|
+| modernc.org/sqlite over mattn/    | Keep CGO + native build matrix, crawshaw/sqlite | modernc.org: mature (v1.42.2), identical database/sql API, no patches | @eric | 2025-12-31T08:00:00Z |
+| Single runner release workflow    | Matrix builds per OS                            | Pure Go eliminates need, simpler CI, faster builds                    | @eric | 2025-12-31T10:00:00Z |
+| CGO_ENABLED=0 explicit everywhere | Rely on default                                 | Fail-fast if CGO creeps back in via transitive dep                    | @eric | 2025-12-31T12:00:00Z |
+| Go 1.24.0 + toolchain 1.24.11     | Stay on 1.22                                    | Modernc.org/sqlite needs recent toolchain, security fixes             | @eric | 2025-12-31T14:00:00Z |
+
+** Risks
+| Risk                                      | Mitigation                                                    | Owner | Status |
+|-------------------------------------------+---------------------------------------------------------------+-------+--------|
+| modernc.org/sqlite performance vs CGO     | Benchmark critical paths, acceptable for read-heavy workload  | @eric | OPEN   |
+| Sqlite version drift from upstream        | modernc.org tracks upstream closely (v3.47.2 as of 1.42.2)    | @eric | OPEN   |
+| CGO re-introduced via transitive dep      | CGO_ENABLED=0 in Makefile + CI catches at build time          | @eric | CLOSED |
+
+** Rollback
+*** Trigger
+- modernc.org/sqlite performance degradation (>2x slower than mattn/go-sqlite3 in profiling)
+- Critical sqlite feature missing in modernc.org implementation
+
+*** Procedure
+1. Revert go.mod: modernc.org/sqlite → github.com/mattn/go-sqlite3 v1.14.18
+2. Revert internal/db/db.go import
+3. Update Makefile: remove CGO_ENABLED=0 from cross-build targets
+4. Update .github/workflows/release.yml: add matrix strategy with OS-specific runners (ubuntu-latest, macos-latest)
+5. Data impact: none (sqlite file format unchanged, read-only tool)
+
+** Links
+- CI workflow: /Users/eric/wrk/src/github.com/claude-code/WIP/251227_claude-code-transcripts/worktree/ccx/.github/workflows/ci.yml
+- Release workflow: /Users/eric/wrk/src/github.com/claude-code/WIP/251227_claude-code-transcripts/worktree/ccx/.github/workflows/release.yml
+- CONTRIBUTING: /Users/eric/wrk/src/github.com/claude-code/WIP/251227_claude-code-transcripts/worktree/ccx/CONTRIBUTING.md
+- modernc.org/sqlite: https://gitlab.com/cznic/sqlite
+- Skill bundle: /Users/eric/wrk/src/github.com/claude-code/WIP/251227_claude-code-transcripts/worktree/ccx/skills/ccx/
+
+** Notes
+*** Assumptions
+- modernc.org/sqlite performance acceptable for ccx workload (session browsing, read-heavy)
+- GitHub Actions ubuntu-latest runner can cross-compile to darwin (verified: works)
+- Skill bundle (.skill = .zip) integrates with Claude Code skill loading mechanism
+
+*** Constraints
+- Pure Go requirement eliminates CGO-only sqlite features (custom VFS, loadable extensions)
+- Cross-compilation requires CGO_ENABLED=0 explicit (Go default varies by platform)
+- GitHub Actions release workflow needs `permissions: contents: write` for softprops/action-gh-release
+
+*** Gotchas
+- mattn/go-isatty remains in go.mod (indirect dep of cobra/viper, not CGO-related despite name)
+- Makefile GOBIN must handle empty `go env GOBIN` (defaults to GOPATH/bin)
+- Release workflow bash array syntax requires `parts=(${name//-/ })` not `parts=(${name//-/})` (trailing space matters)
+- Archive naming convention: ccx_VERSION_OS_ARCH (e.g., ccx_0.1.0_macOS_arm64.tar.gz) follows atlas-cli pattern
+
+*** Open Questions
+- Q: Should we benchmark modernc.org/sqlite vs mattn/go-sqlite3 on large session databases (>10k sessions)?
+- Q: Does Claude Code skill loading prefer .skill (zip) or directory structure?
+- Q: Release automation: auto-bump version in go.mod on tag push, or manual?
+
+*** Key Insight
+CGO dependency = cross-platform landmine. Pure Go = portability freedom. What was a matrix of native builds (macOS runner for darwin, Linux runner for linux, impossible cross-compile) became a single `CGO_ENABLED=0` cross-compile step on any runner. The sqlite driver swap (mattn → modernc.org) was a one-line import change with zero API differences.

@@ -6,6 +6,8 @@ Inspired by [Simon Willison's claude-code-transcripts](https://github.com/simonw
 
 ## Installation
 
+Requires Go 1.24+ (pure Go, no C compiler needed).
+
 ```bash
 go install github.com/thevibeworks/ccx/cmd/ccx@latest
 ```
@@ -14,7 +16,8 @@ Or build from source:
 ```bash
 git clone https://github.com/thevibeworks/ccx
 cd ccx
-make install
+make build
+./bin/ccx --help
 ```
 
 ## Quick Start
@@ -141,4 +144,4 @@ Emacs-friendly with proper headings, source blocks, and timestamps.
 
 ## License
 
-MIT
+Apache 2.0

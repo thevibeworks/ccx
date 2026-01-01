@@ -30,7 +30,8 @@ Examples:
   ccx view                  View session in terminal
   ccx export -f html        Export session to HTML
   ccx web                   Start web UI`,
-	SilenceUsage: true,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 func SetVersionInfo(v, bt string) {

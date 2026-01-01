@@ -39,6 +39,7 @@ See =docs/devlog/= for daily entries:
 - [[file:docs/devlog/2025-12-29-ui-failures.org][2025-12-29]] UI/JS lessons learned
 - [[file:docs/devlog/2025-12-30-strategy.org][2025-12-30]] Strategic direction
 - [[file:docs/devlog/2025-12-30-session.org][2025-12-30]] UI polish session
+- [[file:docs/devlog/2025-12-31-pure-go.org][2025-12-31]] CGO → Pure Go, CI/CD infrastructure
 
 * Architecture
 

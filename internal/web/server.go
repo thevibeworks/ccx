@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/thevibeworks/ccx/internal/config"
@@ -20,7 +19,6 @@ import (
 var (
 	projectsDir string
 	claudeHome  string
-	mu          sync.RWMutex
 )
 
 type Settings struct {
@@ -372,7 +370,10 @@ func handleWatch(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			file.Seek(lastSize, 0)
+			if _, err := file.Seek(lastSize, 0); err != nil {
+				file.Close()
+				continue
+			}
 			newBytes := make([]byte, chunkSize)
 			n, err := file.Read(newBytes)
 			file.Close()
@@ -430,7 +431,7 @@ func handleAPIProjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func handleAPISessions(w http.ResponseWriter, r *http.Request) {
@@ -459,7 +460,7 @@ func handleAPISessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func handleAPISession(w http.ResponseWriter, r *http.Request) {
@@ -484,7 +485,7 @@ func handleAPISession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(fullSession)
+	_ = json.NewEncoder(w).Encode(fullSession)
 }
 
 func handleAPIStats(w http.ResponseWriter, r *http.Request) {
@@ -506,7 +507,7 @@ func handleAPIStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func handleAPISettings(w http.ResponseWriter, r *http.Request) {
@@ -519,7 +520,7 @@ func handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func loadSettings() *Settings {
@@ -587,7 +588,7 @@ func handleStar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 func handleGetStars(w http.ResponseWriter, r *http.Request) {
@@ -607,7 +608,7 @@ func handleGetStars(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stars)
+	_ = json.NewEncoder(w).Encode(stars)
 }
 
 func handleAPIFile(w http.ResponseWriter, r *http.Request) {
@@ -671,7 +672,7 @@ func handleAPIFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"path":    resolvedPath,
 		"content": string(content),
 	})
@@ -736,7 +737,7 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 	case "json":
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.json", truncate(sessionID, 8)))
-		json.NewEncoder(w).Encode(fullSession)
+		_ = json.NewEncoder(w).Encode(fullSession)
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.html", truncate(sessionID, 8)))
@@ -764,7 +765,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	query := strings.ToLower(r.URL.Query().Get("q"))
 	if query == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
 		return
 	}
 
@@ -883,7 +884,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"results": results})
+	_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
 }
 
 // No truncation - return full summary

@@ -17,8 +17,6 @@ func sanitizeID(s string) string {
 	return idSanitizer.ReplaceAllString(s, "")
 }
 
-const maxIndentDepth = 3
-
 func renderIndexPage(projects []*parser.Project, totalSessions int, search, sortBy string) string {
 	var b strings.Builder
 
@@ -463,7 +461,7 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 		b.WriteString(fmt.Sprintf(`<span class="turn-role">%s</span>`, role))
 		b.WriteString(fmt.Sprintf(`<span class="turn-preview">%s</span>`, html.EscapeString(preview)))
 		b.WriteString(fmt.Sprintf(`<span class="turn-time">%s</span>`, msg.Timestamp.Format("15:04:05")))
-		b.WriteString(fmt.Sprintf(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>`))
+		b.WriteString(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>`)
 		b.WriteString(`</summary>`)
 		b.WriteString(fmt.Sprintf(`<div class="turn-body" data-raw="%s">`, html.EscapeString(rawContent)))
 		for _, block := range msg.Content {
@@ -483,7 +481,7 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 	if msg.Model != "" {
 		b.WriteString(fmt.Sprintf(`<span class="turn-model">%s</span>`, html.EscapeString(msg.Model)))
 	}
-	b.WriteString(fmt.Sprintf(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>`))
+	b.WriteString(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>`)
 	b.WriteString(`</div>`)
 
 	b.WriteString(fmt.Sprintf(`<div class="turn-body" data-raw="%s">`, html.EscapeString(rawContent)))
@@ -973,69 +971,6 @@ func formatTokens(n int) string {
 		return fmt.Sprintf("%.1fk", float64(n)/1000)
 	}
 	return fmt.Sprintf("%d", n)
-}
-
-func renderContentBlock(b *strings.Builder, block parser.ContentBlock, showThinking, showTools bool) {
-	switch block.Type {
-	case "text":
-		if block.Text != "" {
-			paragraphs := strings.Split(block.Text, "\n\n")
-			for _, p := range paragraphs {
-				p = strings.TrimSpace(p)
-				if p != "" {
-					b.WriteString(fmt.Sprintf(`<p>%s</p>`, html.EscapeString(p)))
-				}
-			}
-		}
-
-	case "thinking":
-		display := "none"
-		if showThinking {
-			display = "block"
-		}
-		b.WriteString(fmt.Sprintf(`<details class="thinking-block" style="display:%s">`, display))
-		b.WriteString(`<summary>Thinking...</summary>`)
-		b.WriteString(fmt.Sprintf(`<div class="thinking-content">%s</div>`, html.EscapeString(block.Text)))
-		b.WriteString(`</details>`)
-
-	case "tool_use":
-		display := "block"
-		if !showTools {
-			display = "none"
-		}
-		b.WriteString(fmt.Sprintf(`<div class="tool-use" id="tool-%s" style="display:%s">`, block.ToolID, display))
-		b.WriteString(fmt.Sprintf(`<div class="tool-header"><span class="tool-icon">$</span> %s</div>`, html.EscapeString(block.ToolName)))
-		if block.ToolInput != nil {
-			inputJSON, _ := json.MarshalIndent(block.ToolInput, "", "  ")
-			b.WriteString(fmt.Sprintf(`<pre class="tool-input">%s</pre>`, html.EscapeString(string(inputJSON))))
-		}
-		b.WriteString(`</div>`)
-
-	case "tool_result":
-		display := "block"
-		if !showTools {
-			display = "none"
-		}
-		class := "tool-result"
-		if block.IsError {
-			class += " tool-error"
-		}
-		b.WriteString(fmt.Sprintf(`<div class="%s" style="display:%s">`, class, display))
-		if block.ToolResult != nil {
-			result := fmt.Sprintf("%v", block.ToolResult)
-			if len(result) > 2000 {
-				result = result[:1997] + "..."
-			}
-			b.WriteString(fmt.Sprintf(`<pre>%s</pre>`, html.EscapeString(result)))
-		}
-		b.WriteString(`</div>`)
-
-	case "image":
-		if block.ImageData != "" {
-			b.WriteString(fmt.Sprintf(`<img src="data:%s;base64,%s" class="inline-image">`,
-				html.EscapeString(block.MediaType), html.EscapeString(block.ImageData)))
-		}
-	}
 }
 
 // renderConversationNav renders a collapsible tree navigation

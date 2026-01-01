@@ -140,17 +140,3 @@ type messagePayload struct {
 	Model   string `json:"model"`   // Model ID for assistant messages
 }
 
-type rawContentBlock struct {
-	Type      string `json:"type"`
-	Text      string `json:"text"`
-	Thinking  string `json:"thinking"`
-	Name      string `json:"name"`
-	ID        string `json:"id"`
-	Input     any    `json:"input"`
-	Content   any    `json:"content"`
-	IsError   bool   `json:"is_error"`
-	Source    *struct {
-		MediaType string `json:"media_type"`
-		Data      string `json:"data"`
-	} `json:"source"`
-}
