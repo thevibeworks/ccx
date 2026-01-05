@@ -7,6 +7,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-01-05
+
+### Added
+- **Header social icons**: GitHub and X/Twitter (@ericwang42) icons in top nav
+- **Screenshots**: Added 5 screenshots to README (projects, live, session info, export, settings)
+
+### Changed
+- **Toolbar positioning**: Shifted right (+140px) and up (40px) to align with main content center
+- **Panel nav width**: Reduced from 200px to 170px for more compact feel
+- **Info panel**: Repositioned to right side, floating above info icon
+- **README**: Added screenshots, credited Simon Willison's inspiration
+
 ## [0.2.3] - 2026-01-05
 
 ### Fixed
@@ -81,7 +93,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Dark/light theme toggle with persistence
 - Keyboard navigation (j/k scroll, gg/G jump, / search, t theme, z collapse)
 
-[Unreleased]: https://github.com/thevibeworks/ccx/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/thevibeworks/ccx/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/thevibeworks/ccx/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/thevibeworks/ccx/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/thevibeworks/ccx/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/thevibeworks/ccx/compare/v0.2.0...v0.2.1
