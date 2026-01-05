@@ -2,6 +2,8 @@
 
 **Session viewer for Claude Code** - Browse, search, and export your conversations.
 
+Inspired by [Simon Willison's claude-code-transcripts](https://github.com/simonw/claude-code-transcripts) ([announcement](https://x.com/simonw/status/1872004339799512305)) - rebuilt in Go with live tailing, web UI, and two-panel navigation.
+
 ```
 ccx web
 ```
