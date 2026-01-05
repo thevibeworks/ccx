@@ -20,16 +20,25 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "ccx",
 	Short: "ccx - session viewer for Claude Code",
-	Long: `ccx is a CLI and web UI for Claude Code sessions.
+	Long: `ccx - Browse, search, and export your Claude Code sessions.
 
-Browse, inspect, search, and export your Claude Code conversations.
+Start the web UI for the best experience:
+  ccx web                   Launch browser UI at localhost:8080
 
-Examples:
+Web UI features:
+  - Project/session browser with search
+  - Collapsible thinking blocks and tool calls
+  - In-session search with filter chips
+  - Live tail mode for active sessions
+  - Dark/light theme, keyboard shortcuts
+
+CLI commands:
   ccx projects              List all projects
   ccx sessions              List sessions
   ccx view                  View session in terminal
-  ccx export -f html        Export session to HTML
-  ccx web                   Start web UI`,
+  ccx export -f html        Export to HTML/Markdown/Org
+
+https://github.com/thevibeworks/ccx`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }

@@ -1777,7 +1777,15 @@ func renderTopNav(projectName, sessionID string) string {
 }
 
 func renderFooter() string {
-	return ""
+	return `<footer class="site-footer">
+	<div class="footer-inner">
+		<span class="footer-brand"><span class="brand-cc">cc</span><span class="brand-x">x</span></span>
+		<span class="footer-sep">·</span>
+		<a href="https://github.com/thevibeworks/ccx" target="_blank" rel="noopener noreferrer" class="footer-link">GitHub</a>
+		<span class="footer-sep">·</span>
+		<span class="footer-text">by thevibeworks</span>
+	</div>
+</footer>`
 }
 
 func renderSidebar(active string) string {
@@ -2063,6 +2071,29 @@ code, pre, .session-id, .model-badge {
   text-decoration: none;
 }
 .icon-btn:hover { color: var(--text); border-color: var(--text-muted); }
+
+.site-footer {
+  padding: 16px 24px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.footer-brand { font-weight: 700; font-size: 14px; }
+.footer-sep { opacity: 0.5; }
+.footer-link {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.footer-link:hover { color: var(--primary); text-decoration: underline; }
+.footer-text { font-size: 12px; }
 
 .layout {
   display: flex;

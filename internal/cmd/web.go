@@ -14,17 +14,20 @@ import (
 
 var webCmd = &cobra.Command{
 	Use:   "web",
-	Short: "Start local web server",
-	Long: `Start a local web server for interactive session browsing.
+	Short: "Start local web server for session browsing",
+	Long: `Start ccx web UI - the best way to browse Claude Code sessions.
 
 Features:
-  - Project/session browser
-  - Tree-aware session viewer
-  - Collapsible thinking/tool blocks
-  - Syntax highlighting
-  - Dark/light toggle
-  - Keyboard navigation (j/k, /, gg/G)
-  - Search across sessions`,
+  - Project/session browser with global search
+  - Tree-aware session viewer with message threading
+  - Collapsible thinking blocks and tool calls
+  - In-session search with filter chips (User/Response/Tools/Agents)
+  - Live tail mode for active sessions (auto-refresh)
+  - Syntax highlighting for code blocks
+  - Dark/light theme toggle (press 'd')
+  - Keyboard navigation (j/k scroll, / search, z fold, r refresh)
+
+Opens browser automatically. Use --no-open to disable.`,
 	RunE: runWeb,
 }
 
