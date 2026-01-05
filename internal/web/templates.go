@@ -3326,6 +3326,21 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 }
 .block-error { background: var(--error-bg); border-color: var(--error-border); }
 
+/* Inline result for live mode */
+.block-result-inline {
+  margin: 0;
+}
+.block-result-inline .result-header {
+  display: none; /* Hide since turn header already shows tool name */
+}
+.block-result-inline .tool-output {
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  background: none;
+  border: none;
+}
+
 .block-image { max-width: 100%; border-radius: var(--radius); margin: 8px 0; }
 
 /* Command args */
@@ -4120,10 +4135,18 @@ function appendTailMessage(data) {
       '</div>' +
     '</details>';
   } else if (kind === 'result') {
+    // Get tool name from first tool_result block
+    let resultToolName = 'result';
+    if (Array.isArray(content) && content[0]?.type === 'tool_result') {
+      const tid = content[0].tool_use_id;
+      if (window.toolIdMap && window.toolIdMap[tid]) {
+        resultToolName = window.toolIdMap[tid];
+      }
+    }
     html = '<div class="turn turn-result" id="msg-' + sanitizeID(uuid) + '">' +
       '<div class="turn-header">' +
         '<span class="turn-icon">○</span>' +
-        '<span class="turn-role">RESULT</span>' +
+        '<span class="turn-role">' + escapeHtml(resultToolName) + '</span>' +
         '<span class="turn-time">' + timestamp + '</span>' +
         '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>' +
       '</div>' +
@@ -4202,6 +4225,9 @@ function renderContentBlocks(content, forceExpand) {
       case 'tool_use':
         const toolName = block.name || 'tool';
         const toolId = block.id || 'tool-' + Date.now();
+        // Track tool ID -> name mapping for result lookup
+        if (!window.toolIdMap) window.toolIdMap = {};
+        window.toolIdMap[toolId] = toolName;
         const isActive = ['Write','Edit','Bash','Task','TodoWrite','Skill','NotebookEdit'].includes(toolName);
         const toolOpen = (isActive || showTools) ? ' open' : '';
         const inputPreview = compactToolPreviewJS(toolName, block.input);
@@ -4222,6 +4248,7 @@ function renderContentBlocks(content, forceExpand) {
         break;
       case 'tool_result':
         const resId = block.tool_use_id || '';
+        const resToolName = (window.toolIdMap && window.toolIdMap[resId]) || 'tool';
         let resContent = '';
         if (typeof block.content === 'string') {
           resContent = block.content;
@@ -4231,11 +4258,11 @@ function renderContentBlocks(content, forceExpand) {
           }
         }
         const truncRes = resContent.length > 500 ? resContent.slice(0, 500) + '...' : resContent;
-        html += '<details class="block-tool block-result">' +
-          '<summary><span class="block-icon">○</span> result' +
-          (resId ? ' <span class="tool-id">' + escapeHtml(resId.slice(0, 8)) + '</span>' : '') + '</summary>' +
+        // Inline result - no nested details, just output with tool name
+        html += '<div class="block-result-inline">' +
+          '<div class="result-header"><span class="block-icon">○</span> ' + escapeHtml(resToolName) + '</div>' +
           '<pre class="tool-output">' + escapeHtml(truncRes) + '</pre>' +
-        '</details>';
+        '</div>';
         break;
     }
   }
