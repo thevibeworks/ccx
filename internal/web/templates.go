@@ -229,8 +229,27 @@ func renderSessionPage(session *parser.Session, projectName string, showThinking
 	b.WriteString(fmt.Sprintf(`<a href="/api/export/%s/%s?format=json">JSON</a>`, html.EscapeString(projectName), html.EscapeString(session.ID)))
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
+	b.WriteString(`<button class="dock-btn" id="tb-search" title="Search (/ or f)"><span class="dock-icon">⌕</span><span class="dock-label">Find</span></button>`)
 	b.WriteString(`<button class="dock-btn" id="tb-refresh" title="Refresh (r)"><span class="dock-icon">↻</span></button>`)
 	b.WriteString(`<button class="dock-btn" id="tb-info" title="Info (i)"><span class="dock-icon">ⓘ</span></button>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`</div>`)
+
+	// Floating session search bar (hidden by default)
+	b.WriteString(`<div class="session-search" id="session-search">`)
+	b.WriteString(`<div class="search-row">`)
+	b.WriteString(`<input type="text" id="search-input" placeholder="Search in session...">`)
+	b.WriteString(`<span class="search-info" id="search-info"></span>`)
+	b.WriteString(`<button class="search-nav" id="search-prev" title="Previous (N)">↑</button>`)
+	b.WriteString(`<button class="search-nav" id="search-next" title="Next (n)">↓</button>`)
+	b.WriteString(`<button class="search-close" id="search-close" title="Close (Esc)">×</button>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`<div class="search-filters">`)
+	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-user" checked><span>User</span></label>`)
+	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-response" checked><span>Response</span></label>`)
+	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-tools"><span>Tools</span></label>`)
+	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-agents"><span>Agents</span></label>`)
+	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-thinking"><span>Thinking</span></label>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 
@@ -2377,6 +2396,99 @@ code, pre, .session-id, .model-badge {
 .stat { display: flex; align-items: center; gap: 3px; }
 .stat-icon { font-weight: 600; }
 
+/* Session search bar (floating above toolbar) */
+.session-search {
+  position: fixed;
+  bottom: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  padding: 12px 16px;
+  z-index: 300;
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 400px;
+}
+.session-search.show { display: flex; }
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.session-search input[type="text"] {
+  border: none;
+  background: var(--bg-secondary);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  flex: 1;
+  color: var(--text);
+}
+.session-search input[type="text"]:focus { outline: 2px solid var(--primary); }
+.session-search input[type="text"]::placeholder { color: var(--text-muted); }
+.search-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 50px;
+  text-align: center;
+}
+.search-nav {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.search-nav:hover { background: var(--bg-secondary); color: var(--text); }
+.search-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 18px;
+  padding: 2px 6px;
+}
+.search-close:hover { color: var(--text); }
+
+/* Search filter chips */
+.search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.search-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: all 0.15s;
+}
+.search-chip:hover { border-color: var(--text-muted); }
+.search-chip input { display: none; }
+.search-chip:has(input:checked) {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
+
+/* Search button emphasis */
+#tb-search .dock-icon { font-size: 16px; }
+
+/* Search highlight */
+.search-match { background: rgba(255,220,0,0.3); }
+.search-current { background: rgba(255,180,0,0.5); outline: 2px solid var(--primary); }
+
 /* Info panel (floating above dock) */
 .info-panel {
   position: fixed;
@@ -4469,6 +4581,299 @@ function updateToolbarState() {
   document.getElementById('tb-tools')?.classList.toggle('active', document.getElementById('show-tools')?.checked);
 }
 updateToolbarState();
+
+// Session search
+const sessionSearch = document.getElementById('session-search');
+const searchInput = document.getElementById('search-input');
+const searchInfo = document.getElementById('search-info');
+const filterUser = document.getElementById('filter-user');
+const filterResponse = document.getElementById('filter-response');
+const filterTools = document.getElementById('filter-tools');
+const filterAgents = document.getElementById('filter-agents');
+const filterThinking = document.getElementById('filter-thinking');
+let searchMatches = [];
+let searchIdx = -1;
+
+function openSearch() {
+  sessionSearch?.classList.add('show');
+  searchInput?.focus();
+  searchInput?.select();
+}
+
+function closeSearch() {
+  sessionSearch?.classList.remove('show');
+  clearHighlights();
+  searchMatches = [];
+  searchIdx = -1;
+  if (searchInfo) searchInfo.textContent = '';
+  if (searchInput) searchInput.value = '';
+}
+
+function clearHighlights() {
+  document.querySelectorAll('.search-match, .search-current').forEach(el => {
+    el.classList.remove('search-match', 'search-current');
+  });
+}
+
+// Search scoring: returns score (0 = no match, higher = better)
+function searchScore(text, query) {
+  text = text.toLowerCase();
+  query = query.trim().toLowerCase();
+
+  const words = query.split(/\s+/).filter(w => w.length > 0);
+
+  if (words.length === 0) return 0;
+
+  // Multi-word: ALL words must appear as substrings
+  if (words.length > 1) {
+    let score = 0;
+    for (const word of words) {
+      const idx = text.indexOf(word);
+      if (idx === -1) return 0; // word not found, no match
+      // Score: earlier match = better, word boundary = bonus
+      score += 10;
+      if (idx < 100) score += (100 - idx) / 20;
+      if (idx === 0 || /\W/.test(text[idx-1])) score += 5; // word boundary
+    }
+    return score;
+  }
+
+  // Single word: substring match (exact), position-based scoring
+  const word = words[0];
+  const idx = text.indexOf(word);
+  if (idx === -1) return 0;
+
+  let score = 10 + word.length; // longer match = better
+  if (idx < 100) score += (100 - idx) / 10; // earlier = better
+  if (idx === 0 || /\W/.test(text[idx-1])) score += 10; // word boundary bonus
+
+  return score;
+}
+
+function doSearch(query) {
+  clearHighlights();
+  searchMatches = [];
+  searchIdx = -1;
+
+  if (!query || query.trim().length < 2) {
+    if (searchInfo) searchInfo.textContent = '';
+    return;
+  }
+
+  const results = [];
+  const q = query.trim().toLowerCase();
+
+  // Check which filters are active
+  const showUser = filterUser?.checked;
+  const showResponse = filterResponse?.checked;
+  const showTools = filterTools?.checked;
+  const showAgents = filterAgents?.checked;
+  const showThinking = filterThinking?.checked;
+
+  if (showUser) {
+    // Search user messages
+    document.querySelectorAll('.turn-user, details.turn-user').forEach(msg => {
+      const text = msg.textContent;
+      const score = searchScore(text, query);
+      if (score > 0) {
+        results.push({ el: msg, score: score + 50, type: 'user' });
+      }
+    });
+  }
+
+  if (showResponse) {
+    // Search assistant response text (excluding thinking blocks)
+    document.querySelectorAll('.turn:not(.turn-user)').forEach(msg => {
+      // Get text excluding thinking blocks
+      const clone = msg.cloneNode(true);
+      clone.querySelectorAll('.block-thinking').forEach(t => t.remove());
+      const text = clone.textContent;
+      const score = searchScore(text, query);
+      if (score > 0) {
+        results.push({ el: msg, score: score, type: 'response' });
+      }
+    });
+  }
+
+  if (showThinking) {
+    // Search thinking blocks
+    document.querySelectorAll('.block-thinking').forEach(block => {
+      const text = block.textContent;
+      const score = searchScore(text, query);
+      if (score > 0) {
+        results.push({ el: block, score: score, type: 'thinking' });
+      }
+    });
+  }
+
+  if (showTools) {
+    // Search tool names and inputs
+    document.querySelectorAll('.block-tool').forEach(tool => {
+      const summary = tool.querySelector('summary');
+      if (!summary) return;
+      const text = summary.textContent;
+      if (text.toLowerCase().includes(q)) {
+        results.push({ el: tool, score: 20, type: 'tool' });
+      }
+    });
+  }
+
+  if (showAgents) {
+    // Search Task tool for subagent_type
+    document.querySelectorAll('.block-tool').forEach(tool => {
+      const summary = tool.querySelector('summary');
+      if (!summary) return;
+      const text = summary.textContent;
+      if (text.includes('Task') && text.includes('[')) {
+        const match = text.match(/\[([^\]]+)\]/);
+        if (match && match[1].toLowerCase().includes(q)) {
+          results.push({ el: tool, score: 25, type: 'agent' });
+        }
+      }
+    });
+  }
+
+  // Sort by score (highest first)
+  results.sort((a, b) => b.score - a.score);
+
+  // Apply highlights
+  results.forEach(r => {
+    searchMatches.push(r.el);
+    r.el.classList.add('search-match');
+  });
+
+  if (searchMatches.length > 0) {
+    searchIdx = 0;
+    highlightCurrent();
+  }
+
+  updateSearchInfo();
+}
+
+function expandDetails(el) {
+  if (el && el.tagName === 'DETAILS') {
+    el.open = true;
+    el.setAttribute('open', '');
+  }
+}
+
+function unfoldThread(el) {
+  // Unfold any parent .thread that's folded
+  const thread = el.closest('.thread.folded');
+  if (thread) {
+    thread.classList.remove('folded');
+  }
+}
+
+function highlightCurrent() {
+  document.querySelectorAll('.search-current').forEach(el => el.classList.remove('search-current'));
+  if (searchIdx >= 0 && searchIdx < searchMatches.length) {
+    const el = searchMatches[searchIdx];
+    el.classList.add('search-current');
+
+    // Unfold any folded thread containing this element
+    unfoldThread(el);
+
+    // Open this element if it's details
+    expandDetails(el);
+
+    // Open all nested details within the matched element
+    el.querySelectorAll('details').forEach(expandDetails);
+
+    // Open all ancestor details elements
+    let node = el.parentElement;
+    while (node) {
+      expandDetails(node);
+      // Also unfold threads as we go up
+      if (node.classList?.contains('thread') && node.classList?.contains('folded')) {
+        node.classList.remove('folded');
+      }
+      node = node.parentElement;
+    }
+
+    // Also check closest details (in case el is inside one)
+    const closestDetails = el.closest('details');
+    if (closestDetails) {
+      expandDetails(closestDetails);
+      let ancestor = closestDetails.parentElement;
+      while (ancestor) {
+        expandDetails(ancestor);
+        ancestor = ancestor.parentElement;
+      }
+    }
+
+    // Scroll after opening (delay for DOM update)
+    setTimeout(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+  }
+}
+
+function updateSearchInfo() {
+  if (!searchInfo) return;
+  if (searchMatches.length === 0) {
+    searchInfo.textContent = 'No matches';
+  } else {
+    searchInfo.textContent = (searchIdx + 1) + '/' + searchMatches.length;
+  }
+}
+
+function nextMatch() {
+  if (searchMatches.length === 0) return;
+  searchIdx = (searchIdx + 1) %% searchMatches.length;
+  highlightCurrent();
+  updateSearchInfo();
+}
+
+function prevMatch() {
+  if (searchMatches.length === 0) return;
+  searchIdx = (searchIdx - 1 + searchMatches.length) %% searchMatches.length;
+  highlightCurrent();
+  updateSearchInfo();
+}
+
+// Event listeners
+document.getElementById('tb-search')?.addEventListener('click', openSearch);
+document.getElementById('search-close')?.addEventListener('click', closeSearch);
+document.getElementById('search-prev')?.addEventListener('click', prevMatch);
+document.getElementById('search-next')?.addEventListener('click', nextMatch);
+
+searchInput?.addEventListener('input', (e) => {
+  doSearch(e.target.value);
+});
+
+// Re-search when filters change
+[filterUser, filterResponse, filterTools, filterAgents, filterThinking].forEach(cb => {
+  cb?.addEventListener('change', () => doSearch(searchInput?.value || ''));
+});
+
+searchInput?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.shiftKey ? prevMatch() : nextMatch();
+    e.preventDefault();
+  }
+  if (e.key === 'Escape') {
+    closeSearch();
+    e.preventDefault();
+  }
+});
+
+// Global keyboard shortcuts for search
+document.addEventListener('keydown', function(e) {
+  if (sessionSearch?.classList.contains('show')) {
+    // Search is open
+    if (e.key === 'n' && !e.target.matches('input, textarea')) {
+      e.shiftKey ? prevMatch() : nextMatch();
+      e.preventDefault();
+    }
+  } else {
+    // Search is closed - open with / or f
+    if ((e.key === '/' || e.key === 'f') && !e.target.matches('input, textarea')) {
+      e.preventDefault();
+      openSearch();
+    }
+  }
+});
 </script>
 <style>
 @keyframes flash {
