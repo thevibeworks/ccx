@@ -3590,8 +3590,12 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   .main-content { margin-left: 0; }
   .nav-sidebar { width: 180px; }
 }
+@media (max-width: 768px) {
+  .panel-nav { width: 160px; min-width: 160px; }
+}
 @media (max-width: 600px) {
   .nav-sidebar { display: none; }
+  .panel-nav { display: none; }
   .top-nav { padding: 0 10px; }
 }
 `
@@ -4050,12 +4054,11 @@ function updateScrollspy() {
     const activeNav = document.querySelector('.nav-item[data-msg="' + currentId + '"]');
     if (activeNav) {
       activeNav.classList.add('active');
-      // Only scroll sidebar if item is out of view (no smooth - instant)
-      const navList = document.getElementById('nav-list');
-      if (navList) {
+      // Only scroll sidebar if item is out of view (use sidebar viewport, not content)
+      if (navSidebar) {
         const rect = activeNav.getBoundingClientRect();
-        const listRect = navList.getBoundingClientRect();
-        if (rect.top < listRect.top || rect.bottom > listRect.bottom) {
+        const sidebarRect = navSidebar.getBoundingClientRect();
+        if (rect.top < sidebarRect.top || rect.bottom > sidebarRect.bottom) {
           activeNav.scrollIntoView({ block: 'nearest' });
         }
       }
@@ -4543,6 +4546,9 @@ function updateNavForMessage(uuid, kind, content, time) {
   const navList = document.getElementById('nav-list');
   if (!navList) return;
 
+  // Sanitize ID to match DOM element IDs
+  const safeId = sanitizeID(uuid);
+
   // Add "Live" section separator if not present
   let liveSection = navList.querySelector('.nav-live-section');
   if (!liveSection) {
@@ -4557,15 +4563,15 @@ function updateNavForMessage(uuid, kind, content, time) {
   let text = kind === 'user' ? getTextPreview(content, 40) : 'Response';
 
   const item = document.createElement('a');
-  item.href = '#msg-' + uuid;
+  item.href = '#msg-' + safeId;
   item.className = 'nav-item ' + cls;
-  item.dataset.msg = uuid;
+  item.dataset.msg = safeId;
   item.innerHTML = '<span class="nav-icon">' + icon + '</span><span class="nav-text">' + escapeHtml(text || kind) + '</span>';
   item.addEventListener('click', function(e) {
     e.preventDefault();
     document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
     this.classList.add('active');
-    document.getElementById('msg-' + uuid)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('msg-' + safeId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
   liveSection.appendChild(item);
 }
