@@ -10,32 +10,32 @@ ccx web
 
 That's it. Opens a browser at `localhost:8080`.
 
-## Web UI
+## Screenshots
 
-The web interface is the main feature. Start it and explore your Claude Code history:
+![Projects](screenshots/ccx-projects.jpeg)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  ccx for Claude Code                    [Search...] [◐] [◎] │
-├─────────────────────────────────────────────────────────────┤
-│  Projects        │  Session e38536a2                        │
-│  ─────────       │  ───────────────                         │
-│  > my-project    │  [USER] Fix the login bug                │
-│    api-server    │  [ASSISTANT] I'll help fix that...       │
-│    dotfiles      │    ├─ [Read] src/auth.go                 │
-│                  │    └─ [Edit] src/auth.go                 │
-│                  │  ═══ [COMPACTED] ═══                     │
-│                  │  [USER] Thanks, now add tests            │
-└─────────────────────────────────────────────────────────────┘
-```
+![Live Mode](screenshots/ccx-live.jpeg)
 
-**Features:**
-- Project/session browser with global search
-- Tree-aware message threading (parentUuid, sidechains, compaction markers)
-- Collapsible thinking blocks and tool calls
-- In-session search with filter chips (User, Response, Tools, Agents, Thinking)
-- Live tail mode for active sessions
-- Dark/light theme (`d`), keyboard navigation (`j/k`, `/`, `z`, `r`)
+<details>
+<summary>More screenshots</summary>
+
+![Session Info](screenshots/ccx-session-info.jpeg)
+
+![Export](screenshots/ccx-export.jpg)
+
+![Settings](screenshots/ccx-settings.jpeg)
+
+</details>
+
+## Features
+
+- **Two-panel navigation** - Projects → Sessions → Conversation
+- **Live tail mode** - Watch active sessions in real-time
+- **In-session search** - Filter by User, Response, Tools, Agents, Thinking
+- **Tree-aware threading** - parentUuid, sidechains, compaction markers
+- **Collapsible blocks** - Thinking, tool calls, agent responses
+- **Export** - HTML, Markdown, Org-mode, JSON
+- **Keyboard shortcuts** - `j/k` scroll, `/` search, `z` fold, `r` refresh, `d` theme
 
 ## Installation
 
@@ -62,15 +62,6 @@ ccx view [session]        # View in terminal
 ccx export -f html        # Export to HTML/Markdown/Org
 ccx search QUERY          # Search projects and sessions
 ccx doctor                # Check configuration
-```
-
-## Export Formats
-
-```bash
-ccx export -f html -o session.html    # Standalone HTML with embedded CSS
-ccx export -f md                       # GitHub-flavored Markdown
-ccx export -f org                      # Emacs Org-mode
-ccx export -f json                     # Raw JSON
 ```
 
 ## Configuration
@@ -100,4 +91,4 @@ Apache 2.0
 
 ---
 
-Built by [thevibeworks](https://github.com/thevibeworks)
+Built by [thevibeworks](https://github.com/thevibeworks) · [@ericwang42](https://x.com/ericwang42)
