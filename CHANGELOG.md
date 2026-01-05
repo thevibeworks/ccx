@@ -7,6 +7,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-01-05
+
+### Fixed
+- **Live mode tool results**: Show tool name (e.g., "TodoWrite") instead of raw ID ("toolu_01")
+- **Scrollspy**: Use sidebar viewport rect for out-of-view check (was using content rect)
+- **Live nav ID mismatch**: Sanitize UUIDs consistently for DOM IDs and nav item data-msg
+- **Mobile layout**: Hide panel-nav at 600px, shrink at 768px
+- **CSS collision**: Renamed sidebar `.nav-item` to `.sidebar-link`
+- **Markdown links**: Added `rel="noopener noreferrer"` to live mode markdown renderer
+- **Summary click UX**: Click only toggles group (no jump), removed redundant dblclick handler
+- **Live nav grouping**: New messages grouped under "● Live" section separator
+- **Debug spam**: Removed console.log statements
+
+### Changed
+- Scrollspy throttled via requestAnimationFrame (was firing on every scroll)
+
+## [0.2.2] - 2026-01-04
+
+### Added
+- **Two-panel navigation**: Project page shows Projects | Sessions, Session page shows Sessions | Conversation
+- Master-detail pattern for quick context switching without losing place
+
 ## [0.2.1] - 2026-01-04
 
 ### Changed
@@ -59,7 +81,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Dark/light theme toggle with persistence
 - Keyboard navigation (j/k scroll, gg/G jump, / search, t theme, z collapse)
 
-[Unreleased]: https://github.com/thevibeworks/ccx/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/thevibeworks/ccx/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/thevibeworks/ccx/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/thevibeworks/ccx/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/thevibeworks/ccx/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/thevibeworks/ccx/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/thevibeworks/ccx/compare/v0.1.0...v0.1.1
