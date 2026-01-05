@@ -1,0 +1,107 @@
+* [2026-01-04] Dev Log: Web UI Polish - Tool Rendering & Session Search :WEB:UX:
+
+** Context
+Web UI needed better tool block rendering and in-session search. Tool outputs were raw JSON blobs, search required browser find (Ctrl+F) which couldn't handle collapsed sections.
+
+** Why
+User experience degraded when viewing sessions with heavy tool usage. Task agent calls showed raw parameter objects instead of meaningful previews. No way to search within a session for specific content or filter by message type.
+
+** What
+- =FEAT= Session search: floating search bar above toolbar, keyboard shortcuts (/ f Esc Enter Shift+Enter), navigation with match counter
+- =FEAT= Search filter chips: User, Response, Tools, Agents, Thinking - toggle which content types to search
+- =FEAT= Auto-expand on search: unfolds collapsed sections (both <details> elements and .thread.folded CSS)
+- =FEAT= Tool rendering: specialized preview/output for 8 tool types (Task, Skill, WebSearch, WebFetch, AskUserQuestion, LSP, TaskOutput, KillShell)
+- =FEAT= Refresh button in toolbar with =r= keyboard shortcut
+- =SEC= URL sanitization: isSafeURL() allows only http/https protocols
+- =SEC= Tabnabbing prevention: rel="noopener noreferrer" on all target="_blank" links
+- =FIX= Deterministic tool preview: sorted map keys for consistent preview fallback
+
+** How
+*** Steps
+1. Audited all tool_use blocks to identify rendering gaps
+2. Added specialized renderers for Task (subagent badge), Skill (/skillname), LSP (operation:file:line), etc.
+3. Implemented search bar UI with filter chips below input
+4. Added word-based search scoring (all query words must appear as substrings)
+5. Handled two collapse mechanisms: <details open> attribute and .thread.folded CSS class removal
+6. Security review: added URL validation, link hardening, deterministic iteration
+
+*** Search Implementation
+#+BEGIN_SRC javascript
+function searchScore(text, query) {
+  const words = query.split(/\s+/).filter(w => w.length > 0);
+  // Multi-word: ALL words must appear as substrings
+  if (words.length > 1) {
+    for (const word of words) {
+      if (text.indexOf(word) === -1) return 0;
+    }
+    return 1;
+  }
+  // Single word: substring match
+  return text.indexOf(query) !== -1 ? 1 : 0;
+}
+#+END_SRC
+
+*** Auto-expand
+#+BEGIN_SRC javascript
+function unfoldThread(el) {
+  const thread = el.closest('.thread.folded');
+  if (thread) thread.classList.remove('folded');
+}
+
+function expandDetails(el) {
+  if (el?.tagName === 'DETAILS') el.open = true;
+}
+
+// On search match navigation:
+unfoldThread(el);
+expandDetails(el);
+el.querySelectorAll('details').forEach(expandDetails);
+// Walk up DOM tree opening all ancestors
+#+END_SRC
+
+*** Tool Preview Examples
+| Tool            | Preview Format                        |
+|-----------------+---------------------------------------|
+| Task            | [subagent_type] description...        |
+| Skill           | /skillname args...                    |
+| WebSearch       | query                                 |
+| WebFetch        | URL                                   |
+| LSP             | operation @ file:line                 |
+| AskUserQuestion | N questions                           |
+
+** Result
+*** Outcome
+Tool blocks now show meaningful previews. Session search enables finding content across all message types with filter control. Collapsed sections auto-expand when search navigates to them. Security hardened against URL injection and tabnabbing.
+
+*** Tests
+- Manual verification: search "agent" finds Task calls in folded threads
+- Multi-word search: "til simon" returns only messages containing both words
+- Filter chips: unchecking "Tools" excludes tool_use blocks from search
+- URL sanitization: javascript: and data: URLs blocked
+
+** Decisions
+| Decision                   | Alternatives                        | Rationale                                              | DRI   | Timestamp (UTC)      |
+|----------------------------+-------------------------------------+--------------------------------------------------------+-------+----------------------|
+| Word-based over fuzzy      | Levenshtein distance, character-by-character | Fuzzy too loose (487 results), word-based intuitive  | @eric | 2026-01-04T02:00:00Z |
+| Search bar above toolbar   | Top-right floating, sidebar         | Consistent with toolbar position, less jarring         | @eric | 2026-01-04T03:00:00Z |
+| Filter chips not dropdown  | Dropdown menu, radio buttons        | Chips visible, quick toggle, multi-select natural      | @eric | 2026-01-04T04:00:00Z |
+| isSafeURL whitelist        | URL parsing library                 | Simple, covers all cases (http/https only)             | @eric | 2026-01-04T05:00:00Z |
+
+** Risks
+| Risk                                   | Mitigation                                    | Owner | Status |
+|----------------------------------------+-----------------------------------------------+-------+--------|
+| Search performance on large sessions   | Limit to rendered DOM, no pre-indexing needed | @eric | OPEN   |
+| Auto-expand breaks user's fold state   | User can re-fold, search is temporary action  | @eric | CLOSED |
+
+** Links
+- templates.go: /Users/eric/wrk/src/github.com/claude-code/WIP/251227_claude-code-transcripts/worktree/ccx/internal/web/templates.go
+- Previous devlog: [[file:2025-12-31-pure-go.org][Pure Go migration]]
+
+** Notes
+*** Gotchas
+- Two collapse mechanisms: <details> uses open attribute, .thread.folded uses CSS class removal
+- Search must check both classList.contains and tagName for proper expansion
+- Tool parameter preview needs sorted keys (Go maps have random iteration order)
+
+*** Key Insight
+Search UX required iterative refinement: initial fuzzy was too loose, top-right position felt disconnected from bottom toolbar, filter chips emerged as natural way to scope search without complex query syntax.

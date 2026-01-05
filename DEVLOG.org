@@ -18,8 +18,10 @@ ccx - Session viewer for Claude Code. Browse, inspect, search, and export conver
 - [X] Global search across projects/sessions
 - [X] Dark/light theme toggle
 
-** TODO v0.2.0 - Enhanced Features
-- [ ] Full-text search within session content
+** DONE v0.2.0 - Enhanced Features
+- [X] In-session search with filter chips (User, Response, Tools, Agents, Thinking)
+- [X] Tool rendering (Task, Skill, WebSearch, WebFetch, AskUserQuestion, LSP, TaskOutput, KillShell)
+- [X] Security hardening (URL sanitization, tabnabbing prevention)
 - [ ] Agent/skill discovery from CLAUDE_CODE_HOME
 - [ ] Session diff/compare view
 - [ ] Statistics dashboard
@@ -40,6 +42,7 @@ See =docs/devlog/= for daily entries:
 - [[file:docs/devlog/2025-12-30-strategy.org][2025-12-30]] Strategic direction
 - [[file:docs/devlog/2025-12-30-session.org][2025-12-30]] UI polish session
 - [[file:docs/devlog/2025-12-31-pure-go.org][2025-12-31]] CGO → Pure Go, CI/CD infrastructure
+- [[file:docs/devlog/2026-01-04-web-ux.org][2026-01-04]] Web UI polish - Tool rendering & session search
 
 * Architecture
 
