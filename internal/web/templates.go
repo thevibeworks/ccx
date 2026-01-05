@@ -83,13 +83,28 @@ func renderIndexPage(projects []*parser.Project, totalSessions int, search, sort
 	return b.String()
 }
 
-func renderProjectPage(project *parser.Project, sessions []*parser.Session, search, sortBy string) string {
+func renderProjectPage(project *parser.Project, sessions []*parser.Session, allProjects []*parser.Project, search, sortBy string) string {
 	var b strings.Builder
 
 	b.WriteString(pageHeader(project.Name+" - ccx", "light"))
 	b.WriteString(renderTopNav(project.EncodedName, ""))
-	b.WriteString(`<div class="layout">`)
-	b.WriteString(renderSidebar("sessions"))
+	b.WriteString(`<div class="layout two-panel">`)
+
+	// Left panel: Projects list
+	b.WriteString(`<aside class="panel-nav">`)
+	b.WriteString(`<div class="panel-header"><a href="/">Projects</a></div>`)
+	b.WriteString(`<div class="panel-list">`)
+	for _, p := range allProjects {
+		active := ""
+		if p.EncodedName == project.EncodedName {
+			active = " active"
+		}
+		displayName := parser.GetProjectDisplayName(p.EncodedName)
+		b.WriteString(fmt.Sprintf(`<a href="/project/%s" class="panel-item%s" title="%s">%s</a>`,
+			html.EscapeString(p.EncodedName), active, html.EscapeString(displayName), html.EscapeString(truncate(displayName, 24))))
+	}
+	b.WriteString(`</div>`)
+	b.WriteString(`</aside>`)
 
 	b.WriteString(`<main class="main-content">`)
 	b.WriteString(`<div class="page-header">`)
@@ -144,7 +159,7 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, sear
 	return b.String()
 }
 
-func renderSessionPage(session *parser.Session, projectName string, showThinking, showTools bool, theme string) string {
+func renderSessionPage(session *parser.Session, projectName string, allSessions []*parser.Session, showThinking, showTools bool, theme string) string {
 	var b strings.Builder
 
 	title := fmt.Sprintf("Session %s - ccx", session.ID[:8])
@@ -152,10 +167,32 @@ func renderSessionPage(session *parser.Session, projectName string, showThinking
 	b.WriteString(renderTopNav(projectName, session.ID))
 	b.WriteString(`<div class="layout session-layout">`)
 
-	// Nav sidebar (keep it!)
+	// Left panel: Sessions list (only if we have sessions to show)
+	if len(allSessions) > 0 {
+		b.WriteString(`<aside class="panel-nav session-nav">`)
+		b.WriteString(fmt.Sprintf(`<div class="panel-header"><a href="/project/%s">Sessions</a></div>`, html.EscapeString(projectName)))
+		b.WriteString(`<div class="panel-list">`)
+		for _, s := range allSessions {
+			active := ""
+			if s.ID == session.ID {
+				active = " active"
+			}
+			summary := truncate(s.Summary, 32)
+			if summary == "" {
+				summary = truncate(s.ID, 8)
+			}
+			b.WriteString(fmt.Sprintf(`<a href="/session/%s/%s" class="panel-item%s" title="%s"><span class="panel-id">%s</span><span class="panel-summary">%s</span></a>`,
+				html.EscapeString(projectName), html.EscapeString(s.ID), active,
+				html.EscapeString(s.Summary), html.EscapeString(truncate(s.ID, 6)), html.EscapeString(summary)))
+		}
+		b.WriteString(`</div>`)
+		b.WriteString(`</aside>`)
+	}
+
+	// Conversation nav sidebar
 	b.WriteString(`<aside class="nav-sidebar" id="nav-sidebar">`)
 	b.WriteString(`<div class="sidebar-header">`)
-	b.WriteString(`<h3>Conversation</h3>`)
+	b.WriteString(`<h3>Outline</h3>`)
 	b.WriteString(`<button class="icon-btn" onclick="toggleSidebar()" title="Toggle sidebar">`)
 	b.WriteString(`<span id="toggle-icon">◀</span>`)
 	b.WriteString(`</button>`)
@@ -2094,6 +2131,77 @@ code, pre, .session-id, .model-badge {
 }
 .footer-link:hover { color: var(--primary); text-decoration: underline; }
 .footer-text { font-size: 12px; }
+
+/* Two-panel navigation */
+.panel-nav {
+  width: 200px;
+  min-width: 200px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 48px);
+  position: sticky;
+  top: 48px;
+}
+.panel-header {
+  padding: 12px 16px;
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.panel-header a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.panel-header a:hover { color: var(--primary); }
+.panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.panel-item {
+  display: block;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 3px solid transparent;
+}
+.panel-item:hover {
+  background: var(--bg-tertiary);
+}
+.panel-item.active {
+  background: var(--bg-tertiary);
+  border-left-color: var(--primary);
+  font-weight: 500;
+}
+.session-nav .panel-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.panel-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.panel-summary {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.two-panel {
+  display: flex;
+}
+.two-panel .main-content {
+  flex: 1;
+  min-width: 0;
+}
 
 .layout {
   display: flex;

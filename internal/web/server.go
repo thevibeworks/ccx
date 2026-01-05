@@ -176,6 +176,12 @@ func handleProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch all projects for left nav
+	allProjects, _ := parser.DiscoverProjects(projectsDir)
+	sort.Slice(allProjects, func(i, j int) bool {
+		return allProjects[i].LastModified.After(allProjects[j].LastModified)
+	})
+
 	// Get query params
 	q := r.URL.Query()
 	search := strings.ToLower(q.Get("q"))
@@ -211,7 +217,7 @@ func handleProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderProjectPage(project, sessions, search, sortBy))
+	fmt.Fprint(w, renderProjectPage(project, sessions, allProjects, search, sortBy))
 }
 
 func handleSession(w http.ResponseWriter, r *http.Request) {
@@ -235,6 +241,16 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch project's sessions for left nav
+	project, _ := parser.FindProject(projectsDir, projectName)
+	var allSessions []*parser.Session
+	if project != nil {
+		allSessions = project.Sessions
+		sort.Slice(allSessions, func(i, j int) bool {
+			return allSessions[i].EndTime.After(allSessions[j].EndTime)
+		})
+	}
+
 	// Get display options from query
 	q := r.URL.Query()
 	showThinking := q.Get("thinking") == "1"
@@ -245,7 +261,7 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderSessionPage(fullSession, projectName, showThinking, showTools, theme))
+	fmt.Fprint(w, renderSessionPage(fullSession, projectName, allSessions, showThinking, showTools, theme))
 }
 
 func handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -741,7 +757,7 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.html", truncate(sessionID, 8)))
-		fmt.Fprint(w, renderSessionPage(fullSession, projectName, true, true, "light"))
+		fmt.Fprint(w, renderSessionPage(fullSession, projectName, nil, true, true, "light"))
 	case "md", "markdown":
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.md", truncate(sessionID, 8)))
