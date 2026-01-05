@@ -2247,8 +2247,8 @@ code, pre, .session-id, .model-badge {
 /* Bottom dock toolbar - modern horizontal bar */
 .dock-toolbar {
   position: fixed;
-  bottom: 20px;
-  left: calc(50% + 100px);
+  bottom: 32px;
+  left: calc(50% + 110px);
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -2260,6 +2260,7 @@ code, pre, .session-id, .model-badge {
   box-shadow: 0 4px 20px rgba(0,0,0,0.15);
   z-index: 100;
   backdrop-filter: blur(10px);
+  max-width: calc(100vw - 280px);
 }
 .dock-group { display: flex; align-items: center; gap: 2px; }
 .dock-sep { width: 1px; height: 24px; background: var(--border); margin: 0 6px; }
@@ -3587,12 +3588,13 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 }
 @media (max-width: 768px) {
   .panel-nav { width: 160px; min-width: 160px; }
+  .dock-toolbar { left: 50%; max-width: calc(100vw - 40px); }
 }
 @media (max-width: 600px) {
   .nav-sidebar { display: none; }
   .panel-nav { display: none; }
   .top-nav { padding: 0 10px; }
-  .dock-toolbar { left: 50%; }
+  .dock-toolbar { bottom: 20px; }
 }
 `
 }
