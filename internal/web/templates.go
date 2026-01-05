@@ -2248,7 +2248,7 @@ code, pre, .session-id, .model-badge {
 .dock-toolbar {
   position: fixed;
   bottom: 20px;
-  left: 50%;
+  left: calc(50% + 100px);
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -3592,6 +3592,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   .nav-sidebar { display: none; }
   .panel-nav { display: none; }
   .top-nav { padding: 0 10px; }
+  .dock-toolbar { left: 50%; }
 }
 `
 }
