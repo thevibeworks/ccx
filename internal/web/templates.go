@@ -2624,10 +2624,10 @@ code, pre, .session-id, .model-badge {
 .search-match { background: rgba(255,220,0,0.3); }
 .search-current { background: rgba(255,180,0,0.5); outline: 2px solid var(--primary); }
 
-/* Info panel (floating above dock, right-aligned) */
+/* Info panel (floating above info icon) */
 .info-panel {
   position: fixed;
-  bottom: 90px;
+  bottom: 100px;
   right: 40px;
   background: var(--bg);
   border: 1px solid var(--border);
