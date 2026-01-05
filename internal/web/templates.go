@@ -2247,8 +2247,8 @@ code, pre, .session-id, .model-badge {
 /* Bottom dock toolbar - modern horizontal bar */
 .dock-toolbar {
   position: fixed;
-  bottom: 32px;
-  left: calc(50% + 110px);
+  bottom: 40px;
+  left: calc(50% + 140px);
   transform: translateX(-50%);
   display: flex;
   align-items: center;
