@@ -2624,12 +2624,11 @@ code, pre, .session-id, .model-badge {
 .search-match { background: rgba(255,220,0,0.3); }
 .search-current { background: rgba(255,180,0,0.5); outline: 2px solid var(--primary); }
 
-/* Info panel (floating above dock) */
+/* Info panel (floating above dock, right-aligned) */
 .info-panel {
   position: fixed;
-  bottom: 80px;
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: 90px;
+  right: 40px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -2637,8 +2636,8 @@ code, pre, .session-id, .model-badge {
   padding: 16px;
   z-index: 200;
   display: none;
-  min-width: 300px;
-  max-width: 400px;
+  min-width: 280px;
+  max-width: 360px;
 }
 .info-panel.show { display: block; }
 .info-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 12px; }
