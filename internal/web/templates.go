@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,6 +16,12 @@ var idSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 func sanitizeID(s string) string {
 	return idSanitizer.ReplaceAllString(s, "")
+}
+
+// isSafeURL returns true if url has http or https scheme
+func isSafeURL(url string) bool {
+	lower := strings.ToLower(url)
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 }
 
 func renderIndexPage(projects []*parser.Project, totalSessions int, search, sortBy string) string {
@@ -222,6 +229,7 @@ func renderSessionPage(session *parser.Session, projectName string, showThinking
 	b.WriteString(fmt.Sprintf(`<a href="/api/export/%s/%s?format=json">JSON</a>`, html.EscapeString(projectName), html.EscapeString(session.ID)))
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
+	b.WriteString(`<button class="dock-btn" id="tb-refresh" title="Refresh (r)"><span class="dock-icon">↻</span></button>`)
 	b.WriteString(`<button class="dock-btn" id="tb-info" title="Info (i)"><span class="dock-icon">ⓘ</span></button>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
@@ -604,17 +612,73 @@ func compactToolPreview(toolName string, input any) string {
 		}
 	case "Bash":
 		if cmd, ok := m["command"].(string); ok {
+			if len(cmd) > 50 {
+				return "$ " + cmd[:50] + "..."
+			}
 			return "$ " + cmd
 		}
 	case "Task":
+		var parts []string
+		if agent, ok := m["subagent_type"].(string); ok && agent != "" {
+			parts = append(parts, "["+agent+"]")
+		}
 		if desc, ok := m["description"].(string); ok {
-			return desc
+			parts = append(parts, desc)
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, " ")
+		}
+	case "Skill":
+		if skill, ok := m["skill"].(string); ok {
+			return "/" + skill
+		}
+	case "WebSearch":
+		if q, ok := m["query"].(string); ok {
+			if len(q) > 50 {
+				return q[:50] + "..."
+			}
+			return q
+		}
+	case "WebFetch":
+		if url, ok := m["url"].(string); ok {
+			return url
+		}
+	case "AskUserQuestion":
+		if questions, ok := m["questions"].([]any); ok && len(questions) > 0 {
+			if q, ok := questions[0].(map[string]any); ok {
+				if header, ok := q["header"].(string); ok {
+					return header
+				}
+			}
+		}
+	case "LSP":
+		if op, ok := m["operation"].(string); ok {
+			if fp, ok := m["filePath"].(string); ok {
+				// Just show filename, not full path
+				parts := strings.Split(fp, "/")
+				return op + " " + parts[len(parts)-1]
+			}
+			return op
+		}
+	case "TaskOutput":
+		if id, ok := m["task_id"].(string); ok {
+			return id
+		}
+	case "KillShell":
+		if id, ok := m["shell_id"].(string); ok {
+			return id
 		}
 	}
 
-	// Fallback: show first key=value
-	for k, v := range m {
-		return fmt.Sprintf("%s=%v", k, v)
+	// Fallback: show first key=value (sorted for determinism)
+	if len(m) > 0 {
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		k := keys[0]
+		return fmt.Sprintf("%s=%v", k, m[k])
 	}
 	return ""
 }
@@ -710,6 +774,129 @@ func renderToolInput(b *strings.Builder, toolName string, input any) {
 			b.WriteString(`</ul>`)
 			return
 		}
+
+	case "Task":
+		// Show agent type, model, and prompt
+		b.WriteString(`<div class="task-call">`)
+		if agent, ok := m["subagent_type"].(string); ok && agent != "" {
+			b.WriteString(fmt.Sprintf(`<span class="task-agent">[%s]</span>`, html.EscapeString(agent)))
+		}
+		if model, ok := m["model"].(string); ok && model != "" {
+			b.WriteString(fmt.Sprintf(`<span class="task-model">%s</span>`, html.EscapeString(model)))
+		}
+		if prompt, ok := m["prompt"].(string); ok {
+			b.WriteString(`<div class="task-prompt">`)
+			b.WriteString(renderMarkdown(prompt))
+			b.WriteString(`</div>`)
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "Skill":
+		// Show skill name and args
+		b.WriteString(`<div class="skill-call">`)
+		if skill, ok := m["skill"].(string); ok {
+			b.WriteString(fmt.Sprintf(`<span class="skill-name">/%s</span>`, html.EscapeString(skill)))
+		}
+		if args, ok := m["args"].(string); ok && args != "" {
+			b.WriteString(fmt.Sprintf(`<span class="skill-args">%s</span>`, html.EscapeString(args)))
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "WebSearch":
+		b.WriteString(`<div class="websearch-call">`)
+		if q, ok := m["query"].(string); ok {
+			b.WriteString(fmt.Sprintf(`<span class="search-query">🔍 %s</span>`, html.EscapeString(q)))
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "WebFetch":
+		b.WriteString(`<div class="webfetch-call">`)
+		if url, ok := m["url"].(string); ok {
+			escaped := html.EscapeString(url)
+			if isSafeURL(url) {
+				b.WriteString(fmt.Sprintf(`<a href="%s" class="fetch-url" target="_blank" rel="noopener noreferrer">%s</a>`, escaped, escaped))
+			} else {
+				b.WriteString(fmt.Sprintf(`<span class="fetch-url">%s</span>`, escaped))
+			}
+		}
+		if prompt, ok := m["prompt"].(string); ok && prompt != "" {
+			b.WriteString(fmt.Sprintf(`<div class="fetch-prompt">%s</div>`, html.EscapeString(prompt)))
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "AskUserQuestion":
+		if questions, ok := m["questions"].([]any); ok {
+			b.WriteString(`<div class="ask-questions">`)
+			for _, item := range questions {
+				if q, ok := item.(map[string]any); ok {
+					header, _ := q["header"].(string)
+					question, _ := q["question"].(string)
+					b.WriteString(`<div class="ask-question">`)
+					if header != "" {
+						b.WriteString(fmt.Sprintf(`<span class="ask-header">%s</span>`, html.EscapeString(header)))
+					}
+					b.WriteString(fmt.Sprintf(`<div class="ask-text">%s</div>`, html.EscapeString(question)))
+					if options, ok := q["options"].([]any); ok {
+						b.WriteString(`<ul class="ask-options">`)
+						for _, opt := range options {
+							if o, ok := opt.(map[string]any); ok {
+								label, _ := o["label"].(string)
+								desc, _ := o["description"].(string)
+								b.WriteString(fmt.Sprintf(`<li><strong>%s</strong>`, html.EscapeString(label)))
+								if desc != "" {
+									b.WriteString(fmt.Sprintf(` - %s`, html.EscapeString(desc)))
+								}
+								b.WriteString(`</li>`)
+							}
+						}
+						b.WriteString(`</ul>`)
+					}
+					b.WriteString(`</div>`)
+				}
+			}
+			b.WriteString(`</div>`)
+			return
+		}
+
+	case "LSP":
+		b.WriteString(`<div class="lsp-call">`)
+		if op, ok := m["operation"].(string); ok {
+			b.WriteString(fmt.Sprintf(`<span class="lsp-op">%s</span>`, html.EscapeString(op)))
+		}
+		if fp, ok := m["filePath"].(string); ok {
+			line, _ := m["line"].(float64)
+			char, _ := m["character"].(float64)
+			b.WriteString(fmt.Sprintf(`<span class="lsp-loc">%s:%d:%d</span>`, html.EscapeString(fp), int(line), int(char)))
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "TaskOutput":
+		b.WriteString(`<div class="taskoutput-call">`)
+		if id, ok := m["task_id"].(string); ok {
+			b.WriteString(fmt.Sprintf(`<span class="task-id">%s</span>`, html.EscapeString(id)))
+		}
+		if block, ok := m["block"].(bool); ok {
+			mode := "async"
+			if block {
+				mode = "blocking"
+			}
+			b.WriteString(fmt.Sprintf(`<span class="task-mode">%s</span>`, mode))
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "KillShell":
+		b.WriteString(`<div class="killshell-call">`)
+		if id, ok := m["shell_id"].(string); ok {
+			b.WriteString(fmt.Sprintf(`<span class="shell-id">⊗ %s</span>`, html.EscapeString(id)))
+		}
+		b.WriteString(`</div>`)
+		return
 	}
 
 	// Default: show as JSON
@@ -1499,8 +1686,11 @@ function renderMarkdownFull(s) {
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(new RegExp(BT+'([^'+BT+']+)'+BT, 'g'), '<code>$1</code>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(m, text, url) {
-      if (/^(https?:\/\/|mailto:)/i.test(url)) {
-        return '<a href="' + url + '" target="_blank">' + text + '</a>';
+      if (/^https?:\/\//i.test(url)) {
+        return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + text + '</a>';
+      }
+      if (/^mailto:/i.test(url)) {
+        return '<a href="' + url + '">' + text + '</a>';
       }
       return text + ' (' + url + ')';
     })
@@ -2982,6 +3172,85 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 .todo-completed .todo-text { text-decoration: line-through; color: var(--text-muted); }
 .todo-checklist input[type="checkbox"] { margin: 0; cursor: default; }
 
+/* Task tool */
+.task-call { font-family: var(--font-mono); font-size: 12px; }
+.task-agent {
+  display: inline-block;
+  background: var(--primary);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-right: 8px;
+}
+.task-model {
+  display: inline-block;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.task-prompt {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--primary);
+}
+
+/* Skill tool */
+.skill-call { font-family: var(--font-mono); font-size: 12px; }
+.skill-name { color: var(--primary); font-weight: 600; }
+.skill-args { margin-left: 8px; color: var(--text-muted); }
+
+/* WebSearch tool */
+.websearch-call { font-family: var(--font-mono); font-size: 12px; }
+.search-query { color: var(--text); }
+
+/* WebFetch tool */
+.webfetch-call { font-family: var(--font-mono); font-size: 12px; }
+.fetch-url { color: var(--primary); word-break: break-all; }
+.fetch-prompt { margin-top: 6px; color: var(--text-muted); font-size: 11px; }
+
+/* AskUserQuestion tool */
+.ask-questions { font-size: 12px; }
+.ask-question { margin-bottom: 12px; }
+.ask-header {
+  display: inline-block;
+  background: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.ask-text { margin: 6px 0; }
+.ask-options { margin: 8px 0 0 16px; padding: 0; }
+.ask-options li { margin: 4px 0; color: var(--text-muted); }
+.ask-options li strong { color: var(--text); }
+
+/* LSP tool */
+.lsp-call { font-family: var(--font-mono); font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.lsp-op {
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.lsp-loc { color: var(--text-muted); word-break: break-all; }
+
+/* TaskOutput tool */
+.taskoutput-call { font-family: var(--font-mono); font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.task-id { color: var(--primary); }
+.task-mode { color: var(--text-muted); font-size: 10px; }
+
+/* KillShell tool */
+.killshell-call { font-family: var(--font-mono); font-size: 12px; }
+.shell-id { color: #c55; }
+
 /* Settings page */
 .settings-section { margin-bottom: 24px; }
 .settings-section h2 {
@@ -3310,6 +3579,12 @@ function sanitizeCodeLang(lang) {
 function sanitizeMediaType(mt) {
   const allowed = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'];
   return allowed.includes(mt) ? mt : 'image/png';
+}
+
+function isSafeURL(url) {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  return lower.startsWith('http://') || lower.startsWith('https://');
 }
 
 function sanitizeID(s) {
@@ -3681,7 +3956,8 @@ function renderContentBlocks(content, forceExpand) {
         const inputPreview = compactToolPreviewJS(toolName, block.input);
         html += '<details class="block-tool" id="tool-' + sanitizeID(toolId) + '"' + toolOpen + '>' +
           '<summary><span class="block-icon">●</span> ' + escapeHtml(toolName) +
-          '<span class="tool-preview">' + escapeHtml(inputPreview) + '</span></summary>' +
+          '<span class="tool-preview">' + escapeHtml(inputPreview) + '</span>' +
+          '<span class="tool-actions"><button class="raw-toggle">raw</button><button class="copy-btn">copy</button></span></summary>' +
           '<div class="tool-section tool-input-section">' +
             '<div class="section-label">input</div>' +
             renderToolInputJS(toolName, block.input) +
@@ -3758,6 +4034,75 @@ function renderToolInputJS(toolName, input) {
         return '<pre class="tool-input">$ ' + escapeHtml(input.command) + '</pre>';
       }
       break;
+
+    case 'Task':
+      let taskHtml = '<div class="task-call">';
+      if (input.subagent_type) taskHtml += '<span class="task-agent">[' + escapeHtml(input.subagent_type) + ']</span>';
+      if (input.model) taskHtml += '<span class="task-model">' + escapeHtml(input.model) + '</span>';
+      if (input.prompt) taskHtml += '<div class="task-prompt">' + renderMarkdownJS(input.prompt) + '</div>';
+      return taskHtml + '</div>';
+
+    case 'Skill':
+      let skillHtml = '<div class="skill-call">';
+      if (input.skill) skillHtml += '<span class="skill-name">/' + escapeHtml(input.skill) + '</span>';
+      if (input.args) skillHtml += '<span class="skill-args">' + escapeHtml(input.args) + '</span>';
+      return skillHtml + '</div>';
+
+    case 'WebSearch':
+      return '<div class="websearch-call"><span class="search-query">🔍 ' + escapeHtml(input.query || '') + '</span></div>';
+
+    case 'WebFetch': {
+      let fetchHtml = '<div class="webfetch-call">';
+      if (input.url) {
+        const escaped = escapeHtml(input.url);
+        if (isSafeURL(input.url)) {
+          fetchHtml += '<a href="' + escaped + '" class="fetch-url" target="_blank" rel="noopener noreferrer">' + escaped + '</a>';
+        } else {
+          fetchHtml += '<span class="fetch-url">' + escaped + '</span>';
+        }
+      }
+      if (input.prompt) fetchHtml += '<div class="fetch-prompt">' + escapeHtml(input.prompt) + '</div>';
+      return fetchHtml + '</div>';
+    }
+
+    case 'AskUserQuestion':
+      if (input.questions && Array.isArray(input.questions)) {
+        let askHtml = '<div class="ask-questions">';
+        for (const q of input.questions) {
+          askHtml += '<div class="ask-question">';
+          if (q.header) askHtml += '<span class="ask-header">' + escapeHtml(q.header) + '</span>';
+          if (q.question) askHtml += '<div class="ask-text">' + escapeHtml(q.question) + '</div>';
+          if (q.options && Array.isArray(q.options)) {
+            askHtml += '<ul class="ask-options">';
+            for (const o of q.options) {
+              askHtml += '<li><strong>' + escapeHtml(o.label || '') + '</strong>';
+              if (o.description) askHtml += ' - ' + escapeHtml(o.description);
+              askHtml += '</li>';
+            }
+            askHtml += '</ul>';
+          }
+          askHtml += '</div>';
+        }
+        return askHtml + '</div>';
+      }
+      break;
+
+    case 'LSP': {
+      let lspHtml = '<div class="lsp-call">';
+      if (input.operation) lspHtml += '<span class="lsp-op">' + escapeHtml(input.operation) + '</span>';
+      if (input.filePath) lspHtml += '<span class="lsp-loc">' + escapeHtml(input.filePath) + ':' + (input.line||0) + ':' + (input.character||0) + '</span>';
+      return lspHtml + '</div>';
+    }
+
+    case 'TaskOutput': {
+      let toHtml = '<div class="taskoutput-call">';
+      if (input.task_id) toHtml += '<span class="task-id">' + escapeHtml(input.task_id) + '</span>';
+      if (input.block !== undefined) toHtml += '<span class="task-mode">' + (input.block ? 'blocking' : 'async') + '</span>';
+      return toHtml + '</div>';
+    }
+
+    case 'KillShell':
+      return '<div class="killshell-call"><span class="shell-id">⊗ ' + escapeHtml(input.shell_id || '') + '</span></div>';
   }
 
   return '<pre class="tool-input">' + escapeHtml(JSON.stringify(input, null, 2)) + '</pre>';
@@ -3869,7 +4214,24 @@ function compactToolPreviewJS(name, input) {
     case 'Write': return input.file_path || '';
     case 'Bash': return (input.command || '').slice(0, 50);
     case 'Glob': return input.pattern || '';
-    case 'Grep': return input.pattern || '';
+    case 'Grep': return input.pattern ? '/' + input.pattern + '/' : '';
+    case 'Task':
+      const parts = [];
+      if (input.subagent_type) parts.push('[' + input.subagent_type + ']');
+      if (input.description) parts.push(input.description);
+      return parts.join(' ');
+    case 'Skill': return input.skill ? '/' + input.skill : '';
+    case 'WebSearch': return input.query ? (input.query.length > 50 ? input.query.slice(0,50) + '...' : input.query) : '';
+    case 'WebFetch': return input.url || '';
+    case 'AskUserQuestion': return input.questions?.[0]?.header || '';
+    case 'LSP': {
+      const op = input.operation || '';
+      const fp = input.filePath || '';
+      const fname = fp.split('/').pop();
+      return fname ? op + ' ' + fname : op;
+    }
+    case 'TaskOutput': return input.task_id || '';
+    case 'KillShell': return input.shell_id || '';
     default: return '';
   }
 }
@@ -4009,6 +4371,7 @@ document.addEventListener('keydown', function(e) {
     case 'o': document.getElementById('show-tools')?.click(); break;
     case 'i': document.getElementById('tb-info')?.click(); break;
     case 'w': btnWatch?.click(); break;
+    case 'r': document.getElementById('tb-refresh')?.click(); break;
   }
 });
 
@@ -4080,6 +4443,10 @@ document.getElementById('tb-top')?.addEventListener('click', () => {
 
 document.getElementById('tb-bottom')?.addEventListener('click', () => {
   window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+});
+
+document.getElementById('tb-refresh')?.addEventListener('click', () => {
+  location.reload();
 });
 
 document.addEventListener('click', () => {
