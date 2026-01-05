@@ -1840,7 +1840,7 @@ func renderSidebar(active string) string {
 	}
 
 	for _, item := range items {
-		class := "nav-item"
+		class := "sidebar-link"
 		if item.key == active {
 			class += " active"
 		}
@@ -2231,7 +2231,7 @@ code, pre, .session-id, .model-badge {
   gap: 2px;
 }
 
-.nav-item {
+.sidebar-link {
   display: block;
   padding: 8px 12px;
   color: var(--text-muted);
@@ -2239,8 +2239,8 @@ code, pre, .session-id, .model-badge {
   border-radius: 4px;
   font-size: 13px;
 }
-.nav-item:hover { background: var(--bg-tertiary); color: var(--text); }
-.nav-item.active { background: var(--primary); color: white; }
+.sidebar-link:hover { background: var(--bg-tertiary); color: var(--text); }
+.sidebar-link.active { background: var(--primary); color: white; }
 
 .main-content {
   width: 100%;
@@ -2773,6 +2773,18 @@ code, pre, .session-id, .model-badge {
   color: var(--text-muted);
   padding: 2px 6px;
   font-style: italic;
+}
+.nav-live-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+.nav-live-label {
+  font-size: 10px;
+  color: var(--primary);
+  font-weight: 500;
+  padding: 4px 8px;
+  opacity: 0.8;
 }
 
 .session-main { flex: 1; max-width: 900px; min-width: 0; margin-left: 0; padding: 24px 32px; }
@@ -3984,12 +3996,18 @@ function copyTurn(e, btn) {
 
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', function(e) {
-    // If this is a summary inside a details, let native toggle work
+    // Summary elements: just toggle group (native behavior), no jump
     const isSummary = this.tagName === 'SUMMARY' || this.closest('summary');
-    if (!isSummary) {
-      e.preventDefault();
+    if (isSummary) {
+      // Update active state only, let native toggle handle open/close
+      document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
+      this.classList.add('active');
+      return;
     }
-    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+
+    // Regular nav items: prevent default anchor and scroll to message
+    e.preventDefault();
+    document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
     this.classList.add('active');
     const msgId = this.dataset.msg;
     if (msgId) {
@@ -4004,51 +4022,55 @@ document.querySelectorAll('.nav-item').forEach(item => {
   });
 });
 
-// Make summary elements in nav-groups clickable for jump (separate from toggle)
-document.querySelectorAll('.nav-group > summary').forEach(summary => {
-  summary.addEventListener('dblclick', function(e) {
-    // Double-click to jump to the message
-    const msgId = this.dataset.msg;
-    if (msgId) {
-      const msgEl = document.getElementById('msg-' + msgId);
-      if (msgEl) {
-        msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        msgEl.style.animation = 'flash 0.4s';
-      }
-    }
-  });
-});
-
 // Scrollspy - highlight nav item matching visible message
 const navSidebar = document.getElementById('nav-sidebar');
 let lastActiveId = null;
+let scrollspyScheduled = false;
 
 function updateScrollspy() {
+  scrollspyScheduled = false;
   const viewTop = window.scrollY + 100;
   let currentId = null;
 
-  // Find message in view by checking each element's position
-  document.querySelectorAll('[id^="msg-"]').forEach(el => {
+  // Binary search would be better, but for now just walk through visible
+  const messages = document.querySelectorAll('[id^="msg-"]');
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const el = messages[i];
     if (el.getBoundingClientRect().top + window.scrollY <= viewTop) {
       currentId = el.id.replace('msg-', '');
+      break;
     }
-  });
+  }
 
   if (currentId && currentId !== lastActiveId) {
     lastActiveId = currentId;
 
     // Update active nav item
-    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
     const activeNav = document.querySelector('.nav-item[data-msg="' + currentId + '"]');
     if (activeNav) {
       activeNav.classList.add('active');
-      // Scroll sidebar to show it
-      activeNav.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      // Only scroll sidebar if item is out of view (no smooth - instant)
+      const navList = document.getElementById('nav-list');
+      if (navList) {
+        const rect = activeNav.getBoundingClientRect();
+        const listRect = navList.getBoundingClientRect();
+        if (rect.top < listRect.top || rect.bottom > listRect.bottom) {
+          activeNav.scrollIntoView({ block: 'nearest' });
+        }
+      }
     }
   }
 }
 
-window.addEventListener('scroll', updateScrollspy, { passive: true });
+function scheduleScrollspy() {
+  if (!scrollspyScheduled) {
+    scrollspyScheduled = true;
+    requestAnimationFrame(updateScrollspy);
+  }
+}
+
+window.addEventListener('scroll', scheduleScrollspy, { passive: true });
 setTimeout(updateScrollspy, 300);
 
 const btnWatch = document.getElementById('btn-watch');
@@ -4462,7 +4484,10 @@ function renderMarkdownJS(text) {
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.+?)\*/g, '<em>$1</em>')
       .replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(m, text, url) {
-        if (/^(https?:\/\/|mailto:)/i.test(url)) {
+        if (/^https?:\/\//i.test(url)) {
+          return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + text + '</a>';
+        }
+        if (/^mailto:/i.test(url)) {
           return '<a href="' + url + '">' + text + '</a>';
         }
         return text + ' (' + url + ')';
@@ -4518,6 +4543,15 @@ function updateNavForMessage(uuid, kind, content, time) {
   const navList = document.getElementById('nav-list');
   if (!navList) return;
 
+  // Add "Live" section separator if not present
+  let liveSection = navList.querySelector('.nav-live-section');
+  if (!liveSection) {
+    liveSection = document.createElement('div');
+    liveSection.className = 'nav-live-section';
+    liveSection.innerHTML = '<div class="nav-live-label">● Live</div>';
+    navList.appendChild(liveSection);
+  }
+
   let icon = kind === 'user' ? '▶' : '●';
   let cls = kind === 'user' ? 'nav-user' : 'nav-response';
   let text = kind === 'user' ? getTextPreview(content, 40) : 'Response';
@@ -4529,11 +4563,11 @@ function updateNavForMessage(uuid, kind, content, time) {
   item.innerHTML = '<span class="nav-icon">' + icon + '</span><span class="nav-text">' + escapeHtml(text || kind) + '</span>';
   item.addEventListener('click', function(e) {
     e.preventDefault();
-    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
     this.classList.add('active');
     document.getElementById('msg-' + uuid)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
-  navList.appendChild(item);
+  liveSection.appendChild(item);
 }
 
 function stopWatch() {
@@ -4677,7 +4711,6 @@ let currentUserIdx = -1;
 
 function initUserNav() {
   userBlocks = Array.from(document.querySelectorAll('.turn-user'));
-  console.log('Found', userBlocks.length, 'user blocks');
 }
 
 function scrollToUser(idx) {
@@ -4703,14 +4736,14 @@ function findCurrentUserIdx() {
 
 document.getElementById('tb-prev-user')?.addEventListener('click', () => {
   initUserNav();
-  if (userBlocks.length === 0) { console.log('No user blocks found'); return; }
+  if (userBlocks.length === 0) return;
   const cur = findCurrentUserIdx();
   scrollToUser(cur > 0 ? cur - 1 : 0);
 });
 
 document.getElementById('tb-next-user')?.addEventListener('click', () => {
   initUserNav();
-  if (userBlocks.length === 0) { console.log('No user blocks found'); return; }
+  if (userBlocks.length === 0) return;
   const cur = findCurrentUserIdx();
   scrollToUser(cur < userBlocks.length - 1 ? cur + 1 : userBlocks.length - 1);
 });
