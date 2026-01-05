@@ -2129,8 +2129,8 @@ code, pre, .session-id, .model-badge {
 
 /* Two-panel navigation */
 .panel-nav {
-  width: 200px;
-  min-width: 200px;
+  width: 170px;
+  min-width: 170px;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border);
   display: flex;
@@ -3587,7 +3587,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   .nav-sidebar { width: 180px; }
 }
 @media (max-width: 768px) {
-  .panel-nav { width: 160px; min-width: 160px; }
+  .panel-nav { width: 140px; min-width: 140px; }
   .dock-toolbar { left: 50%; max-width: calc(100vw - 40px); }
 }
 @media (max-width: 600px) {
