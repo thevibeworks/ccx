@@ -103,22 +103,22 @@ type ContentBlock struct {
 }
 
 type rawMessage struct {
-	Type             string         `json:"type"`
-	Subtype          string         `json:"subtype"` // compact_boundary, local_command
-	Timestamp        string         `json:"timestamp"`
-	UUID             string         `json:"uuid"`
-	ParentUUID       string         `json:"parentUuid"`
-	LogicalParentUUID string        `json:"logicalParentUuid"` // True parent for compact_boundary
-	SessionID        string         `json:"sessionId"`
-	IsCompactSummary bool           `json:"isCompactSummary"`
-	IsSidechain      bool           `json:"isSidechain"`
-	IsMeta           bool           `json:"isMeta"`
-	AgentID          string         `json:"agentId"`
-	Message          messagePayload `json:"message"`
-	Content          string         `json:"content"` // For system messages
-	Summary          string         `json:"summary"` // For summary type
-	LeafUUID         string         `json:"leafUuid"` // For summary type
-	Usage            *usageData     `json:"usage"`    // Token usage from API
+	Type              string         `json:"type"`
+	Subtype           string         `json:"subtype"` // compact_boundary, local_command
+	Timestamp         string         `json:"timestamp"`
+	UUID              string         `json:"uuid"`
+	ParentUUID        string         `json:"parentUuid"`
+	LogicalParentUUID string         `json:"logicalParentUuid"` // True parent for compact_boundary
+	SessionID         string         `json:"sessionId"`
+	IsCompactSummary  bool           `json:"isCompactSummary"`
+	IsSidechain       bool           `json:"isSidechain"`
+	IsMeta            bool           `json:"isMeta"`
+	AgentID           string         `json:"agentId"`
+	Message           messagePayload `json:"message"`
+	Content           string         `json:"content"`  // For system messages
+	Summary           string         `json:"summary"`  // For summary type
+	LeafUUID          string         `json:"leafUuid"` // For summary type
+	Usage             *usageData     `json:"usage"`    // Token usage from API
 
 	// Session metadata (extracted from first messages)
 	Slug      string `json:"slug"`      // Human-readable name like "melodic-cooking-piglet"
@@ -128,15 +128,15 @@ type rawMessage struct {
 }
 
 type usageData struct {
-	InputTokens             int `json:"input_tokens"`
-	OutputTokens            int `json:"output_tokens"`
-	CacheReadInputTokens    int `json:"cache_read_input_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 }
 
 type messagePayload struct {
-	Role    string `json:"role"`
-	Content any    `json:"content"` // string or []contentBlock
-	Model   string `json:"model"`   // Model ID for assistant messages
+	Role    string     `json:"role"`
+	Content any        `json:"content"` // string or []contentBlock
+	Model   string     `json:"model"`   // Model ID for assistant messages
+	Usage   *usageData `json:"usage"`   // Token usage (inside message for API responses)
 }
-

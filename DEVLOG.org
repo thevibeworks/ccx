@@ -30,7 +30,6 @@ ccx - Session viewer for Claude Code. Browse, inspect, search, and export conver
 
 ** TODO v0.3.0 - Power Features
 - [ ] Session replay mode
-- [ ] Cost estimation display
 - [ ] API integration hooks
 - [ ] MCP server mode
 
@@ -43,6 +42,7 @@ See =docs/devlog/= for daily entries:
 - [[file:docs/devlog/2025-12-30-session.org][2025-12-30]] UI polish session
 - [[file:docs/devlog/2025-12-31-pure-go.org][2025-12-31]] CGO → Pure Go, CI/CD infrastructure
 - [[file:docs/devlog/2026-01-04-web-ux.org][2026-01-04]] Web UI polish - Tool rendering & session search
+- [[file:docs/devlog/2026-01-06-progressive-loading.org][2026-01-06]] Progressive loading, accent colors, token stats
 
 * Architecture
 

@@ -7,6 +7,37 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- **Progressive loading**: Large conversations (500+ messages) now load only the last 3 compacted sections initially
+- **Load earlier button**: Click to load full conversation history on demand
+- **Context accent colors**: Distinct visual identity for Projects (blue), Sessions (purple), Conversations (teal)
+- **Session token counts**: Token usage displayed in session cards (⧫ icon) and info panel
+- **Cache token stats**: Info panel shows cache read/write tokens with tooltips
+- **Token tooltips**: Hover for explanation (e.g., "Fresh tokens sent to API")
+
+### Changed
+- **Toolbar icons**: Replaced Unicode symbols with SVG icons for Export, Find, Refresh (Info kept as ⓘ)
+- **Toolbar position**: Raised 12px for better visibility (52px from bottom)
+- **Search panel position**: Aligned with toolbar center offset
+- **Find button toggle**: Click Find to toggle search panel open/close (matches info button behavior)
+- **Search result badges**: Now use context-specific accent colors
+- **Side panel accents**: Active items show context-appropriate border colors
+- **Page headers**: Badge + left border indicate current context (P for Projects, S for Sessions)
+- **Session cards**: Use session accent color for left border
+- **Info panel redesign**: Grouped sections (Context, Time, Activity, Tokens) with headers
+- **Info panel accent**: Conversation-colored left border for visual context
+
+### Fixed
+- **Token display**: Fixed token extraction from `message.usage` (was looking at wrong JSON path)
+- **Token formatting**: Fixed boundary issue where 999,950 tokens would show as "1000.0k"
+- **Progressive loading**: Now works for sessions without compact boundaries (falls back to chunking by user prompts)
+- **Progressive loading chunks**: Break before user prompts so each chunk starts with user prompt + responses
+- **Mobile responsiveness**: Search and info panels now adapt to small screens
+
+### Removed
+- **Cost estimation**: Removed inaccurate cost display (Claude Code calculates at runtime, not stored in JSONL)
+- **Lines changed**: Removed inaccurate lines tracking (agent sidechains in separate files not aggregated)
+
 ## [0.2.4] - 2026-01-05
 
 ### Added

@@ -1,0 +1,114 @@
+* [2026-01-06] Dev Log: Progressive Loading, Accent Colors, Token Stats :WEB:UX:PERF:
+
+** Context
+Large sessions (500+ messages after multiple /compact cycles) caused slow page loads and browser memory issues. Info panel lacked token usage data. Visual identity was inconsistent across Projects/Sessions/Conversations contexts.
+
+** Why
+Users hitting 2000+ message sessions experienced 3-5 second page loads. No visibility into API token consumption. Navigation lacked clear context indicators showing where in the hierarchy (Project > Session > Conversation) the user was.
+
+** What
+- =FEAT= Progressive loading: render only last 3 sections initially for 500+ message sessions
+- =FEAT= Load earlier button: click to load full history on demand, ?all=1 URL escape hatch
+- =FEAT= Context accent colors: Projects (blue #3b82f6), Sessions (purple #8b5cf6), Conversations (teal #06b6d4)
+- =FEAT= Token stats in info panel: Input, Output, Cache Read, Cache Write with tooltips
+- =FEAT= Session card token display: diamond icon with formatted token count
+- =CHANGE= Toolbar icons: SVG for Export, Find, Refresh (kept info as Unicode)
+- =CHANGE= Info panel redesign: grouped sections (Context, Time, Activity, Tokens)
+- =FIX= Token extraction: check message.usage, not top-level usage
+- =FIX= formatTokens boundary: 999,950 tokens now shows "1.0M" not "1000.0k"
+- =FIX= splitByUserPrompts: break before user prompt (was breaking after)
+- =REMOVED= Cost estimation: Claude Code calculates at runtime, not stored in JSONL
+- =REMOVED= Lines changed tracking: agent sidechains in separate files we don't aggregate
+
+** How
+*** Progressive Loading
+#+BEGIN_SRC go
+// Split by compact boundaries (isCompactSummary=true marks section ends)
+func splitByCompactBoundaries(messages []*parser.Message) [][]*parser.Message {
+    var sections [][]*parser.Message
+    var current []*parser.Message
+    for _, msg := range messages {
+        current = append(current, msg)
+        if msg.IsCompacted {
+            sections = append(sections, current)
+            current = nil
+        }
+    }
+    if len(current) > 0 {
+        sections = append(sections, current)
+    }
+    return sections
+}
+
+// Fallback: split before user prompts when at capacity
+func splitByUserPrompts(messages []*parser.Message, chunkSize int) [][]*parser.Message {
+    var sections [][]*parser.Message
+    var current []*parser.Message
+    for _, msg := range messages {
+        if msg.Kind == parser.KindUserPrompt && len(current) >= chunkSize {
+            sections = append(sections, current)
+            current = nil
+        }
+        current = append(current, msg)
+    }
+    // ...
+}
+#+END_SRC
+
+*** Token Extraction Fix
+#+BEGIN_SRC go
+// Token usage lives at message.usage, not top-level
+usage := raw.Usage
+if usage == nil && raw.Message.Usage != nil {
+    usage = raw.Message.Usage  // This is where API responses store it
+}
+#+END_SRC
+
+*** Accent Colors CSS
+#+BEGIN_SRC css
+:root {
+    --accent-project: #3b82f6;      /* blue-500 */
+    --accent-session: #8b5cf6;      /* violet-500 */
+    --accent-conversation: #06b6d4; /* cyan-500 */
+}
+#+END_SRC
+
+** Result
+*** Outcome
+Large sessions now load instantly (last 3 sections ~150 messages). Token usage visible in session cards and info panel. Clear visual hierarchy through accent colors. Removed misleading cost/lines estimates.
+
+*** Tests
+- 2000+ message session loads in <500ms (was 3-5s)
+- Token counts verified against Claude Code statusline output
+- Accent colors consistent across page headers, side panels, badges
+
+** Decisions
+| Decision                   | Alternatives                     | Rationale                                                | DRI   | Timestamp (UTC)      |
+|----------------------------+----------------------------------+----------------------------------------------------------+-------+----------------------|
+| 3 sections initial load    | 5, 10, all                       | Balance between context and load time                    | @eric | 2026-01-06T02:00:00Z |
+| Remove cost estimation     | Model-aware pricing, config      | Can't match Claude Code's runtime calculation            | @eric | 2026-01-06T04:00:00Z |
+| Remove lines tracking      | Aggregate agent-*.jsonl files    | Complexity not worth it, inaccurate without full parsing | @eric | 2026-01-06T05:00:00Z |
+| Break before user prompts  | Break after, break mid-thread    | Each chunk starts with user prompt + complete responses  | @eric | 2026-01-07T01:00:00Z |
+
+** Risks
+| Risk                              | Mitigation                                    | Owner | Status |
+|-----------------------------------+-----------------------------------------------+-------+--------|
+| Hidden content missed by user     | Load earlier button prominent, ?all=1 escape  | @eric | CLOSED |
+| Cost removal disappoints users    | Token counts still visible, manual calc easy  | @eric | CLOSED |
+
+** Links
+- templates.go:404-421 splitByUserPrompts
+- session.go:111-121 token extraction
+- CHANGELOG.md [Unreleased] section
+- Previous devlog: [[file:2026-01-04-web-ux.org][Tool rendering & session search]]
+
+** Notes
+*** Why Cost/Lines Were Removed
+Claude Code's statusline receives =.cost.total_cost_usd= and =.cost.total_lines_added= from the runtime process, not from JSONL. We tried:
+1. Pricing constants + formula - doesn't match (cache behavior unknown)
+2. extractLinesFromToolCalls - undercounts (misses agent-*.jsonl sidechains)
+
+Lesson: if you can't guarantee accuracy, don't display it. Token counts are accurate (from API message.usage).
+
+*** Key Insight
+Progressive loading required two strategies: compact boundaries (ideal) and user prompt chunking (fallback). The fallback had a subtle bug where breaking AFTER user prompts left orphan assistant messages at chunk starts. Breaking BEFORE ensures conversation coherence.

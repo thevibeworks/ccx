@@ -33,7 +33,8 @@ func renderIndexPage(projects []*parser.Project, totalSessions int, search, sort
 	b.WriteString(renderSidebar("projects"))
 
 	b.WriteString(`<main class="main-content">`)
-	b.WriteString(`<div class="page-header">`)
+	b.WriteString(`<div class="page-header page-header-projects">`)
+	b.WriteString(`<span class="page-badge badge-project">P</span>`)
 	b.WriteString(`<h1>Projects</h1>`)
 	b.WriteString(fmt.Sprintf(`<div class="stats">%d projects / %d sessions</div>`, len(projects), totalSessions))
 	b.WriteString(`</div>`)
@@ -107,8 +108,9 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 	b.WriteString(`</aside>`)
 
 	b.WriteString(`<main class="main-content">`)
-	b.WriteString(`<div class="page-header">`)
+	b.WriteString(`<div class="page-header page-header-sessions">`)
 	b.WriteString(fmt.Sprintf(`<div class="breadcrumb"><a href="/">Projects</a> <span class="sep">/</span> <span class="current">%s</span></div>`, html.EscapeString(project.Name)))
+	b.WriteString(`<span class="page-badge badge-session">S</span>`)
 	b.WriteString(fmt.Sprintf(`<h1>%s</h1>`, html.EscapeString(project.Name)))
 	b.WriteString(fmt.Sprintf(`<div class="stats">%d sessions</div>`, len(sessions)))
 	b.WriteString(`</div>`)
@@ -130,6 +132,11 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 	b.WriteString(`<div class="session-list" id="results">`)
 	for _, s := range sessions {
 		summary := s.Summary
+		totalTokens := s.Stats.InputTokens + s.Stats.OutputTokens
+		tokenDisplay := ""
+		if totalTokens > 0 {
+			tokenDisplay = fmt.Sprintf(`<span class="stat stat-tokens" title="Total tokens"><span class="stat-icon">⧫</span> %s</span>`, formatTokens(totalTokens))
+		}
 		b.WriteString(fmt.Sprintf(`
 <a href="/session/%s/%s" class="card session-card">
 	<div class="session-header">
@@ -140,13 +147,14 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 	<div class="session-stats">
 		<span class="stat"><span class="stat-icon">M</span> %d</span>
 		<span class="stat"><span class="stat-icon">T</span> %d</span>
+		%s
 	</div>
 </a>`, html.EscapeString(project.EncodedName), html.EscapeString(s.ID),
 			html.EscapeString(truncate(s.ID, 8)),
 			s.StartTime.Format("2006-01-02 15:04"),
 			formatRelativeTime(s.StartTime),
 			html.EscapeString(summary),
-			s.Stats.MessageCount, s.Stats.ToolCalls))
+			s.Stats.MessageCount, s.Stats.ToolCalls, tokenDisplay))
 	}
 	b.WriteString(`</div>`)
 
@@ -159,7 +167,7 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 	return b.String()
 }
 
-func renderSessionPage(session *parser.Session, projectName string, allSessions []*parser.Session, showThinking, showTools bool, theme string) string {
+func renderSessionPage(session *parser.Session, projectName string, allSessions []*parser.Session, showThinking, showTools, loadAll bool, theme string) string {
 	var b strings.Builder
 
 	title := fmt.Sprintf("Session %s - ccx", session.ID[:8])
@@ -218,7 +226,7 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	b.WriteString(fmt.Sprintf(`<input type="checkbox" id="show-tools" style="display:none" %s>`, toolsChecked))
 
 	b.WriteString(`<div class="messages" id="messages">`)
-	renderMessages(&b, session.RootMessages, 0, showThinking, showTools)
+	renderMessages(&b, session.RootMessages, 0, showThinking, showTools, loadAll)
 	b.WriteString(`</div>`)
 
 	// Tail spinner for watch mode
@@ -257,7 +265,7 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	b.WriteString(`<div class="dock-sep"></div>`)
 	b.WriteString(`<div class="dock-group dock-actions">`)
 	b.WriteString(`<div class="dock-dropdown">`)
-	b.WriteString(`<button class="dock-btn" id="tb-export" title="Export"><span class="dock-icon">↗</span><span class="dock-label">Export</span></button>`)
+	b.WriteString(`<button class="dock-btn" id="tb-export" title="Export"><span class="dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></span><span class="dock-label">Export</span></button>`)
 	b.WriteString(`<div class="dock-menu" id="toolbar-export-menu">`)
 	b.WriteString(fmt.Sprintf(`<a href="/api/export/%s/%s?format=html">HTML</a>`, html.EscapeString(projectName), html.EscapeString(session.ID)))
 	b.WriteString(fmt.Sprintf(`<a href="/api/export/%s/%s?format=md">Markdown</a>`, html.EscapeString(projectName), html.EscapeString(session.ID)))
@@ -266,8 +274,8 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	b.WriteString(fmt.Sprintf(`<a href="/api/export/%s/%s?format=json">JSON</a>`, html.EscapeString(projectName), html.EscapeString(session.ID)))
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
-	b.WriteString(`<button class="dock-btn" id="tb-search" title="Search (/ or f)"><span class="dock-icon">⌕</span><span class="dock-label">Find</span></button>`)
-	b.WriteString(`<button class="dock-btn" id="tb-refresh" title="Refresh (r)"><span class="dock-icon">↻</span></button>`)
+	b.WriteString(`<button class="dock-btn" id="tb-search" title="Search (/ or f)"><span class="dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></span><span class="dock-label">Find</span></button>`)
+	b.WriteString(`<button class="dock-btn" id="tb-refresh" title="Refresh (r)"><span class="dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></span></button>`)
 	b.WriteString(`<button class="dock-btn" id="tb-info" title="Info (i)"><span class="dock-icon">ⓘ</span></button>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
@@ -293,6 +301,10 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	// Info panel (floating, hidden by default)
 	projDisplay := parser.GetProjectDisplayName(projectName)
 	b.WriteString(`<div class="info-panel" id="info-panel">`)
+
+	// Context section
+	b.WriteString(`<div class="info-section">`)
+	b.WriteString(`<div class="info-section-header">Context</div>`)
 	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Project</span><a href="/project/%s">%s</a></div>`,
 		html.EscapeString(projectName), html.EscapeString(projDisplay)))
 	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Session</span><code class="copyable">%s</code><button class="copy-btn-sm" data-copy="%s">⧉</button></div>`,
@@ -302,7 +314,7 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 			html.EscapeString(session.Slug), html.EscapeString(session.Slug)))
 	}
 	if session.Version != "" {
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Version</span>%s</div>`, html.EscapeString(session.Version)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Version</span><span class="info-value">%s</span></div>`, html.EscapeString(session.Version)))
 	}
 	if session.GitBranch != "" {
 		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Branch</span><code>%s</code></div>`, html.EscapeString(session.GitBranch)))
@@ -311,27 +323,46 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">CWD</span><code class="info-cwd" title="%s">%s</code></div>`,
 			html.EscapeString(session.CWD), html.EscapeString(truncatePath(session.CWD, 40))))
 	}
-	b.WriteString(`<div class="info-divider"></div>`)
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Started</span>%s</div>`, session.StartTime.Format("2006-01-02 15:04")))
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Duration</span>%s</div>`, formatDuration(session.Stats.DurationSeconds)))
-	b.WriteString(`<div class="info-divider"></div>`)
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Messages</span>%d</div>`, session.Stats.MessageCount))
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">User prompts</span>%d</div>`, session.Stats.UserPrompts))
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Tool calls</span>%d</div>`, session.Stats.ToolCalls))
+	b.WriteString(`</div>`)
+
+	// Time section
+	b.WriteString(`<div class="info-section">`)
+	b.WriteString(`<div class="info-section-header">Time</div>`)
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Started</span><span class="info-value">%s</span></div>`, session.StartTime.Format("2006-01-02 15:04")))
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Duration</span><span class="info-value">%s</span></div>`, formatDuration(session.Stats.DurationSeconds)))
+	b.WriteString(`</div>`)
+
+	// Activity section
+	b.WriteString(`<div class="info-section">`)
+	b.WriteString(`<div class="info-section-header">Activity</div>`)
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Messages</span><span class="info-value">%d</span></div>`, session.Stats.MessageCount))
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">User prompts</span><span class="info-value">%d</span></div>`, session.Stats.UserPrompts))
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Tool calls</span><span class="info-value">%d</span></div>`, session.Stats.ToolCalls))
 	if session.Stats.AgentSidechains > 0 {
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Agent tasks</span>%d</div>`, session.Stats.AgentSidechains))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Agent tasks</span><span class="info-value">%d</span></div>`, session.Stats.AgentSidechains))
 	}
-	// Token usage (if available)
+	b.WriteString(`</div>`)
+
+	// Token usage section (if available)
 	totalTokens := session.Stats.InputTokens + session.Stats.OutputTokens
 	if totalTokens > 0 {
-		b.WriteString(`<div class="info-divider"></div>`)
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Input tokens</span>%s</div>`, formatTokens(session.Stats.InputTokens)))
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Output tokens</span>%s</div>`, formatTokens(session.Stats.OutputTokens)))
-		if session.Stats.CacheReadTokens > 0 {
-			b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Cache read</span>%s</div>`, formatTokens(session.Stats.CacheReadTokens)))
+		b.WriteString(`<div class="info-section info-section-tokens">`)
+		b.WriteString(`<div class="info-section-header">Tokens</div>`)
+		b.WriteString(fmt.Sprintf(`<div class="info-row" title="Fresh tokens sent to API (not from cache)"><span class="info-label">Input</span><span class="info-value">%s</span></div>`, formatTokens(session.Stats.InputTokens)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row" title="Tokens generated by Claude"><span class="info-label">Output</span><span class="info-value">%s</span></div>`, formatTokens(session.Stats.OutputTokens)))
+		// Show cache stats if present
+		if session.Stats.CacheReadTokens > 0 || session.Stats.CacheCreateTokens > 0 {
+			if session.Stats.CacheReadTokens > 0 {
+				b.WriteString(fmt.Sprintf(`<div class="info-row info-cache" title="Tokens read from prompt cache (90%% cheaper)"><span class="info-label">↩ Cache read</span><span class="info-value">%s</span></div>`, formatTokens(session.Stats.CacheReadTokens)))
+			}
+			if session.Stats.CacheCreateTokens > 0 {
+				b.WriteString(fmt.Sprintf(`<div class="info-row info-cache" title="Tokens written to prompt cache"><span class="info-label">↪ Cache write</span><span class="info-value">%s</span></div>`, formatTokens(session.Stats.CacheCreateTokens)))
+			}
 		}
-		b.WriteString(fmt.Sprintf(`<div class="info-row info-total"><span class="info-label">Total tokens</span><strong>%s</strong></div>`, formatTokens(totalTokens)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row info-total" title="Input + Output tokens"><span class="info-label">Total</span><span class="info-value"><strong>%s</strong></span></div>`, formatTokens(totalTokens)))
+		b.WriteString(`</div>`)
 	}
+
 	b.WriteString(`</div>`)
 
 	b.WriteString(`</div>`)
@@ -342,8 +373,61 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	return b.String()
 }
 
-func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, showThinking, showTools bool) {
+const (
+	progressiveLoadThreshold = 500 // Messages above this trigger progressive loading
+	initialContextSections   = 3   // Number of compact sections to show initially
+	maxProjectsInitial       = 50  // Max projects to show initially (future: load more)
+	maxSessionsInitial       = 100 // Max sessions per project initially (future: load more)
+)
+
+// splitByCompactBoundaries splits messages into sections delimited by compact summaries
+func splitByCompactBoundaries(messages []*parser.Message) [][]*parser.Message {
+	var sections [][]*parser.Message
+	var current []*parser.Message
+
+	for _, msg := range messages {
+		if msg.Kind == parser.KindCompactSummary {
+			if len(current) > 0 {
+				sections = append(sections, current)
+			}
+			current = []*parser.Message{msg}
+		} else {
+			current = append(current, msg)
+		}
+	}
+	if len(current) > 0 {
+		sections = append(sections, current)
+	}
+	return sections
+}
+
+// splitByUserPrompts splits messages into chunks, breaking before user prompts when chunk reaches target size
+func splitByUserPrompts(messages []*parser.Message, chunkSize int) [][]*parser.Message {
+	var sections [][]*parser.Message
+	var current []*parser.Message
+
+	for _, msg := range messages {
+		// Break before user prompt if we're at capacity (so chunks start with user prompt)
+		if msg.Kind == parser.KindUserPrompt && len(current) >= chunkSize {
+			sections = append(sections, current)
+			current = nil
+		}
+		current = append(current, msg)
+	}
+	if len(current) > 0 {
+		sections = append(sections, current)
+	}
+	return sections
+}
+
+func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, showThinking, showTools, loadAll bool) {
 	allMsgs := flattenMessages(messages)
+
+	// Check if progressive loading is needed (unless loadAll is requested)
+	if !loadAll && len(allMsgs) > progressiveLoadThreshold {
+		renderMessagesProgressive(b, allMsgs, showThinking, showTools)
+		return
+	}
 
 	// Build tool results map for inline rendering
 	toolResults := buildToolResultsMap(allMsgs)
@@ -377,6 +461,74 @@ func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, s
 	}
 
 	// Close final thread
+	if inThread && len(currentThread) > 0 {
+		renderThread(b, currentThread, showThinking, showTools, toolResults)
+	}
+}
+
+// renderMessagesProgressive renders large conversations with lazy loading
+func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, showThinking, showTools bool) {
+	sections := splitByCompactBoundaries(allMsgs)
+
+	// If no compact boundaries, fall back to splitting by user prompts
+	if len(sections) <= 1 && len(allMsgs) > progressiveLoadThreshold {
+		sections = splitByUserPrompts(allMsgs, 50) // ~50 messages per chunk
+	}
+
+	totalSections := len(sections)
+
+	// Calculate which sections to render initially
+	startSection := 0
+	if totalSections > initialContextSections {
+		startSection = totalSections - initialContextSections
+	}
+
+	hiddenMsgCount := 0
+	for i := 0; i < startSection; i++ {
+		hiddenMsgCount += len(sections[i])
+	}
+
+	// Add "Load earlier" button if there's hidden content
+	if startSection > 0 {
+		b.WriteString(fmt.Sprintf(`<div class="load-earlier" id="load-earlier" data-hidden-sections="%d">`, startSection))
+		b.WriteString(`<button class="load-earlier-btn" onclick="loadEarlierMessages()">`)
+		b.WriteString(fmt.Sprintf(`<span class="load-icon">↑</span> Load earlier context (%d sections, ~%d messages)`, startSection, hiddenMsgCount))
+		b.WriteString(`</button></div>`)
+	}
+
+	// Collect messages from visible sections
+	var visibleMsgs []*parser.Message
+	for i := startSection; i < totalSections; i++ {
+		visibleMsgs = append(visibleMsgs, sections[i]...)
+	}
+
+	// Build tool results map
+	toolResults := buildToolResultsMap(allMsgs) // Need full list for tool result lookups
+
+	// Render visible messages using standard thread logic
+	var currentThread []*parser.Message
+	inThread := false
+
+	for _, msg := range visibleMsgs {
+		if msg.Kind == parser.KindToolResult {
+			continue
+		}
+
+		isAnchor := msg.Kind == parser.KindUserPrompt || msg.Kind == parser.KindCommand
+
+		if isAnchor {
+			if inThread && len(currentThread) > 0 {
+				renderThread(b, currentThread, showThinking, showTools, toolResults)
+			}
+			currentThread = []*parser.Message{msg}
+			inThread = true
+		} else if inThread {
+			currentThread = append(currentThread, msg)
+		} else {
+			renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
+		}
+	}
+
 	if inThread && len(currentThread) > 0 {
 		renderThread(b, currentThread, showThinking, showTools, toolResults)
 	}
@@ -1211,7 +1363,11 @@ func formatTokens(n int) string {
 		return fmt.Sprintf("%.1fM", float64(n)/1000000)
 	}
 	if n >= 1000 {
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
+		k := float64(n) / 1000
+		if k >= 999.95 {
+			return fmt.Sprintf("%.1fM", float64(n)/1000000)
+		}
+		return fmt.Sprintf("%.1fk", k)
 	}
 	return fmt.Sprintf("%d", n)
 }
@@ -1933,6 +2089,10 @@ func cssStyles() string {
   --border: #dee2e6;
   --primary: #da7756;
   --primary-hover: #c5634a;
+  /* Context accent colors */
+  --accent-project: #3b82f6;
+  --accent-session: #8b5cf6;
+  --accent-conversation: #06b6d4;
   --user-bg: #fff8f5;
   --user-border: #da7756;
   --assistant-bg: #f5faf5;
@@ -1956,6 +2116,9 @@ func cssStyles() string {
   --text: #e8e8e8;
   --text-muted: #888;
   --border: #3a3a42;
+  --accent-project: #60a5fa;
+  --accent-session: #a78bfa;
+  --accent-conversation: #22d3ee;
   --user-bg: #2a2520;
   --assistant-bg: #202820;
   --tool-bg: #282520;
@@ -2060,9 +2223,9 @@ code, pre, .session-id, .model-badge {
   border-radius: 4px;
   color: white;
 }
-.badge-project { background: var(--primary); }
-.badge-session { background: var(--assistant-border); }
-.badge-message { background: var(--tool-border); }
+.badge-project { background: var(--accent-project); }
+.badge-session { background: var(--accent-session); }
+.badge-message { background: var(--accent-conversation); }
 .search-loading, .search-empty {
   padding: 16px;
   color: var(--text-muted);
@@ -2150,7 +2313,9 @@ code, pre, .session-id, .model-badge {
   color: var(--text-muted);
   text-decoration: none;
 }
-.panel-header a:hover { color: var(--primary); }
+.panel-header a:hover { color: var(--text); }
+.panel-nav:not(.session-nav) .panel-header a:hover { color: var(--accent-project); }
+.session-nav .panel-header a:hover { color: var(--accent-session); }
 .panel-list {
   flex: 1;
   overflow-y: auto;
@@ -2175,6 +2340,9 @@ code, pre, .session-id, .model-badge {
   border-left-color: var(--primary);
   font-weight: 500;
 }
+/* Context-specific panel accents */
+.panel-nav:not(.session-nav) .panel-item.active { border-left-color: var(--accent-project); }
+.session-nav .panel-item.active { border-left-color: var(--accent-session); }
 .session-nav .panel-item {
   display: flex;
   flex-direction: column;
@@ -2247,7 +2415,7 @@ code, pre, .session-id, .model-badge {
 /* Bottom dock toolbar - modern horizontal bar */
 .dock-toolbar {
   position: fixed;
-  bottom: 40px;
+  bottom: 52px;
   left: calc(50% + 140px);
   transform: translateX(-50%);
   display: flex;
@@ -2284,6 +2452,7 @@ code, pre, .session-id, .model-badge {
 .dock-btn:hover { background: var(--bg-tertiary); color: var(--text); }
 .dock-btn.active, .dock-btn.toggle.active { background: var(--primary); color: white; }
 .dock-icon { font-size: 14px; line-height: 1; display: inline-flex; align-items: center; }
+.dock-icon svg { vertical-align: middle; }
 .dock-label { font-size: 11px; font-weight: 500; line-height: 1; }
 .dock-key { font-size: 9px; opacity: 0.5; font-family: var(--font-mono); line-height: 1; }
 .dock-btn:hover .dock-key { opacity: 0.8; }
@@ -2333,8 +2502,24 @@ code, pre, .session-id, .model-badge {
   .dock-btn { padding: 8px; }
 }
 
-.page-header { margin-bottom: 20px; }
-.page-header h1 { font-size: 1.5rem; margin-bottom: 4px; }
+.page-header { margin-bottom: 20px; position: relative; }
+.page-header h1 { font-size: 1.5rem; margin-bottom: 4px; display: inline; }
+.page-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  border-radius: 4px;
+  color: white;
+  margin-right: 10px;
+  vertical-align: middle;
+}
+.page-header-projects { border-left: 3px solid var(--accent-project); padding-left: 16px; }
+.page-header-sessions { border-left: 3px solid var(--accent-session); padding-left: 16px; }
 
 .breadcrumb {
   font-size: 12px;
@@ -2506,7 +2691,7 @@ code, pre, .session-id, .model-badge {
 
 .session-list { display: flex; flex-direction: column; gap: 8px; }
 
-.session-card { border-left: 3px solid var(--primary); }
+.session-card { border-left: 3px solid var(--accent-session); }
 
 .session-header {
   display: flex;
@@ -2528,14 +2713,15 @@ code, pre, .session-id, .model-badge {
   font-size: 11px;
   color: var(--text-muted);
 }
+.session-stats .stat-tokens { color: var(--accent-conversation); }
 .stat { display: flex; align-items: center; gap: 3px; }
 .stat-icon { font-weight: 600; }
 
 /* Session search bar (floating above toolbar) */
 .session-search {
   position: fixed;
-  bottom: 70px;
-  left: 50%;
+  bottom: 90px;
+  left: calc(50% + 140px);
   transform: translateX(-50%);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -2617,9 +2803,6 @@ code, pre, .session-id, .model-badge {
   color: white;
 }
 
-/* Search button emphasis */
-#tb-search .dock-icon { font-size: 16px; }
-
 /* Search highlight */
 .search-match { background: rgba(255,220,0,0.3); }
 .search-current { background: rgba(255,180,0,0.5); outline: 2px solid var(--primary); }
@@ -2627,27 +2810,87 @@ code, pre, .session-id, .model-badge {
 /* Info panel (floating above info icon) */
 .info-panel {
   position: fixed;
-  bottom: 100px;
+  bottom: 90px;
   right: 40px;
   background: var(--bg);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-conversation);
   border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-  padding: 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  padding: 0;
   z-index: 200;
   display: none;
-  min-width: 280px;
-  max-width: 360px;
+  min-width: 260px;
+  max-width: 320px;
+  overflow: hidden;
 }
 .info-panel.show { display: block; }
-.info-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 12px; }
-.info-label { color: var(--text-muted); }
-.info-row code { font-size: 10px; }
-.info-row a { color: var(--primary); text-decoration: none; }
+.info-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.info-section:last-child { border-bottom: none; }
+.info-section-header {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+  gap: 12px;
+}
+.info-value { text-align: right; color: var(--text); font-weight: 500; }
+
+/* Progressive loading - Load earlier button */
+.load-earlier {
+  text-align: center;
+  padding: 16px;
+  margin-bottom: 24px;
+  border-bottom: 1px dashed var(--border);
+}
+.load-earlier-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.load-earlier-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+  border-color: var(--primary);
+}
+.load-earlier-btn .load-icon {
+  font-size: 16px;
+}
+.load-earlier.loading .load-earlier-btn {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.info-label { color: var(--text-muted); font-weight: 400; flex-shrink: 0; }
+.info-row code { font-size: 10px; background: var(--bg-secondary); padding: 2px 6px; border-radius: 3px; }
+.info-row a { color: var(--accent-session); text-decoration: none; font-weight: 500; }
 .info-row a:hover { text-decoration: underline; }
-.info-divider { height: 1px; background: var(--border); margin: 8px 0; }
-.info-total { font-size: 13px; margin-top: 4px; }
-.info-cwd { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.info-cache { font-size: 11px; }
+.info-cache .info-label { font-size: 11px; }
+.info-cache .info-value { color: var(--text-muted); }
+.info-total { padding-top: 6px; margin-top: 4px; border-top: 1px dashed var(--border); }
+.info-total .info-label { color: var(--text); }
+.info-row[title] { cursor: help; }
+.info-cwd { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .copy-btn-sm {
   background: none; border: none; color: var(--text-muted);
   cursor: pointer; padding: 0 4px; font-size: 12px; opacity: 0.6;
@@ -2709,7 +2952,7 @@ code, pre, .session-id, .model-badge {
   overflow: hidden;
 }
 .nav-item:hover { background: var(--bg-tertiary); color: var(--text); }
-.nav-item.active { background: var(--bg-tertiary); color: var(--text); border-left: 2px solid var(--accent); }
+.nav-item.active { background: var(--bg-tertiary); color: var(--text); border-left: 2px solid var(--accent-conversation); }
 
 .nav-icon { font-size: 9px; flex-shrink: 0; width: 12px; text-align: center; }
 .nav-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3588,12 +3831,15 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 @media (max-width: 768px) {
   .panel-nav { width: 140px; min-width: 140px; }
   .dock-toolbar { left: 50%; max-width: calc(100vw - 40px); }
+  .session-search { left: 50%; max-width: calc(100vw - 40px); min-width: auto; }
 }
 @media (max-width: 600px) {
   .nav-sidebar { display: none; }
   .panel-nav { display: none; }
   .top-nav { padding: 0 10px; }
-  .dock-toolbar { bottom: 20px; }
+  .dock-toolbar { bottom: 28px; }
+  .session-search { bottom: 66px; }
+  .info-panel { bottom: 66px; right: 16px; }
 }
 `
 }
@@ -3733,6 +3979,19 @@ const projectName = %q;
 const sessionID = %q;
 let eventSource = null;
 let autoScroll = false;
+
+// Progressive loading - load all earlier messages
+function loadEarlierMessages() {
+  const btn = document.querySelector('.load-earlier');
+  if (btn) {
+    btn.classList.add('loading');
+    btn.querySelector('.load-earlier-btn').innerHTML = '<span class="load-icon">↻</span> Loading...';
+  }
+  // Reload page with all=1 parameter to load full content
+  const url = new URL(window.location.href);
+  url.searchParams.set('all', '1');
+  window.location.href = url.toString();
+}
 
 // Delegated handler for copy buttons with data-copy attribute
 document.addEventListener('click', function(e) {
@@ -5035,7 +5294,9 @@ function prevMatch() {
 }
 
 // Event listeners
-document.getElementById('tb-search')?.addEventListener('click', openSearch);
+document.getElementById('tb-search')?.addEventListener('click', () => {
+  sessionSearch?.classList.contains('show') ? closeSearch() : openSearch();
+});
 document.getElementById('search-close')?.addEventListener('click', closeSearch);
 document.getElementById('search-prev')?.addEventListener('click', prevMatch);
 document.getElementById('search-next')?.addEventListener('click', nextMatch);

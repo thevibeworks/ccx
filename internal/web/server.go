@@ -255,13 +255,14 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	showThinking := q.Get("thinking") == "1"
 	showTools := q.Get("tools") == "1" // default: only active tools expanded
+	loadAll := q.Get("all") == "1"     // Load all messages (no progressive loading)
 	theme := q.Get("theme")
 	if theme == "" {
 		theme = config.Theme() // respect user config
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderSessionPage(fullSession, projectName, allSessions, showThinking, showTools, theme))
+	fmt.Fprint(w, renderSessionPage(fullSession, projectName, allSessions, showThinking, showTools, loadAll, theme))
 }
 
 func handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -757,7 +758,7 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.html", truncate(sessionID, 8)))
-		fmt.Fprint(w, renderSessionPage(fullSession, projectName, nil, true, true, "light"))
+		fmt.Fprint(w, renderSessionPage(fullSession, projectName, nil, true, true, true, "light"))
 	case "md", "markdown":
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.md", truncate(sessionID, 8)))

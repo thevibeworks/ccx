@@ -11,10 +11,10 @@ import (
 )
 
 var (
-	cfgFile   string
+	cfgFile    string
 	claudeHome string
-	version   string
-	buildTime string
+	version    string
+	buildTime  string
 )
 
 var rootCmd = &cobra.Command{

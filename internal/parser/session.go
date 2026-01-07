@@ -39,12 +39,16 @@ func ParseSession(filePath string) (*Session, error) {
 			continue
 		}
 
-		// Accumulate usage stats from any message with usage data
-		if raw.Usage != nil {
-			totalInputTokens += raw.Usage.InputTokens
-			totalOutputTokens += raw.Usage.OutputTokens
-			totalCacheRead += raw.Usage.CacheReadInputTokens
-			totalCacheCreate += raw.Usage.CacheCreationInputTokens
+		// Accumulate usage stats (check both top-level and message.usage)
+		usage := raw.Usage
+		if usage == nil && raw.Message.Usage != nil {
+			usage = raw.Message.Usage
+		}
+		if usage != nil {
+			totalInputTokens += usage.InputTokens
+			totalOutputTokens += usage.OutputTokens
+			totalCacheRead += usage.CacheReadInputTokens
+			totalCacheCreate += usage.CacheCreationInputTokens
 		}
 
 		// Extract session metadata from first message that has it
@@ -426,23 +430,37 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 		}
 
 		var raw struct {
-			Type             string `json:"type"`
-			Timestamp        string `json:"timestamp"`
-			IsCompactSummary bool   `json:"isCompactSummary"`
-			IsSidechain      bool   `json:"isSidechain"`
-			IsMeta           bool   `json:"isMeta"`
-			Summary          string `json:"summary"`
-			Slug             string `json:"slug"`
-			Version          string `json:"version"`
-			GitBranch        string `json:"gitBranch"`
-			CWD              string `json:"cwd"`
+			Type             string     `json:"type"`
+			Timestamp        string     `json:"timestamp"`
+			IsCompactSummary bool       `json:"isCompactSummary"`
+			IsSidechain      bool       `json:"isSidechain"`
+			IsMeta           bool       `json:"isMeta"`
+			Summary          string     `json:"summary"`
+			Slug             string     `json:"slug"`
+			Version          string     `json:"version"`
+			GitBranch        string     `json:"gitBranch"`
+			CWD              string     `json:"cwd"`
+			Usage            *usageData `json:"usage"`
 			Message          struct {
-				Content any `json:"content"`
+				Content any        `json:"content"`
+				Usage   *usageData `json:"usage"`
 			} `json:"message"`
 		}
 
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
 			continue
+		}
+
+		// Accumulate token usage (check both top-level and message.usage)
+		usage := raw.Usage
+		if usage == nil && raw.Message.Usage != nil {
+			usage = raw.Message.Usage
+		}
+		if usage != nil {
+			stats.InputTokens += usage.InputTokens
+			stats.OutputTokens += usage.OutputTokens
+			stats.CacheReadTokens += usage.CacheReadInputTokens
+			stats.CacheCreateTokens += usage.CacheCreationInputTokens
 		}
 
 		// Extract metadata from first message that has it
