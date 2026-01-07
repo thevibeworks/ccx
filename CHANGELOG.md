@@ -5,7 +5,7 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
-## [Unreleased]
+## [0.2.5] - 2026-01-07
 
 ### Added
 - **Progressive loading**: Large conversations (500+ messages) now load only the last 3 compacted sections initially
@@ -124,7 +124,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Dark/light theme toggle with persistence
 - Keyboard navigation (j/k scroll, gg/G jump, / search, t theme, z collapse)
 
-[Unreleased]: https://github.com/thevibeworks/ccx/compare/v0.2.4...HEAD
+[0.2.5]: https://github.com/thevibeworks/ccx/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/thevibeworks/ccx/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/thevibeworks/ccx/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/thevibeworks/ccx/compare/v0.2.1...v0.2.2
