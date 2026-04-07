@@ -1,0 +1,141 @@
+* [2026-03-25] Dev Log: Codex Layout and Rollout Parser Fix        :RELIABILITY:ARCH:
+
+** Context
+The multi-provider =ccx= refactor in =worktree/ccx= was still handling Codex with stale layout and transcript assumptions.
+
+** Why
+Live Codex exports were losing tool traffic and the settings view was still shaped around Claude-only artifacts.
+
+** What
+- Verified the real =CODEX_HOME= layout under =/home/deva/.codex= on this machine.
+- Compared the live rollout format against =reference/openai-codex= rollout/protocol sources.
+- Patched =internal/provider/codex/backend.go= to parse current =response_item= tool traffic and compaction markers.
+- Added Codex regression coverage in =internal/provider/codex/backend_test.go= for missing =session_index.jsonl= and response-item-heavy rollouts.
+- Patched =internal/web/server.go= and =internal/web/templates.go= to surface provider config files in the settings UI and allow viewing them via =/api/file=.
+- Patched =internal/cmd/doctor.go= to validate real Codex artifacts (=config.toml=, =config.json=, =history.jsonl=, =sessions/=, =state_*.sqlite=) instead of only =session_index.jsonl=.
+
+** How
+*** Steps
+1. Inspected =/home/deva/.codex= and the live rollout for session =019d230c-e2bb-70d2-960a-3433cc567027=.
+2. Confirmed the live transcript is dominated by =response_item function_call/custom_tool_call= records, not legacy =event_msg *_end= tool events.
+3. Added backend tests that model the current rollout shape and the absence of =session_index.jsonl=.
+4. Patched the Codex backend and web/doctor surfaces.
+5. Re-ran backend tests, full =go test ./...=, =ccx doctor=, and a live =ccx export= against the current Codex session.
+
+*** Commands
+#+BEGIN_SRC bash
+find ~/.codex -maxdepth 2 -mindepth 1 | sort
+sed -n '1,220p' ~/.codex/config.toml
+sed -n '1,220p' ~/.codex/config.json
+tail -n 40 ~/.codex/history.jsonl
+sqlite3 ~/.codex/state_5.sqlite '.tables'
+
+go test ./internal/provider/codex -run 'TestDiscoverProjectsWithoutSessionIndexUsesResponseItemToolCounts|TestParseSessionBuildsTranscriptFromResponseItems|TestParseSessionBuildsUsableTranscript' -v
+go test ./internal/web ./internal/cmd -v
+go test ./...
+
+go run ./cmd/ccx doctor
+go run ./cmd/ccx export 019d230c-e2bb-70d2-960a-3433cc567027 -f md -o /tmp/ccx-current.md
+sed -n '1,12p' /tmp/ccx-current.md
+
+python3 - <<'PY'
+import json, collections
+p='/home/deva/.codex/sessions/2026/03/24/rollout-2026-03-24T20-32-20-019d230c-e2bb-70d2-960a-3433cc567027.jsonl'
+resp=collections.Counter()
+evt=collections.Counter()
+with open(p) as f:
+    for line in f:
+        obj=json.loads(line)
+        if obj['type']=='response_item':
+            resp[obj['payload'].get('type')]+=1
+        elif obj['type']=='event_msg':
+            evt[obj['payload'].get('type')]+=1
+print('response_function_like', resp['function_call'] + resp['custom_tool_call'])
+print('response_breakdown', {k: resp[k] for k in ['function_call','custom_tool_call','function_call_output','custom_tool_call_output']})
+print('legacy_tool_events', sum(evt[k] for k in ['exec_command_end','patch_apply_end','web_search_end','mcp_tool_call_end','dynamic_tool_call_response','view_image_tool_call']))
+PY
+#+END_SRC
+
+*** Diffs
+#+BEGIN_SRC diff
++ case "response_item":
++     switch header.Type {
++     case "function_call":
++         stats.ToolCalls++
++         messages = append(messages, newToolUseMessage(...))
++     case "function_call_output":
++         messages = append(messages, newToolResultMessage(...))
++     case "custom_tool_call":
++         stats.ToolCalls++
++         messages = append(messages, newToolUseMessage(...))
++     case "custom_tool_call_output":
++         messages = append(messages, newToolResultMessage(...))
++     }
++
++ if len(configFiles) > 0 {
++     render config file cards for config.toml, config.json, settings.json, and .claude.json
++ }
+#+END_SRC
+
+** Result
+*** Outcome
+- =ccx export= for the live Codex session no longer reports =Tools: 0= and now includes tool blocks in markdown output.
+- The settings page can show real provider config files instead of assuming Claude-only =settings.json= semantics.
+- =ccx doctor= now reports Codex artifacts that actually exist in =/home/deva/.codex=.
+
+*** Metrics                                                            :PERF:
+| Metric | Before | After | Window | Source |
+|--------+--------+-------+--------+--------|
+| Exported tool count for session =019d230c-e2bb-70d2-960a-3433cc567027= | 0 | 430 | 2026-03-25 live session | =/tmp/ccx-current.md= |
+| Live rollout tool starts parsed from =response_item= |=ignored by ccx= | 433 | 2026-03-26T06:47:47Z UTC | python3 count over rollout JSONL |
+| Legacy persisted tool end-events in the same rollout | assumed non-zero by old parser | 0 | 2026-03-26T06:47:47Z UTC | python3 count over rollout JSONL |
+
+*** Tests
+- Added: =internal/provider/codex/backend_test.go=
+- Updated: =internal/web/server_test.go=
+- Verification: =go test ./...=
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp (UTC) |
+|----------+--------------+-----------+-----+-----------------|
+| Parse Codex tool traffic from persisted =response_item= records directly | Keep relying on legacy =event_msg *_end= events | The live rollout on this machine stores tool calls as =response_item function_call/custom_tool_call= and legacy tool end-events are absent | ccx | 2026-03-26T06:47:47Z |
+| Surface Codex settings as raw config files in the UI | Force =config.toml= into the Claude =Settings= struct | Raw file cards show the real artifacts without inventing a lossy cross-provider schema | ccx | 2026-03-26T06:47:47Z |
+
+** Risks                                                            :SECURITY:
+| Risk | Mitigation | Owner | Status |
+|------+------------+-------+--------|
+| Codex is still reduced into a Claude-shaped message tree for rendering/export | Introduce a provider-neutral transcript model with native Codex turn semantics next | ccx | open |
+| Raw config file rendering may expose provider-specific settings without semantic labels | Keep the file cards local/read-only and add parsed provider summaries later | ccx | open |
+| SQLite metadata and lineage cannot be trusted when =state_5.sqlite= is malformed | Keep rollout JSONL as transcript truth and treat SQLite as optional acceleration only | ccx | open |
+
+** Rollback
+*** Trigger
+Live Codex exports regress to missing tool blocks, or the settings file viewer opens paths outside the intended config files and provider agent/skill directories.
+
+*** Procedure
+1. Revert changes in =internal/provider/codex/backend.go=, =internal/provider/codex/backend_test.go=, =internal/web/server.go=, =internal/web/templates.go=, =internal/web/server_test.go=, and =internal/cmd/doctor.go=.
+2. Re-run =go test ./...=.
+3. Re-run =go run ./cmd/ccx export 019d230c-e2bb-70d2-960a-3433cc567027 -f md -o /tmp/ccx-current.md= and confirm the previous behavior before re-attempting the fix.
+4. Data impact: none
+
+** WIP
+- [X] Reproduce Codex session/settings mismatch against live =/home/deva/.codex=
+- [X] Patch current rollout parsing and provider config visibility
+- [ ] Replace the Codex tree shim with a provider-neutral turn model
+- [ ] Add optional SQLite metadata and lineage import with corruption-tolerant fallback
+
+** Links
+- Artifacts: =/home/deva/.codex/config.toml=, =/home/deva/.codex/config.json=, =/home/deva/.codex/history.jsonl=, =/home/deva/.codex/sessions/2026/03/24/rollout-2026-03-24T20-32-20-019d230c-e2bb-70d2-960a-3433cc567027.jsonl=, =/tmp/ccx-current.md=
+- Docs/Runbooks: =worktree/ccx/docs/devlog/2026-03-24-codex-support.org=, =reference/openai-codex/codex-rs/rollout/src/recorder.rs=, =reference/openai-codex/codex-rs/protocol/src/protocol.rs=, =reference/openai-codex/codex-rs/app-server-protocol/src/protocol/thread_history.rs=
+
+** Notes
+*** Assumptions
+The rollout JSONL remains transcript truth even when SQLite metadata is missing, stale, or corrupt.
+
+*** Constraints
+=/home/deva/.codex/state_5.sqlite= is malformed on this machine, so SQLite cannot be required for transcript replay or basic listing.
+
+*** Gotchas
+- =session_index.jsonl= is optional and is not present in this =CODEX_HOME=.
+- =history.jsonl= is global prompt recall, not full thread transcript history.
+- The live rollout on this machine persists tools as =response_item function_call/custom_tool_call=; the old parser expected legacy =event_msg *_end= tool events and therefore dropped real tool activity.

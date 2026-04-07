@@ -3,18 +3,19 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/thevibeworks/ccx/internal/config"
-	"github.com/thevibeworks/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/provider"
 )
 
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Validate environment and configuration",
-	Long:  `Check that ccx is properly configured and can access Claude Code sessions.`,
+	Long:  `Check that ccx is properly configured and can access session sources.`,
 	RunE:  runDoctor,
 }
 
@@ -22,11 +23,11 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	var warnings []string
 	var errors []string
 
-	claudeHome := config.ClaudeHome()
-	if _, err := os.Stat(claudeHome); os.IsNotExist(err) {
-		errors = append(errors, fmt.Sprintf("CLAUDE_CODE_HOME not found: %s", claudeHome))
-	} else {
-		fmt.Printf("[OK] CLAUDE_CODE_HOME: %s\n", claudeHome)
+	backend := provider.Default()
+
+	fmt.Printf("[OK] Backend: %s\n", backend.ID())
+	for _, home := range backend.Homes() {
+		fmt.Printf("[OK] Source: %s\n", home)
 	}
 
 	if f := viper.ConfigFileUsed(); f != "" {
@@ -35,36 +36,50 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		warnings = append(warnings, "No config file found (using defaults)")
 	}
 
-	projectsDir := config.ProjectsDir()
-	if _, err := os.Stat(projectsDir); os.IsNotExist(err) {
-		errors = append(errors, fmt.Sprintf("Projects directory not found: %s", projectsDir))
+	projects, err := backend.DiscoverProjects()
+	if err != nil {
+		errors = append(errors, fmt.Sprintf("Failed to scan projects: %v", err))
 	} else {
-		projects, err := parser.DiscoverProjects(projectsDir)
-		if err != nil {
-			errors = append(errors, fmt.Sprintf("Failed to scan projects: %v", err))
-		} else {
-			totalSessions := 0
-			emptyProjects := 0
-			for _, p := range projects {
-				totalSessions += len(p.Sessions)
-				if len(p.Sessions) == 0 {
-					emptyProjects++
-				}
-			}
-			fmt.Printf("[OK] Projects: %d found (%d sessions)\n", len(projects), totalSessions)
-			if emptyProjects > 0 {
-				warnings = append(warnings, fmt.Sprintf("%d projects have no sessions", emptyProjects))
-			}
+		totalSessions := 0
+		for _, p := range projects {
+			totalSessions += len(p.Sessions)
 		}
+		fmt.Printf("[OK] Projects: %d found (%d sessions)\n", len(projects), totalSessions)
 	}
 
-	if _, err := os.Stat(claudeHome + "/settings.json"); err == nil {
-		fmt.Println("[OK] Claude Code settings.json: found")
+	claudeHome := config.ClaudeHome()
+	if _, err := os.Stat(claudeHome); err == nil {
+		fmt.Printf("[OK] Claude Code home: %s\n", claudeHome)
+		if _, err := os.Stat(claudeHome + "/settings.json"); err == nil {
+			fmt.Println("[OK] Claude Code settings.json: found")
+		}
+	} else {
+		warnings = append(warnings, fmt.Sprintf("Claude Code home not found: %s", claudeHome))
 	}
 
-	homeDir, _ := os.UserHomeDir()
-	if _, err := os.Stat(homeDir + "/.claude.json"); err == nil {
-		fmt.Println("[OK] Claude Code .claude.json: found")
+	codexHome := config.CodexHome()
+	if _, err := os.Stat(codexHome); err == nil {
+		fmt.Printf("[OK] Codex home: %s\n", codexHome)
+		if _, err := os.Stat(filepath.Join(codexHome, "config.toml")); err == nil {
+			fmt.Println("[OK] Codex config.toml: found")
+		}
+		if _, err := os.Stat(filepath.Join(codexHome, "config.json")); err == nil {
+			fmt.Println("[OK] Codex config.json: found")
+		}
+		if _, err := os.Stat(filepath.Join(codexHome, "history.jsonl")); err == nil {
+			fmt.Println("[OK] Codex history.jsonl: found")
+		}
+		if info, err := os.Stat(filepath.Join(codexHome, "sessions")); err == nil && info.IsDir() {
+			fmt.Println("[OK] Codex sessions/: found")
+		}
+		if _, err := os.Stat(filepath.Join(codexHome, "session_index.jsonl")); err == nil {
+			fmt.Println("[OK] Codex session_index.jsonl: found")
+		}
+		if matches, err := filepath.Glob(filepath.Join(codexHome, "state_*.sqlite")); err == nil && len(matches) > 0 {
+			fmt.Printf("[OK] Codex state DBs: %d found\n", len(matches))
+		}
+	} else {
+		warnings = append(warnings, fmt.Sprintf("Codex home not found: %s", codexHome))
 	}
 
 	fmt.Println()
@@ -74,7 +89,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, e := range errors {
-		fmt.Printf("✗ Error: %s\n", e)
+		fmt.Printf("x Error: %s\n", e)
 	}
 
 	if len(errors) > 0 {

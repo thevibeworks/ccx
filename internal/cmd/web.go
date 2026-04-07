@@ -9,13 +9,14 @@ import (
 
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/db"
+	"github.com/thevibeworks/ccx/internal/provider"
 	"github.com/thevibeworks/ccx/internal/web"
 )
 
 var webCmd = &cobra.Command{
 	Use:   "web",
 	Short: "Start local web server for session browsing",
-	Long: `Start ccx web UI - the best way to browse Claude Code sessions.
+	Long: `Start ccx web UI for browsing agent sessions.
 
 Features:
   - Project/session browser with global search
@@ -46,7 +47,7 @@ func init() {
 }
 
 func runWeb(cmd *cobra.Command, args []string) error {
-	projectsDir := config.ProjectsDir()
+	backend := provider.Default()
 	addr := fmt.Sprintf("%s:%d", webHost, webPort)
 	url := fmt.Sprintf("http://%s", addr)
 
@@ -58,7 +59,9 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	defer db.Close()
 
 	fmt.Printf("Starting ccx web server...\n")
-	fmt.Printf("Projects: %s\n", projectsDir)
+	for _, home := range backend.Homes() {
+		fmt.Printf("Source: %s\n", home)
+	}
 	fmt.Printf("Database: %s\n", dataDir)
 	fmt.Printf("URL: %s\n\n", url)
 
@@ -68,7 +71,7 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		}()
 	}
 
-	return web.Serve(addr, projectsDir)
+	return web.Serve(addr, backend)
 }
 
 func openBrowser(url string) {

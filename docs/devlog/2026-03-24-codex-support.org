@@ -1,0 +1,325 @@
+* [2026-03-24] Dev Log: Codex Support and Multi-Provider ccx        :STRATEGY:ARCH:
+
+** Context
+We explored whether =ccx= can stop being "Claude Code only" and grow into a session explorer for coding-agent tools, starting with Claude Code and Codex.
+
+The current codebase is not neutral yet. It is built around Claude Code's on-disk model and transcript semantics.
+
+** Why
+Rebranding first would be fake. We need to know whether Codex sessions/config/transcripts can fit the same product without turning the codebase into a pile of provider-specific if/else branches.
+
+** What
+- Confirmed current =ccx= implementation is Claude-specific.
+- Mapped Codex session persistence, config layering, transcript files, indexes, and SQLite state.
+- Identified the architectural split required to support both providers in one codebase.
+
+** Findings
+*** Current ccx assumptions are Claude-shaped
+- =internal/config/config.go= resolves only =CLAUDE_CODE_HOME= and =~/.claude=, then hardcodes =projects/= as the discovery root.
+- =internal/parser/types.go= bakes Claude JSONL fields into the core model: =parentUuid=, =logicalParentUuid=, =isCompactSummary=, =isSidechain=, =agentId=, plus Claude message payload rules.
+- =internal/parser/session.go= rebuilds a message tree from parent UUIDs, skips =compact_boundary= system records, and treats summaries as part of the session file.
+- =internal/parser/project.go= assumes Claude project directories and ignores =agent-*.jsonl=.
+
+This means current parser/config/domain code is not just "Claude backend code". It is the main model of the app.
+
+*** Codex storage is split across multiple artifacts
+| Artifact | Typical location | Purpose | Notes for ccx |
+|----------+------------------+---------+---------------|
+| config.toml | =~/.codex/config.toml= | User config | Main config file |
+| rollouts | =~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<thread>.jsonl= | Primary per-thread transcript | Source of truth for replay |
+| archived rollouts | =~/.codex/archived_sessions/...= | Archived thread transcripts | Same format as live rollouts |
+| session index | =~/.codex/session_index.jsonl= | Thread name lookup | Append-only, newest entry wins |
+| composer history | =~/.codex/history.jsonl= | Cross-session prompt recall | Not the full transcript |
+| state db | =state_*.sqlite= under =sqlite_home= | Thread metadata and lineage | Used for fast listing/filtering |
+| logs db | =logs_*.sqlite= under =sqlite_home= | Operational/tracing logs | Not user transcript history |
+
+Codex therefore has at least three different "history" concepts:
+1. Per-thread rollout transcript
+2. Global composer history
+3. Indexed metadata and logs in SQLite
+
+We must not collapse those into one abstraction.
+
+*** Codex home, config, and layering
+- Codex home defaults to =~/.codex= and can be overridden by =CODEX_HOME=.
+- Main config file is =config.toml= under =CODEX_HOME=.
+- Runtime config contains =codex_home=, =sqlite_home=, =log_dir=, =history=, and =ephemeral=.
+- =sqlite_home= resolves from config, then =CODEX_SQLITE_HOME=, then falls back to =CODEX_HOME=.
+- =log_dir= defaults to =$CODEX_HOME/log=.
+- Config layering precedence is:
+  1. MDM managed prefs
+  2. system managed config
+  3. session or CLI overrides
+  4. user config
+- Project docs are based on hierarchical =AGENTS.md= discovery from repo root to cwd, with =AGENTS.override.md= as local override.
+
+*** Codex transcript model
+Codex does not store a Claude-style parent-linked message tree.
+
+Its primary transcript artifact is a rollout JSONL stream. Persisted rollout items are:
+- =SessionMeta=
+- =TurnContext=
+- =Compacted=
+- selected =ResponseItem=
+- selected =EventMsg=
+
+The key rollout payloads are:
+- =SessionMeta=: thread id, optional fork parent, cwd, source, CLI version, agent nickname/role/path, model provider, base instructions, dynamic tools, memory mode
+- =TurnContext=: turn id, cwd, date/timezone, approval policy, sandbox policy, network rules, model, personality, collaboration mode, realtime flag, reasoning effort/summary, user/developer instructions, truncation policy
+- =UserMessageEvent=: text, remote image URLs, local image paths, text spans/elements
+
+Persisted events differ by mode:
+- Limited mode keeps core replay history such as user messages, agent messages, reasoning, token counts, compaction, turn start/complete, review mode, rollback, and turn abort.
+- Extended mode adds tool and runtime end-events such as web search end, exec end, patch end, MCP end, dynamic tool calls, collab end-events, errors, and guardian assessment.
+- Many transient events are intentionally not persisted.
+
+So the rollout is a filtered event stream, not a dump of every runtime event.
+
+*** Codex turn reconstruction
+Codex reconstructs UI-facing turns from rollout items using =ThreadHistoryBuilder=.
+
+Important detail: Codex stores a linear event stream, then derives turns later. That derived history is a first-class public abstraction in the app-server protocol.
+
+This matters for =ccx=:
+- We cannot reuse Claude's tree renderer as-is.
+- We either port Codex's turn reducer to Go or implement an equivalent normalized replay step.
+
+*** Codex resume, fork, and session start
+- Resume loads rollout items from disk into =InitialHistory::Resumed=.
+- Fork builds =InitialHistory::Forked= from an existing thread snapshot.
+- New threads get a fresh thread id and a precomputed rollout path.
+- Resumed threads reopen the existing rollout file in append mode.
+- New rollout files are precomputed before materialization; actual file creation can be deferred until persistence.
+- Session start always emits =SessionConfigured= first.
+- For resumed sessions, =SessionConfigured= includes converted initial messages so UIs can render immediately.
+
+*** Codex lineage and subagents
+Claude Code and Codex handle "agents" differently.
+
+Claude Code:
+- sidechains are embedded in the same session graph via =parentUuid= and =isSidechain=
+- agent identity also appears in message records
+
+Codex:
+- spawned agents are separate threads
+- lineage is tracked outside the transcript
+- =SessionSource::SubAgent(ThreadSpawn { parent_thread_id, depth, agent_path, agent_nickname, agent_role })= carries source info
+- SQLite =thread_spawn_edges= stores parent-child thread relationships
+
+That is a hard semantic mismatch:
+- Claude nests sidechains inside one transcript tree
+- Codex links separate transcripts into a lineage graph
+
+*** Codex indexes and metadata
+Codex thread listing is not "scan transcript files and guess". It is hybrid:
+- rollout files remain transcript truth
+- SQLite stores canonical thread metadata for fast listing/filtering
+- listing code is filesystem-first with DB repair/fallback behavior
+- stale rollout paths returned by SQLite are dropped and repaired
+
+Metadata extracted into SQLite includes:
+- thread id
+- rollout path
+- created and updated timestamps
+- source
+- model provider
+- cwd
+- title and first user message
+- sandbox policy
+- approval mode
+- tokens used
+- archive flags and timestamps
+- git SHA/branch/origin
+- CLI version
+- agent nickname/role/path
+- model and reasoning effort
+
+*** Codex session naming and global history
+- =session_index.jsonl= is append-only and maps thread ids to thread names; newest entry wins.
+- =history.jsonl= is a separate append-only global prompt history file.
+- =history.jsonl= uses file locking, owner-only permissions on Unix, and optional size trimming via =history.max_bytes=.
+- That history file stores text recall entries, not full turn transcripts.
+
+*** Hooks and transcript path
+Codex exposes =transcript_path= to hooks.
+
+In practice that path is the materialized rollout path:
+- session-start hooks receive it
+- pre-tool hooks receive it
+- user-prompt-submit hooks receive it
+
+So if we want to surface Codex hook context in =ccx= later, the canonical file path is still the rollout path, not the SQLite DB.
+
+** Claude Code vs Codex
+| Aspect | Claude Code | Codex | Impact on ccx |
+|--------+-------------+-------+---------------|
+| Home root | =~/.claude= | =~/.codex= | Provider-specific discovery |
+| Main transcript | per-project JSONL session file | per-thread rollout JSONL | Different loaders |
+| Transcript shape | tree via parent UUID | linear event stream | Need topology-aware model |
+| Agents/subsessions | sidechains inside same transcript | spawned child threads in separate files | Need lineage abstraction |
+| Listing/index | project dir scan | rollout scan + SQLite metadata + session index | Need backend-specific listing |
+| Archive | implicit by files under project dirs | explicit archived_sessions plus DB flags | Need archive support per provider |
+| Global history | not part of current ccx model | separate history.jsonl | Must keep auxiliary artifacts separate |
+| Config | simple home path for viewer | layered config with sqlite/log/history/ephemeral | Provider-specific config reader |
+
+** Decision
+- Do not bolt Codex support into =internal/parser= with more conditionals.
+- Do not pretend Codex rollouts are just another Claude session file.
+- Do introduce provider backends behind a normalized domain model.
+- Do keep transcript, lineage, and auxiliary artifacts as separate concerns.
+- Do delay public rebrand until the provider abstraction exists and the UI stops saying "Claude Code" everywhere.
+
+** Proposed Architecture
+*** 1. Extract provider-neutral domain types
+New package direction:
+- =internal/provider=
+- =internal/domain= or =internal/model=
+
+Provider-neutral session model should include:
+- provider id
+- session/thread id
+- transcript path
+- archived flag
+- start/end timestamps
+- cwd
+- git info
+- source
+- model/provider/reasoning metadata
+- agent metadata
+- summary or preview
+- transcript topology
+- lineage edges
+
+Do not force a single topology.
+
+Use an explicit transcript mode:
+- =tree= for Claude Code
+- =turns= for Codex
+
+*** 2. Treat lineage separately from transcript rendering
+We need a generic lineage graph:
+- parent session/thread id
+- child session/thread ids
+- edge kind
+- provider metadata for the edge
+
+Why:
+- Claude sidechains are transcript-internal branches
+- Codex spawned agents are thread-to-thread edges
+
+If we mix those into one "message tree" type, we will produce nonsense.
+
+*** 3. Backend interface
+Suggested shape:
+
+#+begin_src go
+type Provider interface {
+    ID() string
+    Discover() ([]Workspace, error)
+    ListSessions(ListOptions) ([]SessionRef, error)
+    LoadSession(id string) (*Session, error)
+    WatchSession(id string) (<-chan Event, error)
+    ReadAux(id string) (*AuxArtifacts, error)
+}
+#+end_src
+
+Backend responsibilities:
+- Claude backend: existing project/session parsing, tree reconstruction, live tail
+- Codex backend: config/home resolution, rollout discovery, rollout parsing, SQLite metadata lookup, session index lookup, lineage lookup
+
+*** 4. Codex backend responsibilities in detail
+- Resolve =CODEX_HOME= and =config.toml=
+- Resolve =sqlite_home= and =log_dir=
+- List live and archived threads
+- Read =session_index.jsonl= for thread names
+- Read =history.jsonl= as auxiliary global history only
+- Read rollout JSONL files
+- Reconstruct turns from rollout items
+- Read SQLite metadata when present
+- Read =thread_spawn_edges= for subagent lineage
+
+*** 5. UI changes
+Current UI language is Claude-specific. We should move to neutral nouns:
+- "Projects" -> "Workspaces" or "Scopes"
+- "Conversation" -> "Transcript"
+- "Claude Home" -> provider-specific source config
+
+Provider-specific labels can still exist inside session detail panels.
+
+*** 6. Export model
+Exports should operate on normalized transcript blocks, not provider-native raw lines.
+
+That lets us keep:
+- HTML export
+- Markdown export
+- Org export
+
+without forking the renderer for every provider.
+
+** First Implementation Plan
+1. Extract current Claude parser/config code behind a =provider/claude= backend without changing behavior.
+2. Introduce provider-neutral session/transcript/lineage interfaces.
+3. Update CLI and web handlers to talk only to the provider-neutral layer.
+4. Add =provider/codex= discovery and thread listing.
+5. Port Codex rollout -> turns reduction logic.
+6. Add Codex lineage view from SQLite =thread_spawn_edges=.
+7. Only then touch branding and README copy.
+
+** Risks
+| Risk | Why it matters | Mitigation |
+|------+----------------+------------|
+| Overfitting the neutral model to Claude | Current code already does this | Extract Claude into backend first |
+| Overfitting the neutral model to Codex turns | Would lose Claude tree semantics | Keep explicit transcript topology |
+| SQLite schema drift in Codex | Metadata and lineage depend on migrations | Treat SQLite as optional accelerator, rollout as transcript truth |
+| Reimplementing Codex replay incorrectly | Turn rendering would diverge from real Codex behavior | Port the builder logic closely and test against fixture rollouts |
+| Rebranding too early | Product promise would exceed implementation | Rebrand after provider abstraction lands |
+
+** WIP
+- [ ] Extract provider-neutral domain types
+- [ ] Move current Claude logic into =provider/claude=
+- [ ] Add Codex home/config discovery
+- [ ] Add Codex rollout listing and loading
+- [ ] Add Codex turn reconstruction
+- [ ] Add Codex lineage from SQLite
+- [ ] Replace Claude-specific UI copy with provider-neutral copy
+
+** Key Source Anchors
+- Current Claude-specific ccx assumptions:
+  - =worktree/ccx/internal/config/config.go=
+  - =worktree/ccx/internal/parser/types.go=
+  - =worktree/ccx/internal/parser/session.go=
+  - =worktree/ccx/internal/parser/project.go=
+- Codex config and storage:
+  - =reference/openai-codex/codex-rs/core/src/config/mod.rs=
+  - =reference/openai-codex/codex-rs/core/src/config/types.rs=
+  - =reference/openai-codex/codex-rs/core/src/config_loader/README.md=
+  - =reference/openai-codex/codex-rs/core/src/project_doc.rs=
+- Codex transcripts and replay:
+  - =reference/openai-codex/codex-rs/rollout/src/recorder.rs=
+  - =reference/openai-codex/codex-rs/rollout/src/policy.rs=
+  - =reference/openai-codex/codex-rs/protocol/src/protocol.rs=
+  - =reference/openai-codex/codex-rs/app-server-protocol/src/protocol/thread_history.rs=
+- Codex metadata and lineage:
+  - =reference/openai-codex/codex-rs/state/src/extract.rs=
+  - =reference/openai-codex/codex-rs/state/src/model/thread_metadata.rs=
+  - =reference/openai-codex/codex-rs/state/migrations/0001_threads.sql=
+  - =reference/openai-codex/codex-rs/state/migrations/0021_thread_spawn_edges.sql=
+- Codex auxiliary history and hooks:
+  - =reference/openai-codex/codex-rs/core/src/message_history.rs=
+  - =reference/openai-codex/codex-rs/core/src/hook_runtime.rs=
+  - =reference/openai-codex/codex-rs/hooks/src/events/session_start.rs=
+
+** Notes
+*** Bottom line
+Yes, one =ccx= project can support both Claude Code and Codex.
+
+No, the current app structure cannot do it cleanly without a provider split first.
+
+The main mistake to avoid is assuming "session support" means "another parser". For Codex it means:
+- rollout transcript reader
+- turn reconstruction
+- metadata/index reader
+- lineage reader
+- config/home resolver
+
+That is a backend, not a file parser.

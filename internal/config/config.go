@@ -18,6 +18,17 @@ func DefaultClaudeHome() string {
 	return filepath.Join(home, ".claude")
 }
 
+func DefaultCodexHome() string {
+	if env := os.Getenv("CODEX_HOME"); env != "" {
+		return env
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".codex")
+}
+
 func ClaudeHome() string {
 	if v := viper.GetString("claude_code_home"); v != "" {
 		return expandPath(v)
@@ -25,8 +36,11 @@ func ClaudeHome() string {
 	return DefaultClaudeHome()
 }
 
-func ProjectsDir() string {
-	return filepath.Join(ClaudeHome(), "projects")
+func CodexHome() string {
+	if v := viper.GetString("codex_home"); v != "" {
+		return expandPath(v)
+	}
+	return DefaultCodexHome()
 }
 
 func Theme() string {
@@ -50,7 +64,6 @@ func DefaultExportFormat() string {
 }
 
 func DataDir() string {
-	// XDG_DATA_HOME, or fallback to ~/.local/share
 	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
 		return filepath.Join(xdg, "ccx")
 	}

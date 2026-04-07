@@ -1,25 +1,37 @@
 ---
 name: ccx
 description: >
-  Session viewer for Claude Code. Use this skill when working with Claude Code
-  session files, browsing conversation history, exporting transcripts, or
-  analyzing AI interactions. Triggers on: session management, conversation
-  export, transcript viewing, Claude Code debugging.
+  Session viewer for Claude Code and Codex. Use this skill when working with
+  agent session files, browsing conversation history, exporting transcripts,
+  inspecting memory/instruction files, or analyzing AI interactions.
+  Triggers on: session management, conversation export, transcript viewing,
+  memory inspection, Claude Code debugging, Codex session viewing.
 ---
 
-# ccx - Session Viewer for Claude Code
+# ccx - Session Viewer for Agent CLIs
+
+Supports Claude Code (~/.claude) and OpenAI Codex (~/.codex) sessions.
 
 ```
 ccx
 ├── projects                      # List all projects
-├── sessions [project]            # List sessions (interactive picker)
+├── sessions [project]            # List sessions
+│   └── --provider cc|cx          # Filter by provider
+│   └── --search QUERY            # Search summaries
+│   └── --after DATE              # After date (YYYY-MM-DD)
+│   └── --sort time|messages      # Sort order
 ├── view [session]                # View session in terminal
+│   └── --brief                   # Conversation only
 ├── export [session]              # Export session
 │   └── --format html|md|org|json
+│   └── --brief                   # Conversation only
+├── search [query]                # Search across sessions
+│   └── --provider cc|cx          # Filter by provider
+│   └── --after / --before DATE   # Date range
+│   └── --model MODEL             # Filter by model
 ├── web                           # Start web UI
 │   └── --port --host --no-open
-├── search [query]                # Search across sessions
-├── config                        # Show config
+├── config                        # Show / init config
 └── doctor                        # Check setup
 ```
 
@@ -27,76 +39,109 @@ ccx
 
 ```bash
 ccx projects              # List all projects
-ccx sessions              # Interactive session picker
-ccx view                  # View session (interactive)
+ccx sessions              # List recent sessions
+ccx sessions -p cx        # Codex sessions only
+ccx view abc123           # View by session ID (prefix match)
 ccx export -f html        # Export to HTML
 ccx web                   # Start web UI at localhost:8080
 ```
 
-## Session Viewing
+## Multi-Provider
 
 ```bash
-ccx view abc123           # View by session ID
-ccx view                  # Interactive picker
-ccx view --project foo    # Filter by project
+ccx sessions --provider=cc        # Claude Code only
+ccx sessions --provider=cx        # Codex only
+ccx search --provider=cx "query"  # Search codex sessions
 ```
 
-## Export Formats
+Override provider homes:
+```bash
+ccx --claude-home /path view
+ccx --codex-home /path view
+```
+
+## Export
 
 ```bash
-ccx export -f html        # Rich HTML with syntax highlighting
-ccx export -f md          # Markdown
-ccx export -f org         # Org-mode
-ccx export -f json        # Raw JSON
-ccx export -o out.html    # Output to file
+ccx export -f html              # Rich HTML
+ccx export -f md                # Markdown
+ccx export -f org               # Org-mode
+ccx export -f json              # Raw JSON
+ccx export -f html --brief      # Conversation only (no tool details)
 ```
 
 ## Web UI
 
 ```bash
-ccx web                   # Start on localhost:8080
+ccx web                   # localhost:8080
 ccx web -p 3000           # Custom port
 ccx web --no-open         # Don't open browser
 ```
 
 Features:
-- Project/session browser with tree navigation
+- Project/session browser with multi-provider merge
+- Provider filter dropdown (All / Claude Code / Codex)
+- Memory file inspector (per-project, expandable with fmt/raw/copy)
 - Collapsible thinking/tool blocks
-- Syntax highlighting
+- In-session search with filter chips
+- Brief export (conversation-only)
 - Dark/light theme toggle
-- Keyboard navigation (j/k, /, gg/G)
-- Global search
-- Session stats (tokens, tool usage)
+- Keyboard navigation (j/k, /, gg/G, d for theme)
+- Global search (sessions + memory files)
+- Session stats (tokens, messages, tools)
+- Settings page (provider status, config inspection)
 
 ## Search
 
 ```bash
-ccx search "error handling"   # Search across all sessions
-ccx search --project foo bar  # Search within project
+ccx search "error handling"              # All providers
+ccx search --provider=cc "auth bug"      # Claude Code only
+ccx search --after=2026-03-01 "deploy"   # Date filtered
 ```
+
+Web search supports provider prefixes: `cc: auth bug`, `cx: codex query`
+
+## Memory Inspection
+
+Web UI shows memory files on the project page:
+- Global instructions (CLAUDE.md, AGENTS.md, instructions.md)
+- Per-project memory (MEMORY.md + topic files)
+- Expandable with formatted/raw view + copy
+
+Cross-project memory overview at `/memory` page.
 
 ## Configuration
 
+```yaml
+# ~/.config/ccx/config.yaml
+theme: dark
+show_thinking: collapsed
+default_format: html
+port: 8080
+providers:
+  claude-code:
+    enabled: true
+    accent_color: "#da7756"
+  codex:
+    enabled: true
+    accent_color: "#3b82f6"
+```
+
 Data locations:
-- Sessions: `~/.claude/projects/` (read-only)
+- Claude Code: `~/.claude/projects/` (read-only)
+- Codex: `~/.codex/sessions/` (read-only)
 - Config: `~/.config/ccx/config.yaml`
-- Data: `~/.local/share/ccx/` (stars, cache)
+- Data: `~/.local/share/ccx/` (stars)
 
-Override Claude Code home:
-```bash
-ccx --claude-home /path/to/claude view
-CCX_CLAUDE_HOME=/path/to/claude ccx view
-```
-
-## Pitfalls
+## Install
 
 ```bash
-# Session IDs are UUIDs, not slugs
-ccx view abc123-def456    # RIGHT (UUID)
-ccx view my-session       # WRONG (slug not supported in CLI)
-
-# Web UI shows both ID and slug
-ccx web                   # Use web for human-friendly names
+curl -fsSL https://raw.githubusercontent.com/thevibeworks/ccx/main/install.sh | bash
 ```
 
-ccx treats Claude Code data as read-only. It never modifies session files.
+Or via Go:
+```bash
+go install github.com/thevibeworks/ccx/cmd/ccx@latest
+```
+
+ccx treats all agent session data as read-only. It never modifies session files.

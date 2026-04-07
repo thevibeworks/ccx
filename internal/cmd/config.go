@@ -22,6 +22,7 @@ var configShowCmd = &cobra.Command{
 	Short: "Show current configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Printf("claude_code_home: %s\n", config.ClaudeHome())
+		fmt.Printf("codex_home: %s\n", config.CodexHome())
 		fmt.Printf("theme: %s\n", config.Theme())
 		fmt.Printf("rendering.syntax_highlight: %v\n", config.SyntaxHighlight())
 		fmt.Printf("rendering.show_thinking: %s\n", config.ShowThinking())
@@ -75,6 +76,7 @@ var configInitCmd = &cobra.Command{
 
 		content := `# ccx configuration
 # claude_code_home: ~/.claude
+# codex_home: ~/.codex
 
 theme: dark              # dark | light | auto
 

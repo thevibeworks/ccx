@@ -115,7 +115,6 @@ No templates. Just tell us what you did and why.
 ### High Priority
 - Full-text search within session content
 - Session comparison/diff view
-- Cost estimation display
 - More export formats (PDF, EPUB)
 
 ### Nice to Have

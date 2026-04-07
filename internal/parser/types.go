@@ -22,6 +22,7 @@ type Project struct {
 	Name         string
 	EncodedName  string
 	Path         string
+	Provider     string // "claude-code", "codex", or "" for merged
 	Sessions     []*Session
 	LastModified time.Time
 }
@@ -30,6 +31,7 @@ type Session struct {
 	ID           string
 	FilePath     string
 	ProjectName  string
+	Provider     string // "claude-code" or "codex"
 	Summary      string
 	StartTime    time.Time
 	EndTime      time.Time
@@ -37,12 +39,19 @@ type Session struct {
 	Stats        SessionStats
 	Branches     []Branch // For resume view tree structure
 
-	// Metadata from session messages
-	Slug      string // Human-readable name like "melodic-cooking-piglet"
-	Version   string // Claude Code version used
-	GitBranch string // Git branch at session start
-	CWD       string // Working directory
+	Slug      string
+	Version   string
+	GitBranch string
+	CWD       string
+	Model     string // Primary model used (from first assistant message)
 }
+
+func (s *Session) GetProvider() string     { return s.Provider }
+func (s *Session) GetStartTime() time.Time { return s.StartTime }
+func (s *Session) GetEndTime() time.Time   { return s.EndTime }
+func (s *Session) GetSummary() string      { return s.Summary }
+func (s *Session) GetModel() string        { return s.Model }
+func (s *Session) GetMessageCount() int    { return s.Stats.MessageCount }
 
 // Branch represents a conversation branch (for resume tree view)
 type Branch struct {
@@ -87,7 +96,8 @@ type Message struct {
 	Model       string // Model ID (e.g., claude-sonnet-4-5-20250929)
 	Subtype     string // For system messages: compact_boundary, local_command
 
-	raw rawMessage
+	RawJSON string // Original JSONL line verbatim
+	raw     rawMessage
 }
 
 type ContentBlock struct {
