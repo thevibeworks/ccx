@@ -13,14 +13,15 @@ import (
 var (
 	cfgFile    string
 	claudeHome string
+	codexHome  string
 	version    string
 	buildTime  string
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "ccx",
-	Short: "ccx - session viewer for Claude Code",
-	Long: `ccx - Browse, search, and export your Claude Code sessions.
+	Short: "ccx - session viewer for coding agents",
+	Long: `ccx - Browse, search, and export coding-agent sessions.
 
 Start the web UI for the best experience:
   ccx web                   Launch browser UI at localhost:8080
@@ -37,6 +38,8 @@ CLI commands:
   ccx sessions              List sessions
   ccx view                  View session in terminal
   ccx export -f html        Export to HTML/Markdown/Org
+
+Supports Claude Code (~/.claude) and Codex (~/.codex) sessions.
 
 https://github.com/thevibeworks/ccx`,
 	SilenceUsage:  true,
@@ -58,8 +61,10 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: $XDG_CONFIG_HOME/ccx/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&claudeHome, "claude-home", "", "override CLAUDE_CODE_HOME")
+	rootCmd.PersistentFlags().StringVar(&codexHome, "codex-home", "", "override CODEX_HOME")
 
 	_ = viper.BindPFlag("claude_code_home", rootCmd.PersistentFlags().Lookup("claude-home"))
+	_ = viper.BindPFlag("codex_home", rootCmd.PersistentFlags().Lookup("codex-home"))
 
 	rootCmd.AddCommand(projectsCmd)
 	rootCmd.AddCommand(sessionsCmd)
@@ -95,6 +100,7 @@ func initConfig() {
 	viper.AutomaticEnv()
 
 	viper.SetDefault("claude_code_home", config.DefaultClaudeHome())
+	viper.SetDefault("codex_home", config.DefaultCodexHome())
 	viper.SetDefault("theme", "dark")
 	viper.SetDefault("rendering.syntax_highlight", true)
 	viper.SetDefault("rendering.show_thinking", "collapsed")

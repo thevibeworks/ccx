@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"text/tabwriter"
 	"time"
 
@@ -11,13 +12,14 @@ import (
 
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/provider"
 )
 
 var sessionsCmd = &cobra.Command{
 	Use:     "sessions [project]",
 	Aliases: []string{"session", "sess", "s"},
 	Short:   "List sessions",
-	Long: `List Claude Code sessions.
+	Long: `List sessions from the selected provider.
 
 If PROJECT is specified, show sessions for that project only.
 Otherwise, show recent sessions across all projects.`,
@@ -26,26 +28,52 @@ Otherwise, show recent sessions across all projects.`,
 }
 
 var (
-	sessionsSort  string
-	sessionsLimit int
-	sessionsJSON  bool
+	sessionsSort     string
+	sessionsLimit    int
+	sessionsJSON     bool
+	sessionsProvider string
+	sessionsSearch   string
+	sessionsAfter    string
+	sessionsBefore   string
+	sessionsModel    string
 )
 
 func init() {
 	sessionsCmd.Flags().StringVar(&sessionsSort, "sort", "time", "sort by: time, messages")
 	sessionsCmd.Flags().IntVar(&sessionsLimit, "limit", 20, "limit number of sessions (0 = no limit)")
 	sessionsCmd.Flags().BoolVar(&sessionsJSON, "json", false, "output as JSON")
+	sessionsCmd.Flags().StringVarP(&sessionsProvider, "provider", "p", "", "filter by provider: cc, cx, all")
+	sessionsCmd.Flags().StringVarP(&sessionsSearch, "search", "s", "", "search in session summaries")
+	sessionsCmd.Flags().StringVar(&sessionsAfter, "after", "", "sessions after date (YYYY-MM-DD)")
+	sessionsCmd.Flags().StringVar(&sessionsBefore, "before", "", "sessions before date (YYYY-MM-DD)")
+	sessionsCmd.Flags().StringVar(&sessionsModel, "model", "", "filter by model name substring")
 }
 
 func runSessions(cmd *cobra.Command, args []string) error {
-	projectsDir := config.ProjectsDir()
+	backend := provider.Default()
+
+	after, err := config.ParseDate(sessionsAfter)
+	if err != nil {
+		return fmt.Errorf("invalid --after date: %w", err)
+	}
+	before, err := config.ParseBeforeDate(sessionsBefore)
+	if err != nil {
+		return fmt.Errorf("invalid --before date: %w", err)
+	}
+	filter := config.SessionFilter{
+		Provider: config.NormalizeProvider(sessionsProvider),
+		After:    after,
+		Before:   before,
+		Query:    sessionsSearch,
+		Model:    sessionsModel,
+	}
 
 	var sessions []*parser.Session
 	var projectName string
 
 	if len(args) > 0 {
 		projectName = args[0]
-		project, err := parser.FindProject(projectsDir, projectName)
+		project, err := backend.FindProject(projectName)
 		if err != nil {
 			return fmt.Errorf("failed to find project: %w", err)
 		}
@@ -54,7 +82,7 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		}
 		sessions = project.Sessions
 	} else {
-		projects, err := parser.DiscoverProjects(projectsDir)
+		projects, err := backend.DiscoverProjects()
 		if err != nil {
 			return fmt.Errorf("failed to discover projects: %w", err)
 		}
@@ -66,9 +94,30 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if !filter.IsEmpty() {
+		var filtered []*parser.Session
+		for _, s := range sessions {
+			if filter.Match(s) {
+				filtered = append(filtered, s)
+			}
+		}
+		sessions = filtered
+	}
+
 	if len(sessions) == 0 {
 		fmt.Println("No sessions found.")
 		return nil
+	}
+
+	switch sessionsSort {
+	case "messages":
+		sort.Slice(sessions, func(i, j int) bool {
+			return sessions[i].Stats.MessageCount > sessions[j].Stats.MessageCount
+		})
+	default: // "time"
+		sort.Slice(sessions, func(i, j int) bool {
+			return sessions[i].EndTime.After(sessions[j].EndTime)
+		})
 	}
 
 	if sessionsLimit > 0 && len(sessions) > sessionsLimit {
@@ -82,13 +131,24 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	return printSessionsTable(sessions, projectName == "")
 }
 
+func providerTag(p string) string {
+	switch p {
+	case "claude-code":
+		return "[CC]"
+	case "codex":
+		return "[CX]"
+	default:
+		return ""
+	}
+}
+
 func printSessionsTable(sessions []*parser.Session, showProject bool) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 
 	if showProject {
-		fmt.Fprintln(w, "PROJECT\tSESSION\tSTARTED\tSUMMARY")
+		fmt.Fprintln(w, "SRC\tPROJECT\tSESSION\tSTARTED\tSUMMARY")
 	} else {
-		fmt.Fprintln(w, "SESSION\tSTARTED\tSUMMARY")
+		fmt.Fprintln(w, "SRC\tSESSION\tSTARTED\tSUMMARY")
 	}
 
 	for _, s := range sessions {
@@ -103,15 +163,16 @@ func printSessionsTable(sessions []*parser.Session, showProject bool) error {
 		}
 
 		age := formatAge(s.StartTime)
+		tag := providerTag(s.Provider)
 
 		if showProject {
 			proj := s.ProjectName
 			if len(proj) > 20 {
 				proj = proj[:17] + "..."
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", proj, id, age, summary)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", tag, proj, id, age, summary)
 		} else {
-			fmt.Fprintf(w, "%s\t%s\t%s\n", id, age, summary)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", tag, id, age, summary)
 		}
 	}
 
@@ -120,6 +181,7 @@ func printSessionsTable(sessions []*parser.Session, showProject bool) error {
 
 type sessionJSON struct {
 	ID        string `json:"id"`
+	Provider  string `json:"provider"`
 	Project   string `json:"project"`
 	Summary   string `json:"summary"`
 	StartTime string `json:"start_time"`
@@ -130,6 +192,7 @@ func printSessionsJSON(sessions []*parser.Session) error {
 	for i, s := range sessions {
 		items[i] = sessionJSON{
 			ID:        s.ID,
+			Provider:  s.Provider,
 			Project:   s.ProjectName,
 			Summary:   s.Summary,
 			StartTime: s.StartTime.Format(time.RFC3339),

@@ -97,6 +97,7 @@ func discoverSessions(projectPath string) ([]*Session, error) {
 			Version:     meta.Version,
 			GitBranch:   meta.GitBranch,
 			CWD:         meta.CWD,
+			Model:       meta.Model,
 		}
 		sessions = append(sessions, session)
 	}

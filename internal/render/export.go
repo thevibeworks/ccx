@@ -12,10 +12,14 @@ type ExportOptions struct {
 	Theme           string
 	IncludeThinking bool
 	IncludeAgents   bool
+	Brief           bool
 	TemplatePath    string
 }
 
 func Export(session *parser.Session, opts ExportOptions) (string, error) {
+	if opts.Brief {
+		session = BriefSession(session)
+	}
 	switch strings.ToLower(opts.Format) {
 	case "html":
 		return exportHTML(session, opts)

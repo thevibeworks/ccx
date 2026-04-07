@@ -11,13 +11,14 @@ import (
 
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/provider"
 	"github.com/thevibeworks/ccx/internal/render"
 )
 
 var viewCmd = &cobra.Command{
 	Use:   "view [session]",
 	Short: "View a session in terminal",
-	Long: `View a Claude Code session in the terminal.
+	Long: `View a session in the terminal.
 
 SESSION can be:
   - Full UUID: e38536a2-dbe6-442d-8b69-5bab525796ee
@@ -35,6 +36,7 @@ var (
 	viewShowThinking bool
 	viewShowAgents   bool
 	viewFlat         bool
+	viewBrief    bool
 )
 
 func init() {
@@ -42,23 +44,24 @@ func init() {
 	viewCmd.Flags().BoolVar(&viewShowThinking, "show-thinking", false, "show thinking blocks expanded")
 	viewCmd.Flags().BoolVar(&viewShowAgents, "show-agents", false, "show agent sidechains")
 	viewCmd.Flags().BoolVar(&viewFlat, "flat", false, "disable tree rendering")
+	viewCmd.Flags().BoolVarP(&viewBrief, "brief", "b", false, "conversation only: human input, agent responses, compactions")
 }
 
 func runView(cmd *cobra.Command, args []string) error {
-	projectsDir := config.ProjectsDir()
+	backend := provider.Default()
 
 	var session *parser.Session
 	var err error
 
 	if len(args) == 0 {
-		session, err = selectSession(projectsDir)
+		session, err = selectSession(backend)
 	} else {
 		sessionArg := args[0]
 		projectName, sessionID := parseSessionArg(sessionArg)
 		if viewProject != "" {
 			projectName = viewProject
 		}
-		session, err = parser.FindSession(projectsDir, projectName, sessionID)
+		session, err = backend.FindSession(projectName, sessionID)
 	}
 
 	if err != nil {
@@ -68,9 +71,13 @@ func runView(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("session not found")
 	}
 
-	fullSession, err := parser.ParseSession(session.FilePath)
+	fullSession, err := backend.ParseSession(session.FilePath)
 	if err != nil {
 		return fmt.Errorf("failed to parse session: %w", err)
+	}
+
+	if viewBrief {
+		fullSession = render.BriefSession(fullSession)
 	}
 
 	opts := render.TerminalOptions{
@@ -91,8 +98,8 @@ func parseSessionArg(arg string) (project, session string) {
 	return "", arg
 }
 
-func selectSession(projectsDir string) (*parser.Session, error) {
-	projects, err := parser.DiscoverProjects(projectsDir)
+func selectSession(backend provider.Backend) (*parser.Session, error) {
+	projects, err := backend.DiscoverProjects()
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +127,8 @@ func selectSession(projectsDir string) (*parser.Session, error) {
 		if len(summary) > 50 {
 			summary = summary[:47] + "..."
 		}
-		fmt.Printf("  %d. [%s] %s\n", i+1, s.ProjectName, summary)
+		tag := providerTag(s.Provider)
+		fmt.Printf("  %d. %s [%s] %s\n", i+1, tag, s.ProjectName, summary)
 	}
 
 	fmt.Printf("\nSelect session (1-%d): ", limit)

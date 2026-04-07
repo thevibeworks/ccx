@@ -1,0 +1,269 @@
+* [2026-04-02] Dev Log: Session Format Reference                   :reference:codex:claude:
+
+** Context
+
+Audited real session data in =~/.codex/sessions/= and =~/.claude/projects/=
+to document the exact formats ccx must handle. Three generations of Codex
+format exist plus the Claude Code JSONL format.
+
+** Claude Code JSONL Format
+
+Location: =~/.claude/projects/<encoded-path>/<uuid>.jsonl=
+Agent sidechains: =agent-<uuid>.jsonl= (same directory)
+
+One JSON object per line. Key record types determined by top-level =type= field:
+
+*** Record Types
+
+| type        | subtype           | Purpose                              |
+|-------------+-------------------+--------------------------------------|
+| user        |                   | User message or tool result           |
+| assistant   |                   | Assistant response                    |
+| system      | compact_boundary  | Compaction boundary (logical parent)  |
+| summary     |                   | Session summary with leafUuid         |
+| file-history-snapshot |         | File backup snapshot (skip)           |
+
+*** Key Fields on Messages
+
+| Field             | On          | Purpose                                   |
+|-------------------+-------------+-------------------------------------------|
+| uuid              | all         | CC-internal message ID (tree linkage)      |
+| parentUuid        | all         | Parent message UUID (tree structure)       |
+| message.id        | assistant   | Anthropic API message ID (msg_01...)       |
+| requestId         | assistant   | Anthropic API request ID (req_01...)       |
+| message.content   | all         | Content blocks array or string             |
+| message.model     | assistant   | Model ID (claude-opus-4-6, etc)           |
+| message.usage     | assistant   | Token usage from API response              |
+| isCompactSummary  | user        | Marks compacted context carrier            |
+| isSidechain       | user/asst   | Agent sidechain message                    |
+| isMeta            | user        | System instructions (CLAUDE.md, etc)       |
+| agentId           | sidechain   | Agent session identifier                   |
+| sourceToolAssistantUUID | user  | Links tool_result to requesting assistant  |
+| promptId          | user        | Groups messages in same user turn          |
+| toolUseResult     | user        | Structured result with agentId for Agent   |
+| slug              | first msg   | Human-readable session name                |
+| version           | first msg   | Claude Code CLI version                    |
+| gitBranch         | first msg   | Git branch at session start                |
+| cwd               | first msg   | Working directory                          |
+| sessionId         | all         | Session UUID (redundant with filename)     |
+
+*** Content Block Types
+
+| type        | Fields                                    |
+|-------------+-------------------------------------------|
+| text        | text                                      |
+| thinking    | thinking, signature                       |
+| tool_use    | name, id, input, caller                   |
+| tool_result | tool_use_id, content, is_error            |
+| image       | source.media_type, source.data            |
+
+*** Agent Tool Results (toolUseResult)
+
+When the tool is =Agent=, the tool_result message has a =toolUseResult= field:
+
+#+begin_src
+{
+  "isAsync": true,
+  "status": "async_launched",
+  "agentId": "aadb7a3afd5c781bf",
+  "description": "...",
+  "prompt": "...",
+  "outputFile": "/tmp/claude-501/.../tasks/<agentId>.output",
+  "canReadOutputFile": true
+}
+#+end_src
+
+** Codex Format Generations
+
+*** V0: Single JSON Object (.json)
+
+Location: =~/.codex/sessions/rollout-<date>-<uuid>.json=
+Count observed: 2 files (June 2025)
+Status: *Dead format, ccx skips these* (collectRolloutFiles only matches .jsonl)
+
+Structure:
+#+begin_src json
+{
+  "session": {"timestamp": "...", "id": "...", "instructions": "..."},
+  "items": [
+    {"role": "user", "type": "message", "content": [{"type": "input_text", "text": "..."}]},
+    {"role": "system", "type": "message", "content": [{"type": "input_text", "text": "..."}]}
+  ]
+}
+#+end_src
+
+*** V1: Legacy JSONL (no type envelope)
+
+Location: =~/.codex/sessions/<year>/<month>/<day>/rollout-<date>-<uuid>.jsonl=
+Count observed: 82 sessions (Aug-Sep 2025)
+Status: *Partially handled* — ccx creates sessions but CWD unknown
+
+First line is a bare session header (no =type= field):
+#+begin_src json
+{"id": "...", "timestamp": "...", "instructions": null, "git": {"commit_hash": "...", "branch": "...", "repository_url": "..."}}
+#+end_src
+
+Subsequent lines are items with top-level =type= field but NO =payload= envelope:
+#+begin_src
+{record_type: "state"}                    -- state checkpoints (skip)
+{type: "message", role: "user",  content: [{type: "input_text",  text: "..."}]}
+{type: "message", role: "assistant", content: [{type: "output_text", text: "..."}]}
+{type: "reasoning", id: "rs_...", summary: [{type: "summary_text", text: "..."}]}
+{type: "function_call", id: "fc_...", name: "shell", arguments: "...", call_id: "call_..."}
+{type: "function_call_output", call_id: "call_...", output: "..."}
+#+end_src
+
+Key differences from v2:
+- No =timestamp= / =type= / =payload= envelope per line
+- Uses =shell= instead of =exec_command= as tool name
+- =record_type: "state"= checkpoints interspersed (skip)
+- No =event_msg= / =response_item= distinction — items are flat
+- Git info (branch, repo_url) on session header, but no CWD
+
+*** V2: Rollout JSONL (current format)
+
+Location: =~/.codex/sessions/<year>/<month>/<day>/rollout-<date>-<uuid>.jsonl=
+Archived: =~/.codex/archived_sessions/<year>/<month>/<day>/rollout-<date>-<uuid>.jsonl=
+Thread names: =~/.codex/session_index.jsonl=
+Count observed: 445 sessions (Oct 2025 — present)
+
+Every line has the envelope:
+#+begin_src json
+{"timestamp": "...", "type": "<record_type>", "payload": {...}}
+#+end_src
+
+**** Record Types
+
+| type          | Count   | Purpose                          |
+|---------------+---------+----------------------------------|
+| session_meta  | 1/sess  | Session header with metadata     |
+| turn_context  | many    | Per-turn model/CWD/policy state  |
+| event_msg     | many    | Events during execution          |
+| response_item | many    | Model API response items         |
+| compacted     | rare    | Context compaction               |
+
+**** session_meta Payload
+
+#+begin_src
+{
+  "id": "thread-uuid",
+  "timestamp": "...",
+  "cwd": "/path/to/project",
+  "originator": "codex_cli_rs" | "codex-tui" | "codex_exec",
+  "cli_version": "0.118.0",
+  "source": "cli" | "exec" | {"subagent": "review"} | {"subagent": {"thread_spawn": {...}}},
+  "model_provider": "openai",
+  "base_instructions": {"text": "..."},         // codex-tui only
+  "git": {"branch": "main", "commit_hash": "..."}
+}
+#+end_src
+
+Originators observed:
+- =codex_cli_rs=: 428 sessions (CLI, versions 0.36.0—0.117.0)
+- =codex-tui=: 14 sessions (TUI, versions 0.115.0—0.118.0)
+- =codex_exec=: 3 sessions (exec mode, version 0.98.0)
+
+**** event_msg Subtypes
+
+| Subtype                   | Count  | ccx Handles | Notes                         |
+|---------------------------+--------+-------------+-------------------------------|
+| user_message              | 1480   | YES         | User input text               |
+| agent_message             | 4674   | YES         | Assistant text response       |
+| agent_reasoning           | 20569  | YES         | Thinking block                |
+| exec_command_end          | 279    | YES         | Shell command result          |
+| patch_apply_end           | 5      | YES         | File patch result             |
+| web_search_end            | 13     | YES         | Web search result             |
+| mcp_tool_call_end         | 0*     | YES         | MCP tool result               |
+| dynamic_tool_call_response| 0*     | YES         | Dynamic tool result           |
+| view_image_tool_call      | 0*     | YES         | Image view result             |
+| token_count               | 36522  | YES         | Token usage stats             |
+| thread_name_updated       | 0*     | YES         | Thread renamed                |
+| task_started              | 478    | NO          | Turn task begins              |
+| task_complete             | 442    | NO          | Turn task ends with summary   |
+| turn_aborted              | 176    | NO          | Turn interrupted              |
+| context_compacted         | 88     | NO          | Context was compacted         |
+| entered_review_mode       | 3      | NO          | Review mode entered           |
+| exited_review_mode        | 3      | NO          | Review mode exited (findings) |
+| thread_rolled_back        | 11     | NO          | Undo N turns                  |
+
+=*= means supported in code but zero occurrences in our data.
+
+**** response_item Subtypes
+
+| Subtype                  | Count  | ccx Handles | Notes                                   |
+|--------------------------+--------+-------------+-----------------------------------------|
+| function_call            | 29142  | YES         | Tool invocation (exec_command, etc)      |
+| function_call_output     | 29138  | YES         | Tool output (matched by call_id)         |
+| custom_tool_call         | 1238   | YES         | Custom tool (apply_patch, etc)           |
+| custom_tool_call_output  | 1238   | YES         | Custom tool output                       |
+| reasoning                | 20172  | YES         | Thinking (encrypted_content + summary)   |
+| message                  | 7282   | SKIP        | Duplicates event_msg (deduped)           |
+| web_search_call          | 303    | YES         | Web search invocation                    |
+| ghost_snapshot           | 8      | NO          | Git ghost commit checkpoint              |
+
+**** Tool Names (Codex → ccx Normalized)
+
+| Raw Name           | Normalized   | Count  | Notes                    |
+|--------------------+--------------+--------+--------------------------|
+| exec_command       | Bash         | 15558  | Shell execution          |
+| shell_command      | (as-is)      | 5913   | Older name for exec      |
+| shell              | (as-is)      | 4285   | v1 legacy name           |
+| write_stdin        | WriteStdin   | 2439   | Pipe input               |
+| apply_patch        | ApplyPatch   | 1243   | File patches             |
+| update_plan        | UpdatePlan   | 1222   | Plan updates             |
+| web_search         | (event_msg)  | 13     | Handled via event_msg    |
+| spawn_agent        | (as-is)      | 2      | Subagent spawning        |
+| wait_agent         | (as-is)      | 1      | Wait for subagent        |
+| list_mcp_resources | (as-is)      | 1      | MCP resource listing     |
+
+Note: =shell_command= and =shell= are NOT normalized by =normalizeToolName()=.
+They appear as-is in the transcript. Consider normalizing them to =Bash= too.
+
+** Gaps and Issues Found
+
+*** V1 Sessions Show as "(unknown cwd)"
+82 v1 sessions have no CWD. Some have =git.repository_url= which could be
+used to derive a project name. Currently they all land in a single
+"(unknown cwd)" project bucket.
+
+*** V0 .json Files Silently Skipped
+Two very old .json files in =sessions/= root. Not a problem — dead format.
+
+*** =shell_command= and =shell= Not Normalized
+These old tool names aren't mapped to =Bash= by =normalizeToolName()=.
+They show as-is in the transcript view.
+
+*** Unhandled Event Types
+- =task_started= / =task_complete=: Could show turn boundaries and completion summaries
+- =turn_aborted=: Could annotate interrupted turns
+- =context_compacted=: Redundant with =compacted= record type
+- =entered_review_mode= / =exited_review_mode=: Review findings could be useful
+- =thread_rolled_back=: Could annotate undo operations
+- =ghost_snapshot=: Git state checkpoint, low priority
+
+*** =response_item/message= Deduplication
+Correctly skipped. Every =response_item/message(role=assistant)= has a
+matching =event_msg/agent_message=, and every =response_item/message(role=user)=
+has a matching =event_msg/user_message=. The =role=developer= messages
+(system prompts) are also correctly skipped.
+
+*** Token Counting (Codex)
+=token_count= events provide =total_token_usage= (cumulative). ccx currently
+overwrites on each occurrence rather than taking the last one. This is
+correct because the total is always the latest cumulative value.
+
+** Decisions
+
+| Decision                          | Alternatives                  | Rationale                                    | DRI  | Timestamp  |
+|-----------------------------------+-------------------------------+----------------------------------------------+------+------------|
+| Skip v0 .json format             | Add parser                    | 2 files, dead format, not worth the code     | eric | 2026-04-02 |
+| Keep v1 as "(unknown cwd)"       | Parse git.repository_url      | Low ROI, 82 old sessions                     | eric | 2026-04-02 |
+| Normalize shell_command/shell     | Leave as-is                   | Consistency with exec_command → Bash         | TBD  | 2026-04-02 |
+| Add task_started/task_complete    | Skip                          | Could improve transcript boundaries          | TBD  | 2026-04-02 |
+
+** Notes
+
+- The =codex-tui= originator is new (v0.115.0+) and includes =base_instructions= in session_meta
+- Subagent spawning uses =source: {"subagent": {"thread_spawn": {...}}}= with depth, nickname, role
+- The =spawn_agent= tool call has =agent_type=, =fork_context=, =model=, =reasoning_effort=, =message=
+- =history.jsonl= in =~/.codex/= is a separate flat log (session_id, ts, text) — not used by ccx

@@ -14,11 +14,13 @@ import (
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/db"
 	"github.com/thevibeworks/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/provider"
+	"github.com/thevibeworks/ccx/internal/render"
 )
 
 var (
-	projectsDir string
-	claudeHome  string
+	providerHomes   []string
+	sessionProvider provider.Backend
 )
 
 type Settings struct {
@@ -40,6 +42,32 @@ type SkillInfo struct {
 	Path string
 }
 
+type ConfigFileInfo struct {
+	Name     string `json:"name"`
+	FilePath string `json:"file_path"`
+}
+
+type MemoryFile struct {
+	Name     string
+	FilePath string
+	Provider string
+}
+
+type MemoryGroup struct {
+	Name     string
+	Path     string
+	Provider string
+	Files    []MemoryFile
+}
+
+type MemoryData struct {
+	Global     []MemoryFile
+	Rules      []MemoryFile
+	Projects   []MemoryGroup
+	CodexMem   []MemoryFile
+	TotalFiles int
+}
+
 type GlobalConfig struct {
 	NumStartups int    `json:"numStartups"`
 	Theme       string `json:"theme"`
@@ -47,9 +75,9 @@ type GlobalConfig struct {
 	EditorMode  string `json:"editorMode"`
 }
 
-func Serve(addr, projDir string) error {
-	projectsDir = projDir
-	claudeHome = config.ClaudeHome()
+func Serve(addr string, backend provider.Backend) error {
+	sessionProvider = backend
+	providerHomes = backend.Homes()
 
 	mux := http.NewServeMux()
 
@@ -58,6 +86,7 @@ func Serve(addr, projDir string) error {
 	mux.HandleFunc("/project/", handleProject)
 	mux.HandleFunc("/session/", handleSession)
 	mux.HandleFunc("/settings", handleSettings)
+	mux.HandleFunc("/memory", handleMemory)
 	mux.HandleFunc("/search", handleSearchPage)
 
 	// API
@@ -112,27 +141,41 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	projects, err := parser.DiscoverProjects(projectsDir)
+	projects, err := sessionProvider.DiscoverProjects()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Get query params for filtering/sorting
 	q := r.URL.Query()
-	search := strings.ToLower(q.Get("q"))
+	rawSearch := strings.TrimSpace(q.Get("q"))
+	provFilter, search := parseProviderQuery(rawSearch)
+	search = strings.ToLower(search)
 	sortBy := q.Get("sort")
 	if sortBy == "" {
 		sortBy = "time"
 	}
 
-	// Filter
-	if search != "" {
+	if search != "" || provFilter != "" {
 		var filtered []*parser.Project
 		for _, p := range projects {
-			if strings.Contains(strings.ToLower(p.Name), search) {
-				filtered = append(filtered, p)
+			if provFilter != "" {
+				providers := projectProviders(p)
+				hasProvider := false
+				for _, pv := range providers {
+					if pv == provFilter {
+						hasProvider = true
+						break
+					}
+				}
+				if !hasProvider {
+					continue
+				}
 			}
+			if search != "" && !strings.Contains(strings.ToLower(p.Name), search) {
+				continue
+			}
+			filtered = append(filtered, p)
 		}
 		projects = filtered
 	}
@@ -170,14 +213,14 @@ func handleProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project, err := parser.FindProject(projectsDir, encodedName)
+	project, err := sessionProvider.FindProject(encodedName)
 	if err != nil || project == nil {
 		http.NotFound(w, r)
 		return
 	}
 
 	// Fetch all projects for left nav
-	allProjects, _ := parser.DiscoverProjects(projectsDir)
+	allProjects, _ := sessionProvider.DiscoverProjects()
 	sort.Slice(allProjects, func(i, j int) bool {
 		return allProjects[i].LastModified.After(allProjects[j].LastModified)
 	})
@@ -216,8 +259,10 @@ func handleProject(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	memFiles := loadProjectMemory(project.EncodedName)
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderProjectPage(project, sessions, allProjects, search, sortBy))
+	fmt.Fprint(w, renderProjectPage(project, sessions, allProjects, memFiles, search, sortBy))
 }
 
 func handleSession(w http.ResponseWriter, r *http.Request) {
@@ -229,20 +274,20 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectName, sessionID := parts[0], parts[1]
-	session, err := parser.FindSession(projectsDir, projectName, sessionID)
+	session, err := sessionProvider.FindSession(projectName, sessionID)
 	if err != nil || session == nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	fullSession, err := parser.ParseSession(session.FilePath)
+	fullSession, err := sessionProvider.ParseSession(session.FilePath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Fetch project's sessions for left nav
-	project, _ := parser.FindProject(projectsDir, projectName)
+	project, _ := sessionProvider.FindProject(projectName)
 	var allSessions []*parser.Session
 	if project != nil {
 		allSessions = project.Sessions
@@ -261,59 +306,209 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 		theme = config.Theme() // respect user config
 	}
 
+	memCount := len(loadProjectMemory(projectName))
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderSessionPage(fullSession, projectName, allSessions, showThinking, showTools, loadAll, theme))
+	fmt.Fprint(w, renderSessionPage(fullSession, projectName, allSessions, memCount, showThinking, showTools, loadAll, theme))
 }
 
 func handleSettings(w http.ResponseWriter, r *http.Request) {
 	settings := loadSettings()
 	globalConfig := loadGlobalConfig()
+	configFiles := loadConfigFiles()
 	agents := loadAgents()
 	skills := loadSkills()
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderSettingsPage(settings, globalConfig, agents, skills))
+	fmt.Fprint(w, renderSettingsPage(settings, globalConfig, configFiles, agents, skills))
 }
 
 func loadAgents() []AgentInfo {
-	agentsDir := filepath.Join(claudeHome, "agents")
-	entries, err := os.ReadDir(agentsDir)
-	if err != nil {
-		return nil
-	}
-
 	var agents []AgentInfo
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+	seen := make(map[string]bool)
+	for _, home := range providerHomes {
+		agentsDir := filepath.Join(home, "agents")
+		entries, err := os.ReadDir(agentsDir)
+		if err != nil {
 			continue
 		}
-		name := strings.TrimSuffix(entry.Name(), ".md")
-		agents = append(agents, AgentInfo{
-			Name:     name,
-			FilePath: filepath.Join(agentsDir, entry.Name()),
-		})
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			name := strings.TrimSuffix(entry.Name(), ".md")
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			agents = append(agents, AgentInfo{
+				Name:     name,
+				FilePath: filepath.Join(agentsDir, entry.Name()),
+			})
+		}
 	}
 	return agents
 }
 
 func loadSkills() []SkillInfo {
-	skillsDir := filepath.Join(claudeHome, "skills")
-	entries, err := os.ReadDir(skillsDir)
-	if err != nil {
-		return nil
-	}
-
 	var skills []SkillInfo
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	seen := make(map[string]bool)
+	for _, home := range providerHomes {
+		skillsDir := filepath.Join(home, "skills")
+		entries, err := os.ReadDir(skillsDir)
+		if err != nil {
 			continue
 		}
-		skills = append(skills, SkillInfo{
-			Name: entry.Name(),
-			Path: filepath.Join(skillsDir, entry.Name()),
-		})
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			if seen[entry.Name()] {
+				continue
+			}
+			seen[entry.Name()] = true
+			skills = append(skills, SkillInfo{
+				Name: entry.Name(),
+				Path: filepath.Join(skillsDir, entry.Name()),
+			})
+		}
 	}
 	return skills
+}
+
+func handleMemory(w http.ResponseWriter, r *http.Request) {
+	data := loadMemories()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, renderMemoryPage(data))
+}
+
+func loadMemories() *MemoryData {
+	data := &MemoryData{}
+
+	providerFor := func(home string) string {
+		settings := config.Load()
+		if home == settings.ClaudeHome {
+			return "claude-code"
+		}
+		return "codex"
+	}
+
+	for _, home := range providerHomes {
+		prov := providerFor(home)
+
+		// Global instructions
+		for _, name := range []string{"CLAUDE.md", "instructions.md", "AGENTS.md"} {
+			path := filepath.Join(home, name)
+			if _, err := os.Stat(path); err == nil {
+				absPath, _ := filepath.Abs(path)
+				data.Global = append(data.Global, MemoryFile{Name: name, FilePath: absPath, Provider: prov})
+				data.TotalFiles++
+			}
+		}
+
+		// User rules (rules/*.md)
+		rulesDir := filepath.Join(home, "rules")
+		if entries, err := os.ReadDir(rulesDir); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+					continue
+				}
+				absPath, _ := filepath.Abs(filepath.Join(rulesDir, entry.Name()))
+				data.Rules = append(data.Rules, MemoryFile{Name: entry.Name(), FilePath: absPath, Provider: prov})
+				data.TotalFiles++
+			}
+		}
+
+		// Per-project memory (projects/*/memory/)
+		projectsDir := filepath.Join(home, "projects")
+		if projEntries, err := os.ReadDir(projectsDir); err == nil {
+			for _, projEntry := range projEntries {
+				if !projEntry.IsDir() {
+					continue
+				}
+				memDir := filepath.Join(projectsDir, projEntry.Name(), "memory")
+				memEntries, err := os.ReadDir(memDir)
+				if err != nil {
+					continue
+				}
+				var files []MemoryFile
+				for _, entry := range memEntries {
+					if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+						continue
+					}
+					absPath, _ := filepath.Abs(filepath.Join(memDir, entry.Name()))
+					files = append(files, MemoryFile{Name: entry.Name(), FilePath: absPath, Provider: prov})
+				}
+				if len(files) == 0 {
+					continue
+				}
+				data.TotalFiles += len(files)
+				data.Projects = append(data.Projects, MemoryGroup{
+					Name:     parser.GetProjectDisplayName(projEntry.Name()),
+					Path:     parser.DecodePath(projEntry.Name()),
+					Provider: prov,
+					Files:    files,
+				})
+			}
+		}
+
+		// Codex memories (memories/)
+		memoriesDir := filepath.Join(home, "memories")
+		_ = filepath.WalkDir(memoriesDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(d.Name(), ".md") {
+				return nil
+			}
+			absPath, _ := filepath.Abs(path)
+			data.CodexMem = append(data.CodexMem, MemoryFile{Name: d.Name(), FilePath: absPath, Provider: prov})
+			data.TotalFiles++
+			return nil
+		})
+	}
+
+	sort.Slice(data.Projects, func(i, j int) bool {
+		return data.Projects[i].Name < data.Projects[j].Name
+	})
+
+	return data
+}
+
+func loadProjectMemory(encodedProject string) []MemoryFile {
+	var files []MemoryFile
+	for _, home := range providerHomes {
+		// Global instruction (CLAUDE.md or AGENTS.md)
+		for _, name := range []string{"CLAUDE.md", "instructions.md", "AGENTS.md"} {
+			path := filepath.Join(home, name)
+			if _, err := os.Stat(path); err == nil {
+				absPath, _ := filepath.Abs(path)
+				files = append(files, MemoryFile{Name: name, FilePath: absPath, Provider: providerIDForHome(home)})
+			}
+		}
+		// Project-specific memory files
+		memDir := filepath.Join(home, "projects", encodedProject, "memory")
+		entries, err := os.ReadDir(memDir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			absPath, _ := filepath.Abs(filepath.Join(memDir, entry.Name()))
+			files = append(files, MemoryFile{Name: entry.Name(), FilePath: absPath, Provider: providerIDForHome(home)})
+		}
+	}
+	return files
+}
+
+func providerIDForHome(home string) string {
+	settings := config.Load()
+	if home == settings.ClaudeHome {
+		return "claude-code"
+	}
+	return "codex"
 }
 
 func handleWatch(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +520,7 @@ func handleWatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectName, sessionID := parts[0], parts[1]
-	session, err := parser.FindSession(projectsDir, projectName, sessionID)
+	session, err := sessionProvider.FindSession(projectName, sessionID)
 	if err != nil || session == nil {
 		http.NotFound(w, r)
 		return
@@ -424,7 +619,7 @@ func handleWatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPIProjects(w http.ResponseWriter, r *http.Request) {
-	projects, err := parser.DiscoverProjects(projectsDir)
+	projects, err := sessionProvider.DiscoverProjects()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -453,31 +648,58 @@ func handleAPIProjects(w http.ResponseWriter, r *http.Request) {
 
 func handleAPISessions(w http.ResponseWriter, r *http.Request) {
 	encodedName := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
-	project, err := parser.FindProject(projectsDir, encodedName)
+	project, err := sessionProvider.FindProject(encodedName)
 	if err != nil || project == nil {
 		http.NotFound(w, r)
 		return
 	}
 
+	filter := parseSessionFilter(r)
+
 	type sessionResp struct {
 		ID        string `json:"id"`
+		Provider  string `json:"provider"`
 		Summary   string `json:"summary"`
 		StartTime string `json:"start_time"`
 		EndTime   string `json:"end_time"`
+		Messages  int    `json:"messages"`
+		Model     string `json:"model,omitempty"`
 	}
 
-	resp := make([]sessionResp, len(project.Sessions))
-	for i, s := range project.Sessions {
-		resp[i] = sessionResp{
+	var resp []sessionResp
+	for _, s := range project.Sessions {
+		if !filter.IsEmpty() && !filter.Match(s) {
+			continue
+		}
+		resp = append(resp, sessionResp{
 			ID:        s.ID,
+			Provider:  s.Provider,
 			Summary:   s.Summary,
 			StartTime: s.StartTime.Format(time.RFC3339),
 			EndTime:   s.EndTime.Format(time.RFC3339),
-		}
+			Messages:  s.Stats.MessageCount,
+			Model:     s.Model,
+		})
+	}
+	if resp == nil {
+		resp = []sessionResp{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func parseSessionFilter(r *http.Request) config.SessionFilter {
+	q := r.URL.Query()
+	after, _ := config.ParseDate(q.Get("after"))
+	before, _ := config.ParseBeforeDate(q.Get("before"))
+	return config.SessionFilter{
+		Provider: config.NormalizeProvider(q.Get("provider")),
+		After:    after,
+		Before:   before,
+		Query:    q.Get("q"),
+		Model:    q.Get("model"),
+	}
 }
 
 func handleAPISession(w http.ResponseWriter, r *http.Request) {
@@ -489,13 +711,13 @@ func handleAPISession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectName, sessionID := parts[0], parts[1]
-	session, err := parser.FindSession(projectsDir, projectName, sessionID)
+	session, err := sessionProvider.FindSession(projectName, sessionID)
 	if err != nil || session == nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	fullSession, err := parser.ParseSession(session.FilePath)
+	fullSession, err := sessionProvider.ParseSession(session.FilePath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -506,7 +728,7 @@ func handleAPISession(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPIStats(w http.ResponseWriter, r *http.Request) {
-	projects, err := parser.DiscoverProjects(projectsDir)
+	projects, err := sessionProvider.DiscoverProjects()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -518,9 +740,10 @@ func handleAPIStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]interface{}{
-		"projects":    len(projects),
-		"sessions":    totalSessions,
-		"claude_home": claudeHome,
+		"projects": len(projects),
+		"sessions": totalSessions,
+		"provider": sessionProvider.ID(),
+		"homes":    providerHomes,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -530,10 +753,12 @@ func handleAPIStats(w http.ResponseWriter, r *http.Request) {
 func handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	settings := loadSettings()
 	globalConfig := loadGlobalConfig()
+	configFiles := loadConfigFiles()
 
 	resp := map[string]interface{}{
 		"settings":      settings,
 		"global_config": globalConfig,
+		"config_files":  configFiles,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -541,17 +766,19 @@ func handleAPISettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func loadSettings() *Settings {
-	settingsPath := filepath.Join(claudeHome, "settings.json")
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return nil
+	for _, home := range providerHomes {
+		settingsPath := filepath.Join(home, "settings.json")
+		data, err := os.ReadFile(settingsPath)
+		if err != nil {
+			continue
+		}
+		var settings Settings
+		if err := json.Unmarshal(data, &settings); err != nil {
+			continue
+		}
+		return &settings
 	}
-
-	var settings Settings
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return nil
-	}
-	return &settings
+	return nil
 }
 
 func loadGlobalConfig() *GlobalConfig {
@@ -567,6 +794,51 @@ func loadGlobalConfig() *GlobalConfig {
 		return nil
 	}
 	return &config
+}
+
+func loadConfigFiles() []ConfigFileInfo {
+	type candidate struct {
+		path string
+		name string
+	}
+
+	var files []ConfigFileInfo
+	seen := make(map[string]bool)
+	var candidates []candidate
+
+	for _, home := range providerHomes {
+		candidates = append(candidates,
+			candidate{path: filepath.Join(home, "settings.json"), name: "settings.json"},
+			candidate{path: filepath.Join(home, "config.toml"), name: "config.toml"},
+			candidate{path: filepath.Join(home, "config.json"), name: "config.json"},
+		)
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, candidate{
+			path: filepath.Join(home, ".claude.json"),
+			name: ".claude.json",
+		})
+	}
+
+	for _, candidate := range candidates {
+		if seen[candidate.path] {
+			continue
+		}
+		if info, err := os.Stat(candidate.path); err == nil && !info.IsDir() {
+			seen[candidate.path] = true
+			files = append(files, ConfigFileInfo{
+				Name:     candidate.name,
+				FilePath: candidate.path,
+			})
+		}
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].FilePath < files[j].FilePath
+	})
+
+	return files
 }
 
 func handleStar(w http.ResponseWriter, r *http.Request) {
@@ -658,10 +930,32 @@ func handleAPIFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowedRoots := []string{
-		filepath.Join(claudeHome, "agents"),
-		filepath.Join(claudeHome, "skills"),
+	var allowedRoots []string
+	for _, home := range providerHomes {
+		allowedRoots = append(allowedRoots, filepath.Join(home, "agents"))
+		allowedRoots = append(allowedRoots, filepath.Join(home, "skills"))
+		allowedRoots = append(allowedRoots, filepath.Join(home, "projects"))
+		allowedRoots = append(allowedRoots, filepath.Join(home, "memories"))
+		allowedRoots = append(allowedRoots, filepath.Join(home, "rules"))
 	}
+
+	allowedFiles := make(map[string]bool)
+	for _, home := range providerHomes {
+		for _, name := range []string{"CLAUDE.md", "instructions.md", "AGENTS.md"} {
+			candidate := filepath.Join(home, name)
+			if resolved, err := filepath.EvalSymlinks(filepath.Clean(candidate)); err == nil {
+				allowedFiles[resolved] = true
+			}
+		}
+	}
+	for _, file := range loadConfigFiles() {
+		resolvedFile, err := filepath.EvalSymlinks(filepath.Clean(file.FilePath))
+		if err != nil {
+			continue
+		}
+		allowedFiles[resolvedFile] = true
+	}
+
 	allowed := false
 	for _, root := range allowedRoots {
 		absRoot, err := filepath.Abs(root)
@@ -676,6 +970,9 @@ func handleAPIFile(w http.ResponseWriter, r *http.Request) {
 			allowed = true
 			break
 		}
+	}
+	if !allowed && allowedFiles[resolvedPath] {
+		allowed = true
 	}
 	if !allowed {
 		http.Error(w, "access denied", http.StatusForbidden)
@@ -721,7 +1018,7 @@ func handleSearchPage(w http.ResponseWriter, r *http.Request) {
 	query := q.Get("q")
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderSearchPage(projectsDir, query))
+	fmt.Fprint(w, renderSearchPage(strings.Join(providerHomes, ", "), query))
 }
 
 func handleAPIExport(w http.ResponseWriter, r *http.Request) {
@@ -733,13 +1030,13 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectName, sessionID := parts[0], parts[1]
-	session, err := parser.FindSession(projectsDir, projectName, sessionID)
+	session, err := sessionProvider.FindSession(projectName, sessionID)
 	if err != nil || session == nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	fullSession, err := parser.ParseSession(session.FilePath)
+	fullSession, err := sessionProvider.ParseSession(session.FilePath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -748,6 +1045,10 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
 	if format == "" {
 		format = "json"
+	}
+	brief := r.URL.Query().Get("brief") == "1"
+	if brief {
+		fullSession = render.BriefSession(fullSession)
 	}
 
 	switch format {
@@ -758,7 +1059,7 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.html", truncate(sessionID, 8)))
-		fmt.Fprint(w, renderSessionPage(fullSession, projectName, nil, true, true, true, "light"))
+		fmt.Fprint(w, renderSessionPage(fullSession, projectName, nil, 0, true, true, true, "light"))
 	case "md", "markdown":
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.md", truncate(sessionID, 8)))
@@ -779,14 +1080,21 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPISearch(w http.ResponseWriter, r *http.Request) {
-	query := strings.ToLower(r.URL.Query().Get("q"))
-	if query == "" {
+	rawQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+	if rawQuery == "" {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
 		return
 	}
 
-	projects, err := parser.DiscoverProjects(projectsDir)
+	providerFilter, query := parseProviderQuery(rawQuery)
+	query = strings.ToLower(query)
+
+	if query == "" && providerFilter != "" {
+		query = ""
+	}
+
+	projects, err := sessionProvider.DiscoverProjects()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -796,6 +1104,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 		URL       string `json:"url"`
 		Summary   string `json:"summary"`
 		Project   string `json:"project"`
+		Provider  string `json:"provider,omitempty"`
 		Time      string `json:"time"`
 		Type      string `json:"type"`
 		Snippet   string `json:"snippet"`
@@ -810,36 +1119,55 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 		projDisplay := parser.GetProjectDisplayName(p.EncodedName)
 		projPath := parser.DecodePath(p.EncodedName)
 
-		// Priority 0: Exact session/project ID match
-		if strings.EqualFold(p.EncodedName, query) || strings.Contains(p.EncodedName, query) {
-			results = append(results, searchResult{
-				URL:      fmt.Sprintf("/project/%s", p.EncodedName),
-				Summary:  projDisplay,
-				Project:  projDisplay,
-				Type:     "project",
-				Priority: 0,
-			})
-		}
+		// Skip project-level results when provider filter is active (projects span providers)
+		if providerFilter == "" && query != "" {
+			if strings.EqualFold(p.EncodedName, query) || strings.Contains(p.EncodedName, query) {
+				results = append(results, searchResult{
+					URL:      fmt.Sprintf("/project/%s", p.EncodedName),
+					Summary:  projDisplay,
+					Project:  projDisplay,
+					Type:     "project",
+					Priority: 0,
+				})
+			}
 
-		// Priority 1: Project path contains query
-		if strings.Contains(strings.ToLower(projPath), query) && !strings.Contains(p.EncodedName, query) {
-			results = append(results, searchResult{
-				URL:      fmt.Sprintf("/project/%s", p.EncodedName),
-				Summary:  projDisplay,
-				Project:  projDisplay,
-				Type:     "project",
-				Snippet:  projPath,
-				Priority: 1,
-			})
+			if strings.Contains(strings.ToLower(projPath), query) && !strings.Contains(p.EncodedName, query) {
+				results = append(results, searchResult{
+					URL:      fmt.Sprintf("/project/%s", p.EncodedName),
+					Summary:  projDisplay,
+					Project:  projDisplay,
+					Type:     "project",
+					Snippet:  projPath,
+					Priority: 1,
+				})
+			}
 		}
 
 		for _, s := range p.Sessions {
-			// Priority 0: Exact session ID match
+			if providerFilter != "" && s.Provider != providerFilter {
+				continue
+			}
+
+			// No text query but provider filter: show all matching sessions
+			if query == "" {
+				results = append(results, searchResult{
+					URL:      fmt.Sprintf("/session/%s/%s", p.EncodedName, s.ID),
+					Summary:  truncateSummary(s.Summary, 80),
+					Project:  projDisplay,
+					Provider: s.Provider,
+					Time:     formatAge(s.StartTime),
+					Type:     "session",
+					Priority: 1,
+				})
+				continue
+			}
+
 			if strings.EqualFold(s.ID, query) || strings.HasPrefix(strings.ToLower(s.ID), query) {
 				results = append(results, searchResult{
 					URL:      fmt.Sprintf("/session/%s/%s", p.EncodedName, s.ID),
 					Summary:  truncateSummary(s.Summary, 80),
 					Project:  projDisplay,
+					Provider: s.Provider,
 					Time:     formatAge(s.StartTime),
 					Type:     "session",
 					Priority: 0,
@@ -847,12 +1175,12 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Priority 2: Session summary match
 			if strings.Contains(strings.ToLower(s.Summary), query) {
 				results = append(results, searchResult{
 					URL:      fmt.Sprintf("/session/%s/%s", p.EncodedName, s.ID),
 					Summary:  truncateSummary(s.Summary, 80),
 					Project:  projDisplay,
+					Provider: s.Provider,
 					Time:     formatAge(s.StartTime),
 					Type:     "session",
 					Priority: 2,
@@ -860,9 +1188,8 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Priority 3: Deep search - parse session and search content
 			if len(results) < maxResults {
-				fullSession, err := parser.ParseSession(s.FilePath)
+				fullSession, err := sessionProvider.ParseSession(s.FilePath)
 				if err != nil {
 					continue
 				}
@@ -876,6 +1203,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 						URL:       url,
 						Summary:   truncateSummary(s.Summary, 60),
 						Project:   projDisplay,
+						Provider:  s.Provider,
 						Time:      formatAge(s.StartTime),
 						Type:      "message",
 						Snippet:   snippet,
@@ -883,6 +1211,49 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 						Priority:  3,
 					})
 				}
+			}
+		}
+	}
+
+	// Search memory files
+	if query != "" && len(results) < maxResults {
+		memData := loadMemories()
+		allMemFiles := make([]MemoryFile, 0)
+		allMemFiles = append(allMemFiles, memData.Global...)
+		allMemFiles = append(allMemFiles, memData.Rules...)
+		for _, p := range memData.Projects {
+			allMemFiles = append(allMemFiles, p.Files...)
+		}
+		allMemFiles = append(allMemFiles, memData.CodexMem...)
+
+		for _, f := range allMemFiles {
+			if providerFilter != "" && f.Provider != providerFilter {
+				continue
+			}
+			nameMatch := strings.Contains(strings.ToLower(f.Name), query)
+			contentMatch := false
+			snippet := ""
+			if !nameMatch && len(results) < maxResults {
+				content, err := os.ReadFile(f.FilePath)
+				if err == nil && strings.Contains(strings.ToLower(string(content)), query) {
+					contentMatch = true
+					snippet = extractSnippet(string(content), query, 60)
+				}
+			}
+			if nameMatch || contentMatch {
+				prio := 1
+				if contentMatch && !nameMatch {
+					prio = 3
+				}
+				results = append(results, searchResult{
+					URL:      "/memory#" + sanitizeID(f.Name),
+					Summary:  f.Name,
+					Project:  filepath.Base(filepath.Dir(filepath.Dir(f.FilePath))),
+					Provider: f.Provider,
+					Type:     "memory",
+					Snippet:  snippet,
+					Priority: prio,
+				})
 			}
 		}
 	}
@@ -1123,7 +1494,7 @@ func exportTxt(s *parser.Session) string {
 
 	// Header like CLI export
 	b.WriteString("\n")
-	b.WriteString(" * ▐▛███▜▌ *   Claude Code\n")
+	b.WriteString(" * ▐▛███▜▌ *   ccx sessions\n")
 	b.WriteString("* ▝▜█████▛▘ *\n")
 	b.WriteString(" *  ▘▘ ▝▝  *\n")
 	b.WriteString("\n")

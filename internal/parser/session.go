@@ -85,6 +85,7 @@ func ParseSession(filePath string) (*Session, error) {
 
 		msg := parseMessage(raw)
 		if msg != nil {
+			msg.RawJSON = line
 			messages = append(messages, msg)
 		}
 	}
@@ -130,6 +131,7 @@ func ParseSession(filePath string) (*Session, error) {
 		Version:      sessionVersion,
 		GitBranch:    sessionBranch,
 		CWD:          sessionCWD,
+		Model:        extractModel(messages),
 	}
 
 	return session, nil
@@ -392,6 +394,15 @@ func extractSummary(messages []*Message) string {
 	return "(no summary)"
 }
 
+func extractModel(messages []*Message) string {
+	for _, msg := range messages {
+		if msg.Type == "assistant" && msg.Model != "" {
+			return msg.Model
+		}
+	}
+	return ""
+}
+
 func extractSessionID(filePath string) string {
 	base := strings.TrimSuffix(filePath, ".jsonl")
 	parts := strings.Split(base, "/")
@@ -407,6 +418,7 @@ type SessionMeta struct {
 	Version   string
 	GitBranch string
 	CWD       string
+	Model     string
 }
 
 func quickParseSession(filePath string) (summary string, startTime, endTime time.Time, stats SessionStats, meta SessionMeta) {
@@ -443,6 +455,7 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 			Usage            *usageData `json:"usage"`
 			Message          struct {
 				Content any        `json:"content"`
+				Model   string     `json:"model"`
 				Usage   *usageData `json:"usage"`
 			} `json:"message"`
 		}
@@ -502,6 +515,9 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 			}
 		} else if raw.Type == "assistant" {
 			stats.MessageCount++
+			if meta.Model == "" && raw.Message.Model != "" {
+				meta.Model = raw.Message.Model
+			}
 		}
 		if raw.IsCompactSummary {
 			stats.Continuations++

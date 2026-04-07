@@ -1,5 +1,5 @@
 .PHONY: build build-all build-darwin-arm64 build-darwin-amd64 build-linux-amd64 build-linux-arm64
-.PHONY: test clean install lint fmt deps run tools
+.PHONY: test clean install lint fmt deps run tools skill
 
 VERSION ?= dev
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -78,3 +78,7 @@ run-projects: build
 
 run-doctor: build
 	./bin/ccx doctor
+
+skill:
+	cd skills && zip -r ../ccx.skill ccx/
+	@echo "Packaged: ccx.skill"
