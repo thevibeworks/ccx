@@ -47,6 +47,27 @@ type ConfigFileInfo struct {
 	FilePath string `json:"file_path"`
 }
 
+type MemoryFile struct {
+	Name     string
+	FilePath string
+	Provider string
+}
+
+type MemoryGroup struct {
+	Name     string
+	Path     string
+	Provider string
+	Files    []MemoryFile
+}
+
+type MemoryData struct {
+	Global     []MemoryFile
+	Rules      []MemoryFile
+	Projects   []MemoryGroup
+	CodexMem   []MemoryFile
+	TotalFiles int
+}
+
 type GlobalConfig struct {
 	NumStartups int    `json:"numStartups"`
 	Theme       string `json:"theme"`
@@ -65,6 +86,7 @@ func Serve(addr string, backend provider.Backend) error {
 	mux.HandleFunc("/project/", handleProject)
 	mux.HandleFunc("/session/", handleSession)
 	mux.HandleFunc("/settings", handleSettings)
+	mux.HandleFunc("/memory", handleMemory)
 	mux.HandleFunc("/search", handleSearchPage)
 
 	// API
@@ -237,8 +259,10 @@ func handleProject(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	memFiles := loadProjectMemory(project.EncodedName)
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderProjectPage(project, sessions, allProjects, search, sortBy))
+	fmt.Fprint(w, renderProjectPage(project, sessions, allProjects, memFiles, search, sortBy))
 }
 
 func handleSession(w http.ResponseWriter, r *http.Request) {
@@ -282,8 +306,10 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 		theme = config.Theme() // respect user config
 	}
 
+	memCount := len(loadProjectMemory(projectName))
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderSessionPage(fullSession, projectName, allSessions, showThinking, showTools, loadAll, theme))
+	fmt.Fprint(w, renderSessionPage(fullSession, projectName, allSessions, memCount, showThinking, showTools, loadAll, theme))
 }
 
 func handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -348,6 +374,141 @@ func loadSkills() []SkillInfo {
 		}
 	}
 	return skills
+}
+
+func handleMemory(w http.ResponseWriter, r *http.Request) {
+	data := loadMemories()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, renderMemoryPage(data))
+}
+
+func loadMemories() *MemoryData {
+	data := &MemoryData{}
+
+	providerFor := func(home string) string {
+		settings := config.Load()
+		if home == settings.ClaudeHome {
+			return "claude-code"
+		}
+		return "codex"
+	}
+
+	for _, home := range providerHomes {
+		prov := providerFor(home)
+
+		// Global instructions
+		for _, name := range []string{"CLAUDE.md", "instructions.md", "AGENTS.md"} {
+			path := filepath.Join(home, name)
+			if _, err := os.Stat(path); err == nil {
+				absPath, _ := filepath.Abs(path)
+				data.Global = append(data.Global, MemoryFile{Name: name, FilePath: absPath, Provider: prov})
+				data.TotalFiles++
+			}
+		}
+
+		// User rules (rules/*.md)
+		rulesDir := filepath.Join(home, "rules")
+		if entries, err := os.ReadDir(rulesDir); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+					continue
+				}
+				absPath, _ := filepath.Abs(filepath.Join(rulesDir, entry.Name()))
+				data.Rules = append(data.Rules, MemoryFile{Name: entry.Name(), FilePath: absPath, Provider: prov})
+				data.TotalFiles++
+			}
+		}
+
+		// Per-project memory (projects/*/memory/)
+		projectsDir := filepath.Join(home, "projects")
+		if projEntries, err := os.ReadDir(projectsDir); err == nil {
+			for _, projEntry := range projEntries {
+				if !projEntry.IsDir() {
+					continue
+				}
+				memDir := filepath.Join(projectsDir, projEntry.Name(), "memory")
+				memEntries, err := os.ReadDir(memDir)
+				if err != nil {
+					continue
+				}
+				var files []MemoryFile
+				for _, entry := range memEntries {
+					if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+						continue
+					}
+					absPath, _ := filepath.Abs(filepath.Join(memDir, entry.Name()))
+					files = append(files, MemoryFile{Name: entry.Name(), FilePath: absPath, Provider: prov})
+				}
+				if len(files) == 0 {
+					continue
+				}
+				data.TotalFiles += len(files)
+				data.Projects = append(data.Projects, MemoryGroup{
+					Name:     parser.GetProjectDisplayName(projEntry.Name()),
+					Path:     parser.DecodePath(projEntry.Name()),
+					Provider: prov,
+					Files:    files,
+				})
+			}
+		}
+
+		// Codex memories (memories/)
+		memoriesDir := filepath.Join(home, "memories")
+		_ = filepath.WalkDir(memoriesDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(d.Name(), ".md") {
+				return nil
+			}
+			absPath, _ := filepath.Abs(path)
+			data.CodexMem = append(data.CodexMem, MemoryFile{Name: d.Name(), FilePath: absPath, Provider: prov})
+			data.TotalFiles++
+			return nil
+		})
+	}
+
+	sort.Slice(data.Projects, func(i, j int) bool {
+		return data.Projects[i].Name < data.Projects[j].Name
+	})
+
+	return data
+}
+
+func loadProjectMemory(encodedProject string) []MemoryFile {
+	var files []MemoryFile
+	for _, home := range providerHomes {
+		// Global instruction (CLAUDE.md or AGENTS.md)
+		for _, name := range []string{"CLAUDE.md", "instructions.md", "AGENTS.md"} {
+			path := filepath.Join(home, name)
+			if _, err := os.Stat(path); err == nil {
+				absPath, _ := filepath.Abs(path)
+				files = append(files, MemoryFile{Name: name, FilePath: absPath, Provider: providerIDForHome(home)})
+			}
+		}
+		// Project-specific memory files
+		memDir := filepath.Join(home, "projects", encodedProject, "memory")
+		entries, err := os.ReadDir(memDir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			absPath, _ := filepath.Abs(filepath.Join(memDir, entry.Name()))
+			files = append(files, MemoryFile{Name: entry.Name(), FilePath: absPath, Provider: providerIDForHome(home)})
+		}
+	}
+	return files
+}
+
+func providerIDForHome(home string) string {
+	settings := config.Load()
+	if home == settings.ClaudeHome {
+		return "claude-code"
+	}
+	return "codex"
 }
 
 func handleWatch(w http.ResponseWriter, r *http.Request) {
@@ -773,9 +934,20 @@ func handleAPIFile(w http.ResponseWriter, r *http.Request) {
 	for _, home := range providerHomes {
 		allowedRoots = append(allowedRoots, filepath.Join(home, "agents"))
 		allowedRoots = append(allowedRoots, filepath.Join(home, "skills"))
+		allowedRoots = append(allowedRoots, filepath.Join(home, "projects"))
+		allowedRoots = append(allowedRoots, filepath.Join(home, "memories"))
+		allowedRoots = append(allowedRoots, filepath.Join(home, "rules"))
 	}
 
 	allowedFiles := make(map[string]bool)
+	for _, home := range providerHomes {
+		for _, name := range []string{"CLAUDE.md", "instructions.md", "AGENTS.md"} {
+			candidate := filepath.Join(home, name)
+			if resolved, err := filepath.EvalSymlinks(filepath.Clean(candidate)); err == nil {
+				allowedFiles[resolved] = true
+			}
+		}
+	}
 	for _, file := range loadConfigFiles() {
 		resolvedFile, err := filepath.EvalSymlinks(filepath.Clean(file.FilePath))
 		if err != nil {
@@ -887,7 +1059,7 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.html", truncate(sessionID, 8)))
-		fmt.Fprint(w, renderSessionPage(fullSession, projectName, nil, true, true, true, "light"))
+		fmt.Fprint(w, renderSessionPage(fullSession, projectName, nil, 0, true, true, true, "light"))
 	case "md", "markdown":
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.md", truncate(sessionID, 8)))
@@ -1039,6 +1211,49 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 						Priority:  3,
 					})
 				}
+			}
+		}
+	}
+
+	// Search memory files
+	if query != "" && len(results) < maxResults {
+		memData := loadMemories()
+		allMemFiles := make([]MemoryFile, 0)
+		allMemFiles = append(allMemFiles, memData.Global...)
+		allMemFiles = append(allMemFiles, memData.Rules...)
+		for _, p := range memData.Projects {
+			allMemFiles = append(allMemFiles, p.Files...)
+		}
+		allMemFiles = append(allMemFiles, memData.CodexMem...)
+
+		for _, f := range allMemFiles {
+			if providerFilter != "" && f.Provider != providerFilter {
+				continue
+			}
+			nameMatch := strings.Contains(strings.ToLower(f.Name), query)
+			contentMatch := false
+			snippet := ""
+			if !nameMatch && len(results) < maxResults {
+				content, err := os.ReadFile(f.FilePath)
+				if err == nil && strings.Contains(strings.ToLower(string(content)), query) {
+					contentMatch = true
+					snippet = extractSnippet(string(content), query, 60)
+				}
+			}
+			if nameMatch || contentMatch {
+				prio := 1
+				if contentMatch && !nameMatch {
+					prio = 3
+				}
+				results = append(results, searchResult{
+					URL:      "/memory#" + sanitizeID(f.Name),
+					Summary:  f.Name,
+					Project:  filepath.Base(filepath.Dir(filepath.Dir(f.FilePath))),
+					Provider: f.Provider,
+					Type:     "memory",
+					Snippet:  snippet,
+					Priority: prio,
+				})
 			}
 		}
 	}

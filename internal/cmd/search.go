@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -153,6 +154,30 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Search memory files
+	if searchType != "project" && searchType != "session" {
+		settings := config.Load()
+		for _, home := range []string{settings.ClaudeHome, settings.CodexHome} {
+			searchMemoryDir(home, "projects", query, filter, &results)
+			// Global files
+			for _, name := range []string{"CLAUDE.md", "instructions.md", "AGENTS.md"} {
+				path := filepath.Join(home, name)
+				if _, err := os.Stat(path); err != nil {
+					continue
+				}
+				if strings.Contains(strings.ToLower(name), query) {
+					results = append(results, searchResult{
+						Type:    "memory",
+						Project: filepath.Base(home),
+						Summary: name,
+						Time:    "-",
+						Priority: 1,
+					})
+				}
+			}
+		}
+	}
+
 	// Sort by priority
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Priority < results[j].Priority
@@ -195,6 +220,39 @@ func printSearchResults(results []searchResult) error {
 	}
 
 	return w.Flush()
+}
+
+func searchMemoryDir(home, subdir, query string, filter config.SessionFilter, results *[]searchResult) {
+	projectsDir := filepath.Join(home, subdir)
+	projEntries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return
+	}
+	for _, projEntry := range projEntries {
+		if !projEntry.IsDir() {
+			continue
+		}
+		memDir := filepath.Join(projectsDir, projEntry.Name(), "memory")
+		entries, err := os.ReadDir(memDir)
+		if err != nil {
+			continue
+		}
+		projDisplay := parser.GetProjectDisplayName(projEntry.Name())
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			if strings.Contains(strings.ToLower(entry.Name()), query) {
+				*results = append(*results, searchResult{
+					Type:     "memory",
+					Project:  projDisplay,
+					Summary:  entry.Name(),
+					Time:     "-",
+					Priority: 1,
+				})
+			}
+		}
+	}
 }
 
 func truncate(s string, max int) string {

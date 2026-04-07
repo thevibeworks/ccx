@@ -557,18 +557,239 @@ func TestHandleAPIFile_AllowsConfigFile(t *testing.T) {
 	}
 }
 
-func TestHandleAPIFile_DeniesProjectsFile(t *testing.T) {
+func TestHandleAPISearchFindsMemory(t *testing.T) {
 	dir := setupTestDir(t)
 	setTestBackend(dir)
 
+	// Create a CLAUDE.md in the test home
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("# Project rules\nAlways use snake_case\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/search?q=CLAUDE", nil)
+	w := httptest.NewRecorder()
+
+	handleAPISearch(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("returned %d", w.Code)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	results, ok := result["results"].([]any)
+	if !ok {
+		t.Fatal("results not an array")
+	}
+
+	found := false
+	for _, r := range results {
+		rm := r.(map[string]any)
+		if rm["type"] == "memory" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("search for 'CLAUDE' should find memory file CLAUDE.md")
+	}
+}
+
+func TestHandleAPISearchMemoryContent(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	memDir := filepath.Join(dir, "projects", "-test-project", "memory")
+	if err := os.MkdirAll(memDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memDir, "topic.md"), []byte("# Unique Search Term xyzzy42\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/search?q=xyzzy42", nil)
+	w := httptest.NewRecorder()
+
+	handleAPISearch(w, req)
+
+	var result map[string]any
+	json.Unmarshal(w.Body.Bytes(), &result)
+	results := result["results"].([]any)
+
+	found := false
+	for _, r := range results {
+		rm := r.(map[string]any)
+		if rm["type"] == "memory" && rm["snippet"] != nil && rm["snippet"] != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("search for 'xyzzy42' should find memory file by content with snippet")
+	}
+}
+
+func TestHandleProjectWithMemory(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	memDir := filepath.Join(dir, "projects", "-test-project", "memory")
+	if err := os.MkdirAll(memDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte("# Memory Index\n- [topic](topic.md)\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/project/-test-project", nil)
+	w := httptest.NewRecorder()
+
+	handleProject(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "mem-section") {
+		t.Error("project page should contain memory section")
+	}
+	if !strings.Contains(body, "MEMORY.md") {
+		t.Error("project page should list MEMORY.md")
+	}
+}
+
+func TestHandleProjectWithoutMemory(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/project/-test-project", nil)
+	w := httptest.NewRecorder()
+
+	handleProject(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "mem-section") {
+		t.Error("project page without memory files should NOT contain memory section")
+	}
+}
+
+func TestHandleMemory(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	// Create a memory file
+	memDir := filepath.Join(dir, "projects", "-test-project", "memory")
+	if err := os.MkdirAll(memDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte("- [test](test.md) — test memory\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/memory", nil)
+	w := httptest.NewRecorder()
+
+	handleMemory(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleMemory returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Memory") {
+		t.Error("page should contain Memory heading")
+	}
+	if !strings.Contains(body, "MEMORY.md") {
+		t.Error("page should list MEMORY.md file")
+	}
+	if !strings.Contains(body, "Project Memory") {
+		t.Error("page should have Project Memory section")
+	}
+}
+
+func TestHandleMemoryEmpty(t *testing.T) {
+	dir := t.TempDir()
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/memory", nil)
+	w := httptest.NewRecorder()
+
+	handleMemory(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleMemory returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "No memory") {
+		t.Error("empty state should show 'No memory' message")
+	}
+}
+
+func TestLoadMemories(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	// Create global instruction
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("# Global\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create rules dir
+	rulesDir := filepath.Join(dir, "rules")
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "style.md"), []byte("# Style\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create project memory
+	memDir := filepath.Join(dir, "projects", "-test-project", "memory")
+	if err := os.MkdirAll(memDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte("index\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memDir, "topic.md"), []byte("topic\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	data := loadMemories()
+
+	if len(data.Global) < 1 {
+		t.Error("expected at least 1 global instruction (CLAUDE.md)")
+	}
+	if len(data.Rules) != 1 {
+		t.Errorf("expected 1 rule, got %d", len(data.Rules))
+	}
+	if len(data.Projects) != 1 {
+		t.Fatalf("expected 1 project, got %d", len(data.Projects))
+	}
+	if len(data.Projects[0].Files) != 2 {
+		t.Errorf("expected 2 memory files, got %d", len(data.Projects[0].Files))
+	}
+	if data.TotalFiles < 4 {
+		t.Errorf("TotalFiles = %d, expected at least 4", data.TotalFiles)
+	}
+}
+
+func TestHandleAPIFile_AllowsProjectsFile(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	// projects/ is now an allowed root (for memory file access)
 	sessionFile := filepath.Join(dir, "projects", "-test-project", "test-session-123.jsonl")
 	req := httptest.NewRequest("GET", "/api/file?path="+url.QueryEscape(sessionFile), nil)
 	w := httptest.NewRecorder()
 
 	handleAPIFile(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("handleAPIFile returned %d, want %d. Body: %s", w.Code, http.StatusForbidden, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleAPIFile returned %d, want %d", w.Code, http.StatusOK)
 	}
 }
 

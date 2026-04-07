@@ -162,7 +162,7 @@ func renderIndexPage(projects []*parser.Project, totalSessions int, search, sort
 	return b.String()
 }
 
-func renderProjectPage(project *parser.Project, sessions []*parser.Session, allProjects []*parser.Project, search, sortBy string) string {
+func renderProjectPage(project *parser.Project, sessions []*parser.Session, allProjects []*parser.Project, memFiles []MemoryFile, search, sortBy string) string {
 	var b strings.Builder
 
 	b.WriteString(pageHeader(project.Name+" - ccx", "light"))
@@ -193,6 +193,27 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 	b.WriteString(fmt.Sprintf(`<h1>%s</h1>`, html.EscapeString(project.Name)))
 	b.WriteString(fmt.Sprintf(`<div class="stats">%d sessions</div>`, len(sessions)))
 	b.WriteString(`</div>`)
+
+	// Memory section (above session list)
+	if len(memFiles) > 0 {
+		b.WriteString(`<details class="mem-section" id="mem-section" open>`)
+		b.WriteString(fmt.Sprintf(`<summary class="mem-section-header"><span class="mem-icon">◇</span> Memory <span class="mem-badge">%d</span></summary>`, len(memFiles)))
+		b.WriteString(`<div class="mem-section-body">`)
+		for i, f := range memFiles {
+			provClass := "mem-file-cc"
+			if f.Provider == "codex" {
+				provClass = "mem-file-cx"
+			}
+			b.WriteString(fmt.Sprintf(`<details class="mem-file %s" data-path="%s" data-idx="%d">`, provClass, html.EscapeString(f.FilePath), i))
+			b.WriteString(fmt.Sprintf(`<summary class="mem-file-row"><code class="mem-file-name">%s</code><span class="mem-file-path">%s</span><span class="expand-icon">▶</span></summary>`,
+				html.EscapeString(f.Name), html.EscapeString(truncatePath(f.FilePath, 50))))
+			b.WriteString(fmt.Sprintf(`<div class="file-viewer" id="mem-%d">`, i))
+			b.WriteString(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">fmt</button><button class="mode-btn active" data-mode="raw">raw</button><button class="copy-btn">copy</button></div>`)
+			b.WriteString(`<div class="file-content"><div class="loading">Loading...</div></div>`)
+			b.WriteString(`</div></details>`)
+		}
+		b.WriteString(`</div></details>`)
+	}
 
 	b.WriteString(`<div class="controls">`)
 	b.WriteString(`<div class="search-wrap">`)
@@ -248,12 +269,16 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 	b.WriteString(`</div>`)
 	b.WriteString(renderFooter())
 	b.WriteString(indexJS())
+	if len(memFiles) > 0 {
+		b.WriteString(memSectionCSS())
+		b.WriteString(fileCardJS())
+	}
 	b.WriteString(pageFooter())
 
 	return b.String()
 }
 
-func renderSessionPage(session *parser.Session, projectName string, allSessions []*parser.Session, showThinking, showTools, loadAll bool, theme string) string {
+func renderSessionPage(session *parser.Session, projectName string, allSessions []*parser.Session, memCount int, showThinking, showTools, loadAll bool, theme string) string {
 	var b strings.Builder
 
 	title := fmt.Sprintf("Session %s - ccx", session.ID[:8])
@@ -402,6 +427,10 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	b.WriteString(`<div class="info-section-header">Context</div>`)
 	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Project</span><a href="/project/%s">%s</a></div>`,
 		html.EscapeString(projectName), html.EscapeString(projDisplay)))
+	if memCount > 0 {
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Memory</span><a href="/project/%s#mem-section" class="mem-link">%d files</a></div>`,
+			html.EscapeString(projectName), memCount))
+	}
 	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Session</span><code class="copyable">%s</code><button class="copy-btn-sm" data-copy="%s">⧉</button></div>`,
 		html.EscapeString(session.ID), html.EscapeString(session.ID)))
 	if session.Slug != "" {
@@ -2137,6 +2166,306 @@ document.querySelectorAll('.file-toolbar .copy-btn').forEach(btn => {
 </script>`
 }
 
+func memSectionCSS() string {
+	return `<style>
+.mem-section {
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  border-left: 3px solid #eab308;
+}
+.mem-section-header {
+  padding: 10px 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  user-select: none;
+}
+.mem-section-header:hover { background: var(--bg-tertiary); border-radius: var(--radius); }
+.mem-icon { color: #eab308; font-size: 12px; }
+.mem-badge {
+  background: #eab30818; color: #eab308;
+  font-size: 11px; font-weight: 600;
+  padding: 1px 7px; border-radius: 10px;
+  margin-left: auto;
+}
+.mem-section-body { padding: 0 10px 10px; }
+.mem-file {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+.mem-file:last-child { margin-bottom: 0; }
+.mem-file-row {
+  padding: 6px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.mem-file-row:hover { background: var(--bg-tertiary); }
+.mem-file-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.mem-file-path {
+  flex: 1; font-size: 11px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: right;
+}
+.mem-file .expand-icon { font-size: 9px; color: var(--text-muted); transition: transform 0.15s; flex-shrink: 0; }
+.mem-file[open] .expand-icon { transform: rotate(90deg); }
+.mem-file-cc { border-left: 2px solid #da7756; }
+.mem-file-cx { border-left: 2px solid #3b82f6; }
+.mem-file .file-viewer { border-top: 1px solid var(--border); }
+.mem-file .file-toolbar {
+  display: flex; gap: 4px; padding: 6px 10px;
+  background: var(--bg-tertiary); border-bottom: 1px solid var(--border);
+}
+.mem-file .file-toolbar .mode-btn,
+.mem-file .file-toolbar .copy-btn {
+  padding: 2px 8px; font-size: 11px;
+  border: 1px solid var(--border); border-radius: 3px;
+  background: var(--bg); color: var(--text-muted); cursor: pointer;
+}
+.mem-file .file-toolbar .mode-btn:hover,
+.mem-file .file-toolbar .copy-btn:hover { background: var(--bg-secondary); color: var(--text); }
+.mem-file .file-toolbar .mode-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+.mem-file .file-toolbar .copy-btn { margin-left: auto; }
+.mem-file .file-content {
+  padding: 12px; max-height: 400px; overflow: auto; scrollbar-width: thin;
+}
+.mem-file .file-content .loading { color: var(--text-muted); font-style: italic; font-size: 12px; }
+.mem-file .file-content .source-raw {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.6; color: var(--text);
+}
+.mem-file .file-content .fmt { font-size: 13px; line-height: 1.6; }
+.mem-file .file-content .fmt h1 { font-size: 1.2em; margin: 12px 0 6px; }
+.mem-file .file-content .fmt h2 { font-size: 1.1em; margin: 10px 0 4px; }
+.mem-file .file-content .fmt h3 { font-size: 1.05em; margin: 8px 0 4px; }
+.mem-file .file-content .fmt p { margin: 4px 0; }
+.mem-file .file-content .fmt code { background: var(--bg-tertiary); padding: 1px 4px; border-radius: 3px; font-size: 0.9em; }
+.mem-file .file-content .fmt pre.code-block { background: var(--bg-tertiary); padding: 8px; border-radius: 4px; overflow-x: auto; margin: 6px 0; }
+.mem-file .file-content .fmt ul { padding-left: 20px; margin: 4px 0; }
+.mem-file .file-content .fmt li { margin: 2px 0; }
+</style>`
+}
+
+func fileCardJS() string {
+	return `<script>
+document.querySelectorAll('.mem-file, .file-card').forEach(card => {
+  card.addEventListener('toggle', async function() {
+    if (!this.open) return;
+    const viewer = this.querySelector('.file-viewer');
+    if (!viewer) return;
+    const content = viewer.querySelector('.file-content');
+    if (!content || content.dataset.loaded) return;
+    const path = this.dataset.path;
+    try {
+      const resp = await fetch('/api/file?path=' + encodeURIComponent(path));
+      if (!resp.ok) throw new Error('Failed to load');
+      const data = await resp.json();
+      content.dataset.raw = data.content;
+      content.dataset.loaded = '1';
+      content.innerHTML = '<pre class="source-raw">' + escapeHtmlMem(data.content) + '</pre>';
+    } catch (e) {
+      content.innerHTML = '<div style="color:var(--text-muted);font-style:italic">Failed to load file</div>';
+    }
+  });
+});
+
+function escapeHtmlMem(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function showFmtMem(el, raw) {
+  el.innerHTML = '<div class="fmt">' + renderMdMem(raw) + '</div>';
+}
+function showRawMem(el, raw) {
+  el.innerHTML = '<pre class="source-raw">' + escapeHtmlMem(raw) + '</pre>';
+}
+function renderMdMem(s) {
+  const BT = '` + "`" + `';
+  const blocks = [];
+  s = s.replace(new RegExp(BT+BT+BT+'(\\w*)\\n([\\s\\S]*?)'+BT+BT+BT,'g'), (m,lang,code) => {
+    blocks.push('<pre class="code-block"><code>' + escapeHtmlMem(code) + '</code></pre>');
+    return '%%CB'+blocks.length+'%%';
+  });
+  s = escapeHtmlMem(s)
+    .replace(/^#### (.+)$/gm,'<h4>$1</h4>')
+    .replace(/^### (.+)$/gm,'<h3>$1</h3>')
+    .replace(/^## (.+)$/gm,'<h2>$1</h2>')
+    .replace(/^# (.+)$/gm,'<h1>$1</h1>')
+    .replace(/^\- (.+)$/gm,'<li>$1</li>')
+    .replace(/^\* (.+)$/gm,'<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/g,'<ul>$&</ul>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,'<em>$1</em>')
+    .replace(new RegExp(BT+'([^'+BT+']+)'+BT,'g'),'<code>$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(m, text, url) {
+      if (/^https?:\/\//i.test(url)) return '<a href="'+url+'" target="_blank" rel="noopener noreferrer">'+text+'</a>';
+      return text+' ('+url+')';
+    })
+    .replace(/\n\n+/g,'</p><p>')
+    .replace(/\n/g,'<br>');
+  blocks.forEach((b,i) => { s = s.replace('%%CB'+(i+1)+'%%', b); });
+  return '<p>' + s + '</p>';
+}
+
+document.querySelectorAll('.mem-file .file-toolbar .mode-btn, .file-card .file-toolbar .mode-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    const viewer = this.closest('.file-viewer');
+    const content = viewer.querySelector('.file-content');
+    viewer.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+    const raw = content.dataset.raw || '';
+    if (this.dataset.mode === 'raw') showRawMem(content, raw);
+    else showFmtMem(content, raw);
+  });
+});
+
+document.querySelectorAll('.mem-file .file-toolbar .copy-btn, .file-card .file-toolbar .copy-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    const viewer = this.closest('.file-viewer');
+    const content = viewer.querySelector('.file-content');
+    const raw = content.dataset.raw || content.innerText || '';
+    navigator.clipboard.writeText(raw);
+    this.textContent = 'copied!';
+    setTimeout(() => this.textContent = 'copy', 1500);
+  });
+});
+</script>`
+}
+
+func renderMemoryPage(data *MemoryData) string {
+	var b strings.Builder
+
+	b.WriteString(pageHeader("Memory - ccx", "light"))
+	b.WriteString(renderTopNav("", ""))
+	b.WriteString(`<div class="layout">`)
+	b.WriteString(renderSidebar("memory"))
+
+	b.WriteString(`<main class="main-content">`)
+	b.WriteString(fmt.Sprintf(`<h1>Memory <span class="mem-count">(%d files)</span></h1>`, data.TotalFiles))
+
+	idx := 0
+
+	// Section 1: Global Instructions
+	if len(data.Global) > 0 {
+		b.WriteString(`<section class="settings-section">`)
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◇</span> Global Instructions <span class="count">(%d)</span></h2>`, len(data.Global)))
+		b.WriteString(`<div class="file-card-list">`)
+		for _, f := range data.Global {
+			renderMemoryFileCard(&b, f, idx)
+			idx++
+		}
+		b.WriteString(`</div></section>`)
+	}
+
+	// Section 2: User Rules
+	if len(data.Rules) > 0 {
+		b.WriteString(`<section class="settings-section">`)
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◆</span> User Rules <span class="count">(%d)</span></h2>`, len(data.Rules)))
+		b.WriteString(`<div class="file-card-list">`)
+		for _, f := range data.Rules {
+			renderMemoryFileCard(&b, f, idx)
+			idx++
+		}
+		b.WriteString(`</div></section>`)
+	}
+
+	// Section 3: Per-Project Memory
+	if len(data.Projects) > 0 {
+		totalProjectFiles := 0
+		for _, p := range data.Projects {
+			totalProjectFiles += len(p.Files)
+		}
+		b.WriteString(`<section class="settings-section">`)
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◈</span> Project Memory <span class="count">(%d projects, %d files)</span></h2>`, len(data.Projects), totalProjectFiles))
+
+		for _, proj := range data.Projects {
+			badge := `<span class="prov-pill prov-pill-cc">CC</span>`
+			if proj.Provider == "codex" {
+				badge = `<span class="prov-pill prov-pill-cx">CX</span>`
+			}
+			b.WriteString(`<div class="mem-project-group">`)
+			b.WriteString(fmt.Sprintf(`<div class="mem-project-header"><strong>%s</strong> %s <code class="mem-project-path">%s</code></div>`,
+				html.EscapeString(proj.Name), badge, html.EscapeString(proj.Path)))
+			b.WriteString(`<div class="file-card-list">`)
+			for _, f := range proj.Files {
+				renderMemoryFileCard(&b, f, idx)
+				idx++
+			}
+			b.WriteString(`</div></div>`)
+		}
+		b.WriteString(`</section>`)
+	}
+
+	// Section 4: Codex Memories
+	if len(data.CodexMem) > 0 {
+		b.WriteString(`<section class="settings-section">`)
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◌</span> Codex Memories <span class="count">(%d)</span></h2>`, len(data.CodexMem)))
+		b.WriteString(`<div class="file-card-list">`)
+		for _, f := range data.CodexMem {
+			renderMemoryFileCard(&b, f, idx)
+			idx++
+		}
+		b.WriteString(`</div></section>`)
+	}
+
+	if data.TotalFiles == 0 {
+		b.WriteString(`<div class="empty-state">No memory or instruction files found.</div>`)
+	}
+
+	b.WriteString(`</main>`)
+	b.WriteString(`</div>`)
+	b.WriteString(renderFooter())
+	b.WriteString(indexJS())
+	b.WriteString(memoryPageCSS())
+	b.WriteString(pageFooter())
+
+	return b.String()
+}
+
+func renderMemoryFileCard(b *strings.Builder, f MemoryFile, idx int) {
+	provClass := "mem-card-cc"
+	if f.Provider == "codex" {
+		provClass = "mem-card-cx"
+	}
+	b.WriteString(fmt.Sprintf(`<details class="file-card %s" data-path="%s" data-idx="%d">`, provClass, html.EscapeString(f.FilePath), idx))
+	b.WriteString(fmt.Sprintf(`<summary><code>%s</code><span class="file-path">%s</span><span class="expand-icon">▶</span></summary>`,
+		html.EscapeString(f.Name), html.EscapeString(f.FilePath)))
+	b.WriteString(fmt.Sprintf(`<div class="file-viewer" id="mem-%d">`, idx))
+	b.WriteString(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">fmt</button><button class="mode-btn active" data-mode="raw">raw</button><button class="copy-btn">copy</button></div>`)
+	b.WriteString(`<div class="file-content"><div class="loading">Loading...</div></div>`)
+	b.WriteString(`</div></details>`)
+}
+
+func memoryPageCSS() string {
+	return settingsPageCSS() + `<style>
+.mem-count { color: var(--text-muted); font-weight: normal; font-size: 14px; }
+.mem-project-group {
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px; margin-bottom: 12px;
+}
+.mem-project-header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+.mem-project-path { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+.prov-pill { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600; }
+.prov-pill-cc { background: #da775622; color: #da7756; }
+.prov-pill-cx { background: #3b82f622; color: #3b82f6; }
+.mem-card-cc { border-left: 3px solid #da7756; }
+.mem-card-cx { border-left: 3px solid #3b82f6; }
+.empty-state { color: var(--text-muted); font-style: italic; padding: 24px 0; }
+</style>`
+}
+
 func renderTopNav(projectName, sessionID string) string {
 	var b strings.Builder
 	b.WriteString(`<header class="top-nav">`)
@@ -2183,6 +2512,7 @@ func renderSidebar(active string) string {
 	}{
 		{"/", "Projects", "projects"},
 		{"/search", "Search", "search"},
+		{"/memory", "Memory", "memory"},
 		{"/settings", "Settings", "settings"},
 	}
 
