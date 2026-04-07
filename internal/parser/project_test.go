@@ -59,7 +59,7 @@ func TestDiscoverProjectsNonexistentDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("should return empty, not error: %v", err)
 	}
-	if projects != nil && len(projects) != 0 {
+	if len(projects) != 0 {
 		t.Errorf("expected nil/empty, got %d", len(projects))
 	}
 }

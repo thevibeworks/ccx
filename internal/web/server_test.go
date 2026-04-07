@@ -615,7 +615,9 @@ func TestHandleAPISearchMemoryContent(t *testing.T) {
 	handleAPISearch(w, req)
 
 	var result map[string]any
-	json.Unmarshal(w.Body.Bytes(), &result)
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
 	results := result["results"].([]any)
 
 	found := false
