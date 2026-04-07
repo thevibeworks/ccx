@@ -1,14 +1,12 @@
 # ccx
 
-**Session viewer for Claude Code** - Browse, search, and export your conversations.
-
-Inspired by [Simon Willison's claude-code-transcripts](https://github.com/simonw/claude-code-transcripts) ([announcement](https://x.com/simonw/status/1872004339799512305)) - rebuilt in Go with live tailing, web UI, and two-panel navigation.
+**Session viewer for coding agents** — Browse, search, and export conversations from Claude Code and Codex.
 
 ```
 ccx web
 ```
 
-That's it. Opens a browser at `localhost:8080`.
+Opens a browser at `localhost:8080`. That's it.
 
 ## Screenshots
 
@@ -27,20 +25,30 @@ That's it. Opens a browser at `localhost:8080`.
 
 </details>
 
-## Features
+## What it does
 
-- **Two-panel navigation** - Projects → Sessions → Conversation
-- **Live tail mode** - Watch active sessions in real-time
-- **In-session search** - Filter by User, Response, Tools, Agents, Thinking
-- **Tree-aware threading** - parentUuid, sidechains, compaction markers
-- **Collapsible blocks** - Thinking, tool calls, agent responses
-- **Export** - HTML, Markdown, Org-mode, JSON
-- **Keyboard shortcuts** - `j/k` scroll, `/` search, `z` fold, `r` refresh, `d` theme
+ccx reads session files from `~/.claude/` and `~/.codex/` and gives you a fast, keyboard-driven interface to browse them.
 
-## Installation
+- **Multi-provider** — Claude Code + Codex sessions merged by project, with provider badges
+- **Two-panel navigation** — Projects → Sessions → Conversation tree
+- **Live tail** — Watch active sessions update in real-time
+- **In-session search** — Filter by User, Response, Tools, Agents, Thinking
+- **Memory inspector** — View CLAUDE.md, MEMORY.md, AGENTS.md per project
+- **Brief export** — Conversation-only mode strips tool noise
+- **Export** — HTML, Markdown, Org-mode, JSON
+- **Provider filter** — `--provider cc` or `--provider cx` on any command
+- **Date filter** — `--after 2026-03-01 --before 2026-04-01`
+- **Keyboard shortcuts** — `j/k` scroll, `/` search, `z` fold, `r` refresh, `d` theme
 
-Requires Go 1.24+ (pure Go, no C compiler needed).
+Single binary, zero dependencies, read-only. Never touches your session files.
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thevibeworks/ccx/main/install.sh | bash
+```
+
+Or via Go:
 ```bash
 go install github.com/thevibeworks/ccx/cmd/ccx@latest
 ```
@@ -52,38 +60,58 @@ cd ccx && make build
 ./bin/ccx web
 ```
 
-## CLI Commands
+## Usage
 
 ```bash
-ccx web                   # Start web UI (recommended)
-ccx projects              # List all projects
-ccx sessions [project]    # List sessions
-ccx view [session]        # View in terminal
-ccx export -f html        # Export to HTML/Markdown/Org
-ccx search QUERY          # Search projects and sessions
-ccx doctor                # Check configuration
+ccx web                          # Start web UI (recommended)
+ccx projects                     # List all projects
+ccx sessions                     # List recent sessions
+ccx sessions --provider=cx       # Codex sessions only
+ccx sessions --after=2026-03-01  # Date filtered
+ccx view [session]               # View in terminal
+ccx export -f html --brief       # Export conversation-only HTML
+ccx search "auth bug"            # Search across sessions + memory
+ccx doctor                       # Check setup
 ```
 
 ## Configuration
 
-ccx reads from `~/.claude/` (or `CLAUDE_CODE_HOME`) and never modifies those files.
-
-```bash
-# Override Claude Code home
-ccx --claude-home /path/to/claude web
-CLAUDE_CODE_HOME=/path/to/claude ccx web
-
-# Config locations
-~/.config/ccx/config.yaml     # User config
-~/.local/share/ccx/           # ccx data (stars, cache)
+```yaml
+# ~/.config/ccx/config.yaml
+theme: dark
+show_thinking: collapsed
+default_format: html
+providers:
+  claude-code:
+    enabled: true
+  codex:
+    enabled: true
 ```
 
-## Data Safety
+Override provider homes:
+```bash
+ccx --claude-home /path web
+ccx --codex-home /path web
+```
 
-ccx treats Claude Code data as **read-only**. It only writes to its own directories:
-- `$XDG_CONFIG_HOME/ccx/` - configuration
-- `$XDG_DATA_HOME/ccx/` - SQLite data (stars, if using web UI)
-- Export files you explicitly request
+## Data safety
+
+ccx treats all agent data as **read-only**. Writes only to its own directories:
+- `$XDG_CONFIG_HOME/ccx/` — config
+- `$XDG_DATA_HOME/ccx/` — stars database
+
+## Claude Code skill
+
+ccx ships as a Claude Code skill. Install alongside the binary:
+```bash
+curl -fsSL https://raw.githubusercontent.com/thevibeworks/ccx/main/install.sh | bash
+```
+
+Or manually copy `skills/ccx/` to `~/.claude/skills/ccx/`.
+
+## Credits
+
+Inspired by [Simon Willison's claude-code-transcripts](https://github.com/simonw/claude-code-transcripts). Rebuilt in Go with live tailing, multi-provider support, and a web UI.
 
 ## License
 
