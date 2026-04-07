@@ -12,6 +12,7 @@ import (
 
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/provider"
 )
 
 var searchCmd = &cobra.Command{
@@ -29,15 +30,23 @@ Examples:
 }
 
 var (
-	searchType  string
-	searchLimit int
-	searchJSON  bool
+	searchType     string
+	searchLimit    int
+	searchJSON     bool
+	searchProvider string
+	searchAfter    string
+	searchBefore   string
+	searchModel    string
 )
 
 func init() {
 	searchCmd.Flags().StringVarP(&searchType, "type", "t", "", "filter by type: project, session")
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "n", 20, "max results")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "output as JSON")
+	searchCmd.Flags().StringVarP(&searchProvider, "provider", "p", "", "filter by provider: cc, cx, all")
+	searchCmd.Flags().StringVar(&searchAfter, "after", "", "sessions after date (YYYY-MM-DD)")
+	searchCmd.Flags().StringVar(&searchBefore, "before", "", "sessions before date (YYYY-MM-DD)")
+	searchCmd.Flags().StringVar(&searchModel, "model", "", "filter by model name substring")
 
 	rootCmd.AddCommand(searchCmd)
 }
@@ -53,9 +62,24 @@ type searchResult struct {
 
 func runSearch(cmd *cobra.Command, args []string) error {
 	query := strings.ToLower(strings.Join(args, " "))
-	projectsDir := config.ProjectsDir()
+	backend := provider.Default()
 
-	projects, err := parser.DiscoverProjects(projectsDir)
+	after, err := config.ParseDate(searchAfter)
+	if err != nil {
+		return fmt.Errorf("invalid --after date: %w", err)
+	}
+	before, err := config.ParseBeforeDate(searchBefore)
+	if err != nil {
+		return fmt.Errorf("invalid --before date: %w", err)
+	}
+	filter := config.SessionFilter{
+		Provider: config.NormalizeProvider(searchProvider),
+		After:    after,
+		Before:   before,
+		Model:    searchModel,
+	}
+
+	projects, err := backend.DiscoverProjects()
 	if err != nil {
 		return fmt.Errorf("failed to discover projects: %w", err)
 	}
@@ -68,9 +92,21 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 		// Project name match (skip if filtering to sessions only)
 		if searchType != "session" {
-			if strings.Contains(strings.ToLower(p.EncodedName), query) ||
+			nameMatch := strings.Contains(strings.ToLower(p.EncodedName), query) ||
 				strings.Contains(strings.ToLower(projPath), query) ||
-				strings.Contains(strings.ToLower(projDisplay), query) {
+				strings.Contains(strings.ToLower(projDisplay), query)
+
+			providerMatch := filter.Provider == ""
+			if !providerMatch {
+				for _, s := range p.Sessions {
+					if s.Provider == filter.Provider {
+						providerMatch = true
+						break
+					}
+				}
+			}
+
+			if nameMatch && providerMatch {
 				results = append(results, searchResult{
 					Type:     "project",
 					Project:  projDisplay,
@@ -86,6 +122,10 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 
 		for _, s := range p.Sessions {
+			if !filter.IsEmpty() && !filter.Match(s) {
+				continue
+			}
+
 			// Session ID match (high priority)
 			if strings.HasPrefix(strings.ToLower(s.ID), query) {
 				results = append(results, searchResult{

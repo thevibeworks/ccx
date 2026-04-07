@@ -9,15 +9,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/provider"
 )
 
 var projectsCmd = &cobra.Command{
 	Use:     "projects",
 	Aliases: []string{"project", "proj", "p"},
 	Short:   "List all projects",
-	Long:    `List all Claude Code projects found in CLAUDE_CODE_HOME.`,
+	Long:    `List projects discovered from the selected session provider.`,
 	RunE:    runProjects,
 }
 
@@ -34,16 +34,18 @@ func init() {
 }
 
 func runProjects(cmd *cobra.Command, args []string) error {
-	projectsDir := config.ProjectsDir()
+	backend := provider.Default()
 
-	projects, err := parser.DiscoverProjects(projectsDir)
+	projects, err := backend.DiscoverProjects()
 	if err != nil {
 		return fmt.Errorf("failed to discover projects: %w", err)
 	}
 
 	if len(projects) == 0 {
 		fmt.Println("No projects found.")
-		fmt.Printf("Looked in: %s\n", projectsDir)
+		for _, home := range backend.Homes() {
+			fmt.Printf("Looked in: %s\n", home)
+		}
 		return nil
 	}
 

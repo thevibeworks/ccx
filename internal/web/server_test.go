@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thevibeworks/ccx/internal/db"
+	"github.com/thevibeworks/ccx/internal/provider/claude"
 )
 
 func setupTestDir(t *testing.T) string {
@@ -34,10 +35,15 @@ func setupTestDir(t *testing.T) string {
 	return dir
 }
 
+func setTestBackend(dir string) {
+	backend := claude.NewWithProjectsDir(dir, filepath.Join(dir, "projects"))
+	providerHomes = backend.Homes()
+	sessionProvider = backend
+}
+
 func TestHandleIndex(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -67,8 +73,7 @@ func TestHandleIndex_NotFoundForOtherPaths(t *testing.T) {
 
 func TestHandleAPIProjects(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/api/projects", nil)
 	w := httptest.NewRecorder()
@@ -91,8 +96,7 @@ func TestHandleAPIProjects(t *testing.T) {
 
 func TestHandleAPISessions(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/api/sessions/-test-project", nil)
 	w := httptest.NewRecorder()
@@ -115,8 +119,7 @@ func TestHandleAPISessions(t *testing.T) {
 
 func TestHandleAPISessions_NotFound(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/api/sessions/-nonexistent-project", nil)
 	w := httptest.NewRecorder()
@@ -130,8 +133,7 @@ func TestHandleAPISessions_NotFound(t *testing.T) {
 
 func TestHandleAPIStats(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/api/stats", nil)
 	w := httptest.NewRecorder()
@@ -157,8 +159,7 @@ func TestHandleAPIStats(t *testing.T) {
 
 func TestHandleAPISearch(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/api/search?q=Hello", nil)
 	w := httptest.NewRecorder()
@@ -201,8 +202,7 @@ func TestHandleAPISearch_EmptyQuery(t *testing.T) {
 
 func TestHandleProject(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/project/-test-project", nil)
 	w := httptest.NewRecorder()
@@ -221,8 +221,7 @@ func TestHandleProject(t *testing.T) {
 
 func TestHandleProject_NotFound(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/project/-nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -236,8 +235,7 @@ func TestHandleProject_NotFound(t *testing.T) {
 
 func TestHandleSession(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/session/-test-project/test-session-123", nil)
 	w := httptest.NewRecorder()
@@ -256,8 +254,7 @@ func TestHandleSession(t *testing.T) {
 
 func TestHandleSession_NotFound(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/session/-test-project/nonexistent-session", nil)
 	w := httptest.NewRecorder()
@@ -271,8 +268,7 @@ func TestHandleSession_NotFound(t *testing.T) {
 
 func TestHandleAPIExport_JSON(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/api/export/-test-project/test-session-123?format=json", nil)
 	w := httptest.NewRecorder()
@@ -291,8 +287,7 @@ func TestHandleAPIExport_JSON(t *testing.T) {
 
 func TestHandleAPIExport_Markdown(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/api/export/-test-project/test-session-123?format=md", nil)
 	w := httptest.NewRecorder()
@@ -311,8 +306,7 @@ func TestHandleAPIExport_Markdown(t *testing.T) {
 
 func TestHandleAPIExport_NotFound(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	req := httptest.NewRequest("GET", "/api/export/-test-project/nonexistent?format=json", nil)
 	w := httptest.NewRecorder()
@@ -326,8 +320,7 @@ func TestHandleAPIExport_NotFound(t *testing.T) {
 
 func TestHandleStar(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	// Initialize db for stars
 	dbPath := filepath.Join(dir, "ccx.db")
@@ -350,8 +343,7 @@ func TestHandleStar(t *testing.T) {
 
 func TestHandleGetStars(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	// Initialize db for stars
 	dbPath := filepath.Join(dir, "ccx.db")
@@ -375,10 +367,141 @@ func TestHandleGetStars(t *testing.T) {
 	}
 }
 
+func TestHandleAPISessions_WithProviderFilter(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/api/sessions/-test-project?provider=codex", nil)
+	w := httptest.NewRecorder()
+
+	handleAPISessions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var sessions []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &sessions); err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	// claude backend sessions filtered by codex → 0 results
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions (wrong provider), got %d", len(sessions))
+	}
+}
+
+func TestHandleAPISessions_WithQueryFilter(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/api/sessions/-test-project?q=nonexistent-query-xyz", nil)
+	w := httptest.NewRecorder()
+
+	handleAPISessions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var sessions []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &sessions); err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions (query miss), got %d", len(sessions))
+	}
+}
+
+func TestHandleAPISessions_NoFilterReturnsAll(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/api/sessions/-test-project", nil)
+	w := httptest.NewRecorder()
+
+	handleAPISessions(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var sessions []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &sessions); err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Errorf("expected 1 session (no filter), got %d", len(sessions))
+	}
+	// Check new fields are present
+	s := sessions[0]
+	if _, ok := s["provider"]; !ok {
+		t.Error("missing provider field")
+	}
+	if _, ok := s["messages"]; !ok {
+		t.Error("missing messages field")
+	}
+}
+
+func TestParseSessionFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		wantProv string
+		wantQ    string
+	}{
+		{"empty", "", "", ""},
+		{"provider cc", "provider=cc", "claude-code", ""},
+		{"provider codex", "provider=codex", "codex", ""},
+		{"query", "q=auth+bug", "", "auth bug"},
+		{"combined", "provider=cx&q=test&model=opus", "codex", "test"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u, _ := url.Parse("/api/sessions/proj?" + tt.query)
+			req := &http.Request{URL: u}
+			f := parseSessionFilter(req)
+			if f.Provider != tt.wantProv {
+				t.Errorf("Provider = %q, want %q", f.Provider, tt.wantProv)
+			}
+			if f.Query != tt.wantQ {
+				t.Errorf("Query = %q, want %q", f.Query, tt.wantQ)
+			}
+		})
+	}
+}
+
+func TestHandleSettings(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/settings", nil)
+	w := httptest.NewRecorder()
+
+	handleSettings(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Providers") {
+		t.Error("settings page should contain Providers section")
+	}
+	if !strings.Contains(body, "ccx Configuration") {
+		t.Error("settings page should contain ccx Configuration section")
+	}
+	if !strings.Contains(body, "Claude Code") {
+		t.Error("settings page should mention Claude Code provider")
+	}
+	if !strings.Contains(body, "Codex") {
+		t.Error("settings page should mention Codex provider")
+	}
+}
+
 func TestHandleAPIFile_AllowsAgentsFile(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
 	agentsDir := filepath.Join(dir, "agents")
 	if err := os.MkdirAll(agentsDir, 0755); err != nil {
@@ -407,12 +530,38 @@ func TestHandleAPIFile_AllowsAgentsFile(t *testing.T) {
 	}
 }
 
+func TestHandleAPIFile_AllowsConfigFile(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	configFile := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(configFile, []byte("model = \"gpt-5.4\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/file?path="+url.QueryEscape(configFile), nil)
+	w := httptest.NewRecorder()
+
+	handleAPIFile(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleAPIFile returned %d, want %d. Body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp["content"] != "model = \"gpt-5.4\"\n" {
+		t.Fatalf("content = %q, want config.toml content", resp["content"])
+	}
+}
+
 func TestHandleAPIFile_DeniesProjectsFile(t *testing.T) {
 	dir := setupTestDir(t)
-	projectsDir = filepath.Join(dir, "projects")
-	claudeHome = dir
+	setTestBackend(dir)
 
-	sessionFile := filepath.Join(projectsDir, "-test-project", "test-session-123.jsonl")
+	sessionFile := filepath.Join(dir, "projects", "-test-project", "test-session-123.jsonl")
 	req := httptest.NewRequest("GET", "/api/file?path="+url.QueryEscape(sessionFile), nil)
 	w := httptest.NewRecorder()
 
@@ -425,7 +574,7 @@ func TestHandleAPIFile_DeniesProjectsFile(t *testing.T) {
 
 func TestHandleAPIFile_DeniesPrefixConfusion(t *testing.T) {
 	dir := t.TempDir()
-	claudeHome = dir
+	setTestBackend(dir)
 
 	agentsDir := filepath.Join(dir, "agents")
 	if err := os.MkdirAll(agentsDir, 0755); err != nil {
@@ -453,7 +602,7 @@ func TestHandleAPIFile_DeniesPrefixConfusion(t *testing.T) {
 
 func TestHandleAPIFile_DeniesSymlinkEscape(t *testing.T) {
 	dir := t.TempDir()
-	claudeHome = dir
+	setTestBackend(dir)
 
 	agentsDir := filepath.Join(dir, "agents")
 	if err := os.MkdirAll(agentsDir, 0755); err != nil {

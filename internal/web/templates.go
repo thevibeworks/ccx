@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	ccxconfig "github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
 )
 
@@ -22,6 +24,75 @@ func sanitizeID(s string) string {
 func isSafeURL(url string) bool {
 	lower := strings.ToLower(url)
 	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+}
+
+func projectProviders(p *parser.Project) []string {
+	seen := make(map[string]bool)
+	for _, s := range p.Sessions {
+		if s.Provider != "" {
+			seen[s.Provider] = true
+		}
+	}
+	var providers []string
+	for _, id := range []string{"claude-code", "codex"} {
+		if seen[id] {
+			providers = append(providers, id)
+		}
+	}
+	return providers
+}
+
+func projectProvider(p *parser.Project) string {
+	providers := projectProviders(p)
+	if len(providers) == 1 {
+		return providers[0]
+	}
+	if len(providers) > 1 {
+		return "multi"
+	}
+	return ""
+}
+
+func providerTag(id string) string {
+	switch id {
+	case "claude-code":
+		return "CC"
+	case "codex":
+		return "CX"
+	default:
+		return ""
+	}
+}
+
+func providerBadgeHTML(id string) string {
+	tag := providerTag(id)
+	if tag == "" {
+		return ""
+	}
+	return fmt.Sprintf(`<span class="provider-badge provider-%s">%s</span>`, tag, tag)
+}
+
+func providerBadgesHTML(providers []string) string {
+	var b strings.Builder
+	for _, id := range providers {
+		b.WriteString(providerBadgeHTML(id))
+	}
+	return b.String()
+}
+
+func parseProviderQuery(q string) (provider, query string) {
+	q = strings.TrimSpace(q)
+	for _, prefix := range []string{"cc:", "claude-code:", "claude:"} {
+		if strings.HasPrefix(strings.ToLower(q), prefix) {
+			return "claude-code", strings.TrimSpace(q[len(prefix):])
+		}
+	}
+	for _, prefix := range []string{"cx:", "codex:"} {
+		if strings.HasPrefix(strings.ToLower(q), prefix) {
+			return "codex", strings.TrimSpace(q[len(prefix):])
+		}
+	}
+	return "", q
 }
 
 func renderIndexPage(projects []*parser.Project, totalSessions int, search, sortBy string) string {
@@ -61,17 +132,24 @@ func renderIndexPage(projects []*parser.Project, totalSessions int, search, sort
 			sessionsLabel = "session"
 		}
 		displayName := parser.GetProjectDisplayName(p.EncodedName)
+		badges := providerBadgesHTML(projectProviders(p))
+		prov := projectProvider(p)
+		provAttr := ""
+		if prov != "" {
+			provAttr = fmt.Sprintf(` data-provider="%s"`, prov)
+		}
 		b.WriteString(fmt.Sprintf(`
-<a href="/project/%s" class="card project-card">
+<a href="/project/%s" class="card project-card"%s>
 	<div class="card-header">
 		<span class="card-title">%s</span>
+		<span class="card-providers">%s</span>
 	</div>
 	<div class="card-stats">
-		<span class="stat">◉ %d %s</span>
-		<span class="stat-sep">•</span>
+		<span class="stat">%d %s</span>
+		<span class="stat-sep">&middot;</span>
 		<span class="stat">%s</span>
 	</div>
-</a>`, html.EscapeString(p.EncodedName), html.EscapeString(displayName), len(p.Sessions), sessionsLabel, formatAge(p.LastModified)))
+</a>`, html.EscapeString(p.EncodedName), provAttr, html.EscapeString(displayName), badges, len(p.Sessions), sessionsLabel, formatAge(p.LastModified)))
 	}
 	b.WriteString(`</div>`)
 
@@ -101,8 +179,9 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 			active = " active"
 		}
 		displayName := parser.GetProjectDisplayName(p.EncodedName)
-		b.WriteString(fmt.Sprintf(`<a href="/project/%s" class="panel-item%s" title="%s">%s</a>`,
-			html.EscapeString(p.EncodedName), active, html.EscapeString(displayName), html.EscapeString(truncate(displayName, 24))))
+		badges := providerBadgesHTML(projectProviders(p))
+		b.WriteString(fmt.Sprintf(`<a href="/project/%s" class="panel-item%s" title="%s"><span class="panel-item-name">%s</span> %s</a>`,
+			html.EscapeString(p.EncodedName), active, html.EscapeString(displayName), html.EscapeString(truncate(displayName, 20)), badges))
 	}
 	b.WriteString(`</div>`)
 	b.WriteString(`</aside>`)
@@ -121,6 +200,7 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 	b.WriteString(`<span class="search-spinner" id="search-spinner"></span>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="sort-controls">`)
+	b.WriteString(`<select id="provider-filter" class="sort-select" title="Filter by provider"><option value="all">All</option><option value="claude-code">Claude Code</option><option value="codex">Codex</option></select>`)
 	b.WriteString(`<span class="sort-label">Sort:</span>`)
 	b.WriteString(fmt.Sprintf(`<select id="sort" class="sort-select">
 		<option value="time"%s>Recent</option>
@@ -137,10 +217,15 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 		if totalTokens > 0 {
 			tokenDisplay = fmt.Sprintf(`<span class="stat stat-tokens" title="Total tokens"><span class="stat-icon">⧫</span> %s</span>`, formatTokens(totalTokens))
 		}
+		badge := providerBadgeHTML(s.Provider)
+		provAttr := ""
+		if s.Provider != "" {
+			provAttr = fmt.Sprintf(` data-provider="%s"`, s.Provider)
+		}
 		b.WriteString(fmt.Sprintf(`
-<a href="/session/%s/%s" class="card session-card">
+<a href="/session/%s/%s" class="card session-card"%s>
 	<div class="session-header">
-		<code class="session-id">%s</code>
+		%s<code class="session-id">%s</code>
 		<span class="session-time" title="%s">%s</span>
 	</div>
 	<div class="session-summary">%s</div>
@@ -150,6 +235,7 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 		%s
 	</div>
 </a>`, html.EscapeString(project.EncodedName), html.EscapeString(s.ID),
+			provAttr, badge,
 			html.EscapeString(truncate(s.ID, 8)),
 			s.StartTime.Format("2006-01-02 15:04"),
 			formatRelativeTime(s.StartTime),
@@ -189,9 +275,14 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 			if summary == "" {
 				summary = truncate(s.ID, 8)
 			}
-			b.WriteString(fmt.Sprintf(`<a href="/session/%s/%s" class="panel-item%s" title="%s"><span class="panel-id">%s</span><span class="panel-summary">%s</span></a>`,
-				html.EscapeString(projectName), html.EscapeString(s.ID), active,
-				html.EscapeString(s.Summary), html.EscapeString(truncate(s.ID, 6)), html.EscapeString(summary)))
+			badge := providerBadgeHTML(s.Provider)
+			provAttr := ""
+			if s.Provider != "" {
+				provAttr = fmt.Sprintf(` data-provider="%s"`, s.Provider)
+			}
+			b.WriteString(fmt.Sprintf(`<a href="/session/%s/%s" class="panel-item%s"%s title="%s"><span class="panel-id-row"><span class="panel-id">%s</span>%s</span><span class="panel-summary">%s</span></a>`,
+				html.EscapeString(projectName), html.EscapeString(s.ID), active, provAttr,
+				html.EscapeString(s.Summary), html.EscapeString(truncate(s.ID, 6)), badge, html.EscapeString(summary)))
 		}
 		b.WriteString(`</div>`)
 		b.WriteString(`</aside>`)
@@ -267,11 +358,15 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	b.WriteString(`<div class="dock-dropdown">`)
 	b.WriteString(`<button class="dock-btn" id="tb-export" title="Export"><span class="dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></span><span class="dock-label">Export</span></button>`)
 	b.WriteString(`<div class="dock-menu" id="toolbar-export-menu">`)
-	b.WriteString(fmt.Sprintf(`<a href="/api/export/%s/%s?format=html">HTML</a>`, html.EscapeString(projectName), html.EscapeString(session.ID)))
-	b.WriteString(fmt.Sprintf(`<a href="/api/export/%s/%s?format=md">Markdown</a>`, html.EscapeString(projectName), html.EscapeString(session.ID)))
-	b.WriteString(fmt.Sprintf(`<a href="/api/export/%s/%s?format=org">Org</a>`, html.EscapeString(projectName), html.EscapeString(session.ID)))
-	b.WriteString(fmt.Sprintf(`<a href="/api/export/%s/%s?format=txt">Text</a>`, html.EscapeString(projectName), html.EscapeString(session.ID)))
-	b.WriteString(fmt.Sprintf(`<a href="/api/export/%s/%s?format=json">JSON</a>`, html.EscapeString(projectName), html.EscapeString(session.ID)))
+	ep := fmt.Sprintf("/api/export/%s/%s", html.EscapeString(projectName), html.EscapeString(session.ID))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=md">Markdown</a>`, ep))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=html">HTML</a>`, ep))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=org">Org</a>`, ep))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=json">JSON</a>`, ep))
+	b.WriteString(`<div class="dock-menu-sep"></div>`)
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=md&brief=1">Brief (md)</a>`, ep))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=html&brief=1">Brief (html)</a>`, ep))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=org&brief=1">Brief (org)</a>`, ep))
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<button class="dock-btn" id="tb-search" title="Search (/ or f)"><span class="dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></span><span class="dock-label">Find</span></button>`)
@@ -349,7 +444,7 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 		b.WriteString(`<div class="info-section info-section-tokens">`)
 		b.WriteString(`<div class="info-section-header">Tokens</div>`)
 		b.WriteString(fmt.Sprintf(`<div class="info-row" title="Fresh tokens sent to API (not from cache)"><span class="info-label">Input</span><span class="info-value">%s</span></div>`, formatTokens(session.Stats.InputTokens)))
-		b.WriteString(fmt.Sprintf(`<div class="info-row" title="Tokens generated by Claude"><span class="info-label">Output</span><span class="info-value">%s</span></div>`, formatTokens(session.Stats.OutputTokens)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row" title="Tokens generated by the assistant"><span class="info-label">Output</span><span class="info-value">%s</span></div>`, formatTokens(session.Stats.OutputTokens)))
 		// Show cache stats if present
 		if session.Stats.CacheReadTokens > 0 || session.Stats.CacheCreateTokens > 0 {
 			if session.Stats.CacheReadTokens > 0 {
@@ -1294,6 +1389,9 @@ func getFirstTextPreview(msg *parser.Message, _ int) string {
 }
 
 func getRawContentJSON(msg *parser.Message) string {
+	if msg.RawJSON != "" {
+		return msg.RawJSON
+	}
 	data, _ := json.Marshal(msg.Content)
 	return string(data)
 }
@@ -1549,7 +1647,7 @@ let searchTimeout;
 
 async function doSearch(query) {
   if (!query) {
-    resultsDiv.innerHTML = '<p class="search-hint">Type to search across all projects and sessions...</p>';
+    resultsDiv.innerHTML = '<p class="search-hint">Type to search across all projects and sessions...<br><span style="font-size:11px;color:var(--text-muted)">Prefix with <code>cc:</code> or <code>cx:</code> to filter by provider</span></p>';
     return;
   }
   spinner.classList.add('loading');
@@ -1563,6 +1661,12 @@ async function doSearch(query) {
   spinner.classList.remove('loading');
 }
 
+function providerBadge(p) {
+  if (p === 'claude-code') return '<span class="provider-badge provider-CC">CC</span>';
+  if (p === 'codex') return '<span class="provider-badge provider-CX">CX</span>';
+  return '';
+}
+
 function renderResults(results) {
   if (results.length === 0) {
     resultsDiv.innerHTML = '<p class="search-empty">No results found</p>';
@@ -1573,13 +1677,12 @@ function renderResults(results) {
     const badge = r.type === 'project' ? '<span class="result-badge badge-project">P</span>' :
                   r.type === 'session' ? '<span class="result-badge badge-session">S</span>' :
                   '<span class="result-badge badge-message">M</span>';
-    const url = r.type === 'project' ? '/project/' + r.project_encoded :
-                '/session/' + r.project_encoded + '/' + r.session_id;
-    html += '<a href="' + url + '" class="search-result">';
+    const pb = r.provider ? ' ' + providerBadge(r.provider) : '';
+    html += '<a href="' + escapeHtml(r.url) + '" class="search-result">';
     html += badge;
     html += '<div class="result-body">';
-    html += '<div class="result-title">' + escapeHtml(r.title || r.summary || 'Untitled') + '</div>';
-    html += '<div class="result-meta">' + escapeHtml(r.project_name || '') + (r.time ? ' · ' + escapeHtml(r.time) : '') + '</div>';
+    html += '<div class="result-title">' + escapeHtml(r.summary || 'Untitled') + pb + '</div>';
+    html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' &middot; ' + escapeHtml(r.time) : '') + '</div>';
     if (r.snippet) {
       html += '<div class="result-snippet">' + escapeHtml(r.snippet) + '</div>';
     }
@@ -1644,7 +1747,7 @@ if (%q) doSearch(%q);
 `, initialQuery, initialQuery)
 }
 
-func renderSettingsPage(settings *Settings, config *GlobalConfig, agents []AgentInfo, skills []SkillInfo) string {
+func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []ConfigFileInfo, agents []AgentInfo, skills []SkillInfo) string {
 	var b strings.Builder
 
 	b.WriteString(pageHeader("Settings - ccx", "light"))
@@ -1653,18 +1756,94 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, agents []Agent
 	b.WriteString(renderSidebar("settings"))
 
 	b.WriteString(`<main class="main-content">`)
-	b.WriteString(`<h1>Claude Code Settings</h1>`)
+	b.WriteString(`<h1>Settings</h1>`)
 
-	// Global Configuration
+	// ccx Provider Status
+	ccxSettings := ccxconfig.Load()
+	b.WriteString(`<section class="settings-section">`)
+	b.WriteString(`<h2><span class="section-icon">◉</span> Providers</h2>`)
+	b.WriteString(`<div class="provider-status-list">`)
+	type providerInfo struct {
+		id, home string
+		sessions int
+	}
+	providers := []providerInfo{
+		{"claude-code", ccxSettings.ClaudeHome, 0},
+		{"codex", ccxSettings.CodexHome, 0},
+	}
+	allProjects, _ := sessionProvider.DiscoverProjects()
+	for _, p := range allProjects {
+		for _, s := range p.Sessions {
+			for i := range providers {
+				if s.Provider == providers[i].id {
+					providers[i].sessions++
+				}
+			}
+		}
+	}
+	for _, prov := range providers {
+		pc := ccxSettings.Providers[prov.id]
+		accentColor := ccxSettings.ProviderAccent(prov.id, "dark")
+		_, statErr := os.Stat(prov.home)
+		status := "active"
+		if statErr != nil {
+			status = "missing"
+		}
+		if !pc.Enabled {
+			status = "disabled"
+		}
+		b.WriteString(fmt.Sprintf(`<div class="provider-status-card" style="border-left: 3px solid %s">`, accentColor))
+		b.WriteString(fmt.Sprintf(`<div class="prov-header"><strong>%s</strong>`, html.EscapeString(pc.DisplayName)))
+		b.WriteString(fmt.Sprintf(`<span class="prov-badge prov-%s">%s</span></div>`, status, status))
+		b.WriteString(fmt.Sprintf(`<div class="prov-detail"><code>%s</code></div>`, html.EscapeString(prov.home)))
+		if status == "active" {
+			b.WriteString(fmt.Sprintf(`<div class="prov-detail">%d sessions</div>`, prov.sessions))
+		}
+		b.WriteString(`</div>`)
+	}
+	b.WriteString(`</div>`)
+	b.WriteString(`</section>`)
+
+	// ccx Configuration
+	b.WriteString(`<section class="settings-section">`)
+	b.WriteString(`<h2><span class="section-icon">●</span> ccx Configuration</h2>`)
+	b.WriteString(`<table class="settings-table">`)
+	b.WriteString(fmt.Sprintf(`<tr><td>theme</td><td><code>%s</code></td></tr>`, html.EscapeString(ccxSettings.Theme)))
+	b.WriteString(fmt.Sprintf(`<tr><td>show_thinking</td><td><code>%s</code></td></tr>`, html.EscapeString(ccxSettings.ShowThinking)))
+	b.WriteString(fmt.Sprintf(`<tr><td>default_format</td><td><code>%s</code></td></tr>`, html.EscapeString(ccxSettings.DefaultFormat)))
+	b.WriteString(fmt.Sprintf(`<tr><td>port</td><td><code>%d</code></td></tr>`, ccxSettings.Port))
+	b.WriteString(fmt.Sprintf(`<tr><td>host</td><td><code>%s</code></td></tr>`, html.EscapeString(ccxSettings.Host)))
+	b.WriteString(fmt.Sprintf(`<tr><td>syntax_highlight</td><td><code>%v</code></td></tr>`, ccxSettings.SyntaxHighlight))
+	b.WriteString(fmt.Sprintf(`<tr><td>code_theme</td><td><code>%s</code></td></tr>`, html.EscapeString(ccxSettings.CodeTheme)))
+	b.WriteString(`</table>`)
+	b.WriteString(`</section>`)
+
+	// Claude Code global config
 	if config != nil {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(`<h2><span class="section-icon">●</span> Configuration</h2>`)
+		b.WriteString(`<h2><span class="section-icon">●</span> Claude Code Global</h2>`)
 		b.WriteString(`<table class="settings-table">`)
 		b.WriteString(fmt.Sprintf(`<tr><td>Theme</td><td><code>%s</code></td></tr>`, html.EscapeString(config.Theme)))
 		b.WriteString(fmt.Sprintf(`<tr><td>Editor Mode</td><td><code>%s</code></td></tr>`, html.EscapeString(config.EditorMode)))
 		b.WriteString(fmt.Sprintf(`<tr><td>Verbose</td><td><code>%v</code></td></tr>`, config.Verbose))
 		b.WriteString(fmt.Sprintf(`<tr><td>Total Startups</td><td><code>%d</code></td></tr>`, config.NumStartups))
 		b.WriteString(`</table>`)
+		b.WriteString(`</section>`)
+	}
+
+	if len(configFiles) > 0 {
+		b.WriteString(`<section class="settings-section">`)
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">▣</span> Config Files <span class="count">(%d)</span></h2>`, len(configFiles)))
+		b.WriteString(`<div class="file-card-list">`)
+		for i, file := range configFiles {
+			b.WriteString(fmt.Sprintf(`<details class="file-card config-card" data-path="%s" data-idx="%d">`, html.EscapeString(file.FilePath), i))
+			b.WriteString(fmt.Sprintf(`<summary><code>%s</code><span class="file-path">%s</span><span class="expand-icon">▶</span></summary>`, html.EscapeString(file.Name), html.EscapeString(file.FilePath)))
+			b.WriteString(`<div class="file-viewer" id="config-` + fmt.Sprint(i) + `">`)
+			b.WriteString(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">fmt</button><button class="mode-btn active" data-mode="raw">raw</button><button class="copy-btn">copy</button></div>`)
+			b.WriteString(`<div class="file-content"><div class="loading">Loading...</div></div>`)
+			b.WriteString(`</div></details>`)
+		}
+		b.WriteString(`</div>`)
 		b.WriteString(`</section>`)
 	}
 
@@ -1751,6 +1930,18 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, agents []Agent
 
 func settingsPageCSS() string {
 	return `<style>
+.provider-status-list { display: flex; gap: 12px; flex-wrap: wrap; }
+.provider-status-card {
+  background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 16px; min-width: 220px; flex: 1;
+}
+.prov-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.prov-badge { font-size: 11px; padding: 1px 6px; border-radius: 3px; }
+.prov-active { background: #16a34a22; color: #16a34a; }
+.prov-missing { background: #eab30822; color: #eab308; }
+.prov-disabled { background: #64748b22; color: #64748b; }
+.prov-detail { font-size: 13px; color: var(--text-muted); }
+.prov-detail code { font-size: 12px; }
 .count { color: var(--text-muted); font-weight: normal; font-size: 12px; }
 .file-card-list { display: flex; flex-direction: column; gap: 8px; }
 .file-card {
@@ -1952,7 +2143,7 @@ func renderTopNav(projectName, sessionID string) string {
 	b.WriteString(`<div class="top-nav-inner">`)
 	b.WriteString(`<div class="nav-left">`)
 	b.WriteString(`<a href="/" class="brand"><span class="brand-cc">cc</span><span class="brand-x">x</span></a>`)
-	b.WriteString(`<span class="brand-sub">for Claude Code</span>`)
+	b.WriteString(`<span class="brand-sub">for agent sessions</span>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="nav-center">`)
 	b.WriteString(`<div class="global-search">`)
@@ -2093,6 +2284,9 @@ func cssStyles() string {
   --accent-project: #3b82f6;
   --accent-session: #8b5cf6;
   --accent-conversation: #06b6d4;
+  /* Provider accent colors */
+  --accent-cc: #da7756;
+  --accent-cx: #10b981;
   --user-bg: #fff8f5;
   --user-border: #da7756;
   --assistant-bg: #f5faf5;
@@ -2119,6 +2313,8 @@ func cssStyles() string {
   --accent-project: #60a5fa;
   --accent-session: #a78bfa;
   --accent-conversation: #22d3ee;
+  --accent-cc: #e09070;
+  --accent-cx: #34d399;
   --user-bg: #2a2520;
   --assistant-bg: #202820;
   --tool-bg: #282520;
@@ -2226,6 +2422,19 @@ code, pre, .session-id, .model-badge {
 .badge-project { background: var(--accent-project); }
 .badge-session { background: var(--accent-session); }
 .badge-message { background: var(--accent-conversation); }
+.provider-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+.provider-CC { background: var(--accent-cc); color: #fff; }
+.provider-CX { background: var(--accent-cx); color: #fff; }
 .search-loading, .search-empty {
   padding: 16px;
   color: var(--text-muted);
@@ -2322,7 +2531,9 @@ code, pre, .session-id, .model-badge {
   padding: 8px 0;
 }
 .panel-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 16px;
   font-size: 13px;
   color: var(--text);
@@ -2332,6 +2543,7 @@ code, pre, .session-id, .model-badge {
   text-overflow: ellipsis;
   border-left: 3px solid transparent;
 }
+.panel-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .panel-item:hover {
   background: var(--bg-tertiary);
 }
@@ -2343,11 +2555,15 @@ code, pre, .session-id, .model-badge {
 /* Context-specific panel accents */
 .panel-nav:not(.session-nav) .panel-item.active { border-left-color: var(--accent-project); }
 .session-nav .panel-item.active { border-left-color: var(--accent-session); }
+.session-nav .panel-item[data-provider="claude-code"].active { border-left-color: var(--accent-cc); }
+.session-nav .panel-item[data-provider="codex"].active { border-left-color: var(--accent-cx); }
 .session-nav .panel-item {
-  display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 2px;
 }
+.session-nav .panel-item .panel-id-row { display: flex; align-items: center; gap: 4px; width: 100%; }
+.session-nav .panel-item .panel-id-row .provider-badge { margin-left: auto; flex-shrink: 0; }
 .panel-id {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -2495,6 +2711,7 @@ code, pre, .session-id, .model-badge {
   transition: background 0.1s;
 }
 .dock-menu a:hover { background: var(--bg-secondary); }
+.dock-menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
 
 /* Responsive: hide labels on small screens */
 @media (max-width: 768px) {
@@ -2669,7 +2886,8 @@ code, pre, .session-id, .model-badge {
   margin-bottom: 6px;
 }
 
-.card-title { font-weight: 600; font-size: 14px; word-break: break-word; }
+.card-title { font-weight: 600; font-size: 14px; word-break: break-word; flex: 1; }
+.card-providers { display: flex; gap: 3px; flex-shrink: 0; margin-left: 6px; }
 .card-badge {
   background: var(--primary);
   color: white;
@@ -2689,9 +2907,15 @@ code, pre, .session-id, .model-badge {
 .card-stats .stat { display: flex; align-items: center; gap: 4px; }
 .card-stats .stat-sep { opacity: 0.4; }
 
+.project-card[data-provider="claude-code"] { border-left: 3px solid var(--accent-cc); }
+.project-card[data-provider="codex"] { border-left: 3px solid var(--accent-cx); }
+.project-card[data-provider="multi"] { border-left: 3px solid var(--text-muted); }
+
 .session-list { display: flex; flex-direction: column; gap: 8px; }
 
 .session-card { border-left: 3px solid var(--accent-session); }
+.session-card[data-provider="claude-code"] { border-left: 3px solid var(--accent-cc); }
+.session-card[data-provider="codex"] { border-left: 3px solid var(--accent-cx); }
 
 .session-header {
   display: flex;
@@ -3876,6 +4100,20 @@ if (sortSelect) {
   });
 }
 
+const providerFilter = document.getElementById('provider-filter');
+if (providerFilter) {
+  providerFilter.addEventListener('change', function(e) {
+    const val = e.target.value;
+    document.querySelectorAll('.session-card').forEach(function(card) {
+      if (val === 'all') {
+        card.style.display = '';
+      } else {
+        card.style.display = card.dataset.provider === val ? '' : 'none';
+      }
+    });
+  });
+}
+
 document.addEventListener('keydown', function(e) {
   if (e.key === '/' && !e.target.matches('input, textarea')) {
     e.preventDefault();
@@ -3914,12 +4152,14 @@ if (globalSearchInput && searchResults) {
             const badge = r.type === 'project' ? '<span class="result-badge badge-project">P</span>' :
                           r.type === 'session' ? '<span class="result-badge badge-session">S</span>' :
                           '<span class="result-badge badge-message">M</span>';
+            const pb = r.provider === 'claude-code' ? ' <span class="provider-badge provider-CC">CC</span>' :
+                       r.provider === 'codex' ? ' <span class="provider-badge provider-CX">CX</span>' : '';
             const safeUrl = (r.url && r.url[0] === '/' && r.url[1] !== '/') ? escapeHtml(r.url) : '#';
             let html = '<a href="' + safeUrl + '" class="search-result">';
             html += badge;
             html += '<div class="result-body">';
-            html += '<div class="result-title">' + escapeHtml(r.summary || r.title || 'Untitled') + '</div>';
-            html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' · ' + escapeHtml(r.time) : '') + '</div>';
+            html += '<div class="result-title">' + escapeHtml(r.summary || 'Untitled') + pb + '</div>';
+            html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' &middot; ' + escapeHtml(r.time) : '') + '</div>';
             if (r.snippet) {
               html += '<div class="result-snippet">' + escapeHtml(r.snippet) + '</div>';
             }
@@ -4064,12 +4304,14 @@ if (globalSearchInput && searchResults) {
             const badge = r.type === 'project' ? '<span class="result-badge badge-project">P</span>' :
                           r.type === 'session' ? '<span class="result-badge badge-session">S</span>' :
                           '<span class="result-badge badge-message">M</span>';
+            const pb = r.provider === 'claude-code' ? ' <span class="provider-badge provider-CC">CC</span>' :
+                       r.provider === 'codex' ? ' <span class="provider-badge provider-CX">CX</span>' : '';
             const safeUrl = (r.url && r.url[0] === '/' && r.url[1] !== '/') ? escapeHtml(r.url) : '#';
             let html = '<a href="' + safeUrl + '" class="search-result">';
             html += badge;
             html += '<div class="result-body">';
-            html += '<div class="result-title">' + escapeHtml(r.summary || r.title || 'Untitled') + '</div>';
-            html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' · ' + escapeHtml(r.time) : '') + '</div>';
+            html += '<div class="result-title">' + escapeHtml(r.summary || 'Untitled') + pb + '</div>';
+            html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' &middot; ' + escapeHtml(r.time) : '') + '</div>';
             if (r.snippet) {
               html += '<div class="result-snippet">' + escapeHtml(r.snippet) + '</div>';
             }

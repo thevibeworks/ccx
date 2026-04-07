@@ -10,13 +10,14 @@ import (
 
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/provider"
 	"github.com/thevibeworks/ccx/internal/render"
 )
 
 var exportCmd = &cobra.Command{
 	Use:   "export [session]",
 	Short: "Export session to file",
-	Long: `Export a Claude Code session to HTML, Markdown, or Org-mode.
+	Long: `Export a session to HTML, Markdown, or Org-mode.
 
 Examples:
   ccx export e38536 --format=html
@@ -33,6 +34,7 @@ var (
 	exportTheme           string
 	exportIncludeThinking bool
 	exportIncludeAgents   bool
+	exportBrief           bool
 	exportTemplate        string
 )
 
@@ -43,24 +45,25 @@ func init() {
 	exportCmd.Flags().StringVar(&exportTheme, "theme", "", "theme: dark, light (default from config)")
 	exportCmd.Flags().BoolVar(&exportIncludeThinking, "include-thinking", false, "include thinking blocks")
 	exportCmd.Flags().BoolVar(&exportIncludeAgents, "include-agents", false, "include agent sidechains")
+	exportCmd.Flags().BoolVarP(&exportBrief, "brief", "b", false, "conversation only: human input, agent responses, compactions")
 	exportCmd.Flags().StringVar(&exportTemplate, "template", "", "custom template path")
 }
 
 func runExport(cmd *cobra.Command, args []string) error {
-	projectsDir := config.ProjectsDir()
+	backend := provider.Default()
 
 	var session *parser.Session
 	var err error
 
 	if len(args) == 0 {
-		session, err = selectSession(projectsDir)
+		session, err = selectSession(backend)
 	} else {
 		sessionArg := args[0]
 		projectName, sessionID := parseSessionArg(sessionArg)
 		if exportProject != "" {
 			projectName = exportProject
 		}
-		session, err = parser.FindSession(projectsDir, projectName, sessionID)
+		session, err = backend.FindSession(projectName, sessionID)
 	}
 
 	if err != nil {
@@ -70,7 +73,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("session not found")
 	}
 
-	fullSession, err := parser.ParseSession(session.FilePath)
+	fullSession, err := backend.ParseSession(session.FilePath)
 	if err != nil {
 		return fmt.Errorf("failed to parse session: %w", err)
 	}
@@ -100,6 +103,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 		Theme:           theme,
 		IncludeThinking: exportIncludeThinking,
 		IncludeAgents:   exportIncludeAgents,
+		Brief:           exportBrief,
 		TemplatePath:    exportTemplate,
 	}
 
