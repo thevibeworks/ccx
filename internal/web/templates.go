@@ -2494,9 +2494,9 @@ func renderTopNav(projectName, sessionID string) string {
 func renderFooter() string {
 	return `<footer class="site-footer">
 	<div class="footer-inner">
-		<span class="footer-brand"><span class="brand-cc">cc</span><span class="brand-x">x</span></span>
+		<a href="https://github.com/thevibeworks/ccx" target="_blank" rel="noopener noreferrer" class="footer-brand"><span class="brand-cc">cc</span><span class="brand-x">x</span></a>
 		<span class="footer-sep">·</span>
-		<span class="footer-text">by thevibeworks</span>
+		<a href="https://github.com/thevibeworks" target="_blank" rel="noopener noreferrer" class="footer-text">by thevibeworks</a>
 	</div>
 </footer>`
 }
@@ -2825,9 +2825,11 @@ code, pre, .session-id, .model-badge {
   font-size: 13px;
   color: var(--text-muted);
 }
-.footer-brand { font-weight: 700; font-size: 14px; }
+.footer-brand { font-weight: 700; font-size: 14px; color: inherit; text-decoration: none; }
+.footer-brand:hover { opacity: 0.8; }
 .footer-sep { opacity: 0.5; }
-.footer-text { font-size: 12px; }
+.footer-text { font-size: 12px; color: inherit; text-decoration: none; }
+.footer-text:hover { opacity: 0.8; }
 
 /* Two-panel navigation */
 .panel-nav {
