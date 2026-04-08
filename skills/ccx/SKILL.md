@@ -31,6 +31,8 @@ ccx
 │   └── --model MODEL             # Filter by model
 ├── web                           # Start web UI
 │   └── --port --host --no-open
+├── fork <session-id>             # Fork session to current project
+│   └── --to /path                # Fork to specific directory
 ├── config                        # Show / init config
 └── doctor                        # Check setup
 ```
@@ -100,6 +102,19 @@ ccx search --after=2026-03-01 "deploy"   # Date filtered
 ```
 
 Web search supports provider prefixes: `cc: auth bug`, `cx: codex query`
+
+## Fork Session
+
+Resume any session from any project directory:
+
+```bash
+ccx fork abc12345                 # Fork to current directory
+ccx fork abc12345 --to /new/path  # Fork to specific directory
+# Then: claude --resume <new-uuid>
+```
+
+Rewrites sessionId and CWD, drops file-history snapshots, clears worktree state.
+Original session is never modified.
 
 ## Memory Inspection
 
