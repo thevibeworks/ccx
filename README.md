@@ -71,6 +71,7 @@ ccx sessions --after=2026-03-01  # Date filtered
 ccx view [session]               # View in terminal
 ccx export -f html --brief       # Export conversation-only HTML
 ccx search "auth bug"            # Search across sessions + memory
+ccx fork abc123                  # Fork session to current project
 ccx doctor                       # Check setup
 ```
 
