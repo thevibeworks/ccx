@@ -3313,6 +3313,12 @@ code, pre, .session-id, .model-badge {
   min-width: 50px;
   text-align: center;
 }
+.search-info .search-load-all-link {
+  color: var(--primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.search-info .search-load-all-link:hover { text-decoration: none; }
 .search-nav {
   background: none;
   border: 1px solid var(--border);
@@ -4559,6 +4565,11 @@ function loadEarlierMessages() {
     btn.classList.add('loading');
     btn.querySelector('.load-earlier-btn').innerHTML = '<span class="load-icon">↻</span> Loading...';
   }
+  // Persist active search across the reload, so "search full history" picks up where it was
+  const pendingQuery = document.getElementById('search-input')?.value;
+  if (pendingQuery && pendingQuery.trim().length >= 2) {
+    try { sessionStorage.setItem('ccx-pending-search', pendingQuery); } catch (_) {}
+  }
   // Reload page with all=1 parameter to load full content
   const url = new URL(window.location.href);
   url.searchParams.set('all', '1');
@@ -5486,28 +5497,53 @@ if (btnExport && exportMenu) {
   });
 }
 
-// Auto-scroll: jump to hash target or scroll to bottom
-setTimeout(() => {
+// Auto-scroll: jump to hash target, reload if hidden, or scroll to bottom
+function jumpToHashTarget() {
   const hash = window.location.hash;
-  if (hash && hash.startsWith('#msg-')) {
-    // Jump to specific message from search
-    const msgEl = document.querySelector(hash);
-    if (msgEl) {
-      // Expand parent details if collapsed
-      const details = msgEl.querySelector('details');
-      if (details) details.setAttribute('open', '');
-      msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      msgEl.style.animation = 'flash 0.8s';
-      // Highlight in nav
-      const msgId = hash.replace('#msg-', '');
-      const navItem = document.querySelector('.nav-item[data-msg="' + msgId + '"]');
-      if (navItem) navItem.classList.add('active');
-    }
-  } else {
-    // No hash - scroll to bottom (default behavior)
+  if (!hash || !hash.startsWith('#msg-')) {
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    return;
   }
-}, 150);
+
+  const msgEl = document.querySelector(hash);
+  if (!msgEl) {
+    // Target not in DOM. If progressive loading is active, reload with full history.
+    // Preserves hash via URL object; uses replace() so the broken page doesn't pollute history.
+    if (document.getElementById('load-earlier')) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('all', '1');
+      window.location.replace(url.toString());
+    }
+    return;
+  }
+
+  // Walk up from the target, opening any ancestor details and unfolding any folded threads
+  let node = msgEl;
+  while (node) {
+    if (node.tagName === 'DETAILS') {
+      node.open = true;
+      node.setAttribute('open', '');
+    }
+    if (node.classList && node.classList.contains('thread') && node.classList.contains('folded')) {
+      node.classList.remove('folded');
+    }
+    node = node.parentElement;
+  }
+
+  // Expand details inside the target too, so inner content is visible
+  msgEl.querySelectorAll('details').forEach(d => { d.open = true; d.setAttribute('open', ''); });
+
+  msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  msgEl.style.animation = 'flash 0.8s';
+
+  const msgId = hash.replace('#msg-', '');
+  const navItem = document.querySelector('.nav-item[data-msg="' + msgId + '"]');
+  if (navItem) navItem.classList.add('active');
+}
+setTimeout(jumpToHashTarget, 150);
+
+// Listen for manual hash changes (e.g. nav clicks after initial load)
+window.addEventListener('hashchange', jumpToHashTarget);
 
 document.addEventListener('keydown', function(e) {
   if (e.target.matches('input, textarea')) return;
@@ -5847,7 +5883,21 @@ function highlightCurrent() {
 function updateSearchInfo() {
   if (!searchInfo) return;
   if (searchMatches.length === 0) {
-    searchInfo.textContent = 'No matches';
+    // If progressive loading hid some history, let the user reload into full history and keep searching
+    const hiddenLoader = document.getElementById('load-earlier');
+    const hasQuery = searchInput && searchInput.value && searchInput.value.trim().length >= 2;
+    if (hiddenLoader && hasQuery) {
+      searchInfo.innerHTML = 'No matches in visible range — <a href="#" id="search-load-all" class="search-load-all-link">search full history</a>';
+      const link = document.getElementById('search-load-all');
+      if (link) {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          loadEarlierMessages();
+        });
+      }
+    } else {
+      searchInfo.textContent = 'No matches';
+    }
   } else {
     searchInfo.textContent = (searchIdx + 1) + '/' + searchMatches.length;
   }
@@ -5894,6 +5944,17 @@ searchInput?.addEventListener('keydown', (e) => {
     e.preventDefault();
   }
 });
+
+// Restore pending search after a "search full history" reload
+try {
+  const pending = sessionStorage.getItem('ccx-pending-search');
+  if (pending && searchInput) {
+    sessionStorage.removeItem('ccx-pending-search');
+    searchInput.value = pending;
+    openSearch();
+    doSearch(pending);
+  }
+} catch (_) {}
 
 // Global keyboard shortcuts for search
 document.addEventListener('keydown', function(e) {
