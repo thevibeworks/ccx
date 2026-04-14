@@ -518,7 +518,7 @@ func writeLargeFixture(b *testing.B, msgCount int) string {
 	defer f.Close()
 
 	longText := strings.Repeat("the quick brown fox jumps over the lazy dog. ", 5) // ~220 chars
-	toolResult := strings.Repeat("line of output\n", 140)                           // ~2.1KB
+	toolResult := strings.Repeat("line of output\n", 140)                          // ~2.1KB
 
 	var parentUUID string
 	for i := 0; i < msgCount; i++ {

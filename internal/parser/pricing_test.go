@@ -100,12 +100,12 @@ func TestLookupPricing_RejectsNonDelimitedMatches(t *testing.T) {
 	// ccx doesn't mis-price hypothetical future models that happen to
 	// start with one of our known names.
 	rejected := []string{
-		"gpt-51",               // gpt-5 prefix but "1" is not a delimiter
-		"gpt-51-mini",          // same — "51" not 5
-		"gpt-5o",               // gpt-5 prefix but "o" is not a delimiter
-		"gpt-5o-mini",          // ditto (hypothetical)
-		"claude-opus-42",       // claude-opus-4 prefix but "2" is not a delimiter
-		"claude-sonnet-40",     // claude-sonnet-4 prefix but "0" is not a delimiter
+		"gpt-51",           // gpt-5 prefix but "1" is not a delimiter
+		"gpt-51-mini",      // same — "51" not 5
+		"gpt-5o",           // gpt-5 prefix but "o" is not a delimiter
+		"gpt-5o-mini",      // ditto (hypothetical)
+		"claude-opus-42",   // claude-opus-4 prefix but "2" is not a delimiter
+		"claude-sonnet-40", // claude-sonnet-4 prefix but "0" is not a delimiter
 	}
 	for _, model := range rejected {
 		if p := LookupPricing(model); p != nil {
@@ -123,10 +123,10 @@ func TestHasVariantToken_DelimitedBoundaries(t *testing.T) {
 		{"openai/gpt-5-codex-mini", "mini", true},
 		{"gpt-5.4-mini-2025", "mini", true},
 		{"gpt-5-mini_prod", "mini", true},
-		{"foo-terminal", "mini", false},  // "mini" not present at all
-		{"foo-cuminary", "mini", false},  // "mini" present but not delimited
+		{"foo-terminal", "mini", false}, // "mini" not present at all
+		{"foo-cuminary", "mini", false}, // "mini" present but not delimited
 		{"examining-text", "mini", false},
-		{"nano-second", "nano", true},    // prefix delimited (actually — leading boundary is start of string, but our helper requires a delimiter BEFORE. Let me check...)
+		{"nano-second", "nano", true}, // prefix delimited (actually — leading boundary is start of string, but our helper requires a delimiter BEFORE. Let me check...)
 	}
 	// Note: hasVariantToken requires a leading delimiter before the
 	// variant token. "nano-second" has "nano" at position 0 with no

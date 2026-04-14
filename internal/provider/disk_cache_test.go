@@ -19,8 +19,8 @@ type realParseBackend struct {
 	parseCount int32
 }
 
-func (b *realParseBackend) ID() string                          { return "real" }
-func (b *realParseBackend) Homes() []string                     { return b.homes }
+func (b *realParseBackend) ID() string                                   { return "real" }
+func (b *realParseBackend) Homes() []string                              { return b.homes }
 func (b *realParseBackend) DiscoverProjects() ([]*parser.Project, error) { return nil, nil }
 func (b *realParseBackend) FindProject(string) (*parser.Project, error)  { return nil, nil }
 func (b *realParseBackend) FindSession(string, string) (*parser.Session, error) {
