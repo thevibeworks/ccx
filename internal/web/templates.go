@@ -357,6 +357,11 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 
 	b.WriteString(`</main>`)
 
+	// Timeline rail — right-edge time-axis scrubber. Narrow by default,
+	// expands on hover with a floating tooltip that snaps to the nearest
+	// tick. Click to jump. Hidden on narrow viewports.
+	renderTimelineRail(&b, session)
+
 	// Bottom dock toolbar - horizontal, modern UX
 	b.WriteString(`<div class="dock-toolbar" id="dock-toolbar">`)
 	b.WriteString(`<div class="dock-group dock-nav">`)
@@ -3772,6 +3777,349 @@ code, pre, .session-id, .model-badge {
 .session-main { flex: 1; max-width: 900px; min-width: 0; margin-left: 0; padding: 24px 32px; }
 .session-layout.sidebar-collapsed .nav-sidebar { width: 48px; }
 
+/* Timeline rail — right-edge semantic scrubber with ruler-style notches.
+ *
+ * Visual metaphor: a physical ruler. Each tick is a horizontal notch
+ * extending from a faint center spine — major events (user turns,
+ * compact boundaries) get full-width notches; minor sub-events (sub-
+ * agents, skill calls) get shorter notches.
+ *
+ * Background is fully transparent at rest and stays transparent on
+ * hover — only the spine + ticks + faint left-border get painted.
+ * No background fill so the rail blends with whatever content it
+ * overlays.
+ *
+ * Layout: fixed position, 14px inward from the viewport right edge
+ * so it never fights the browser scrollbar. 24px invisible hit target
+ * with a 10px-visible notch strip centered inside — forgives slight
+ * mouse drift on entry. Expands to 52px on hover to give the notches
+ * room to extend.
+ *
+ * Interaction:
+ *   - Move mouse over rail → hover-scrub: nearest tick highlights,
+ *     5-tick fisheye zoom follows the cursor, floating tooltip snaps
+ *     to the nearest tick with kind/offset/snippet/cost/cumulative.
+ *   - Click anywhere on rail → jumps to nearest tick via #msg-<uuid>.
+ *   - Keyboard [ / ] jumps prev/next tick relative to viewport center.
+ *   - 120ms grace period on mouseleave forgives slight drift. */
+.timeline-rail {
+  position: fixed;
+  right: 14px; /* gutter for browser scrollbar + visual breathing room */
+  top: 56px;
+  bottom: 24px;
+  width: 24px; /* invisible hit target; visual notch strip is centered */
+  padding: 14px 8px 14px 14px; /* extra left-side hit zone for forgiving entry */
+  box-sizing: content-box;
+  z-index: 150;
+  background: transparent;
+  border: none;
+  border-left: 1px solid transparent;
+  transition: width 0.18s ease, padding 0.18s ease, border-left-color 0.18s ease;
+  cursor: crosshair;
+}
+.timeline-rail:hover {
+  width: 52px;
+  padding-left: 28px;
+  border-left-color: color-mix(in srgb, var(--border) 60%, transparent);
+}
+.timeline-rail.has-no-ticks { pointer-events: none; }
+
+.timeline-rail .timeline-spine {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+/* Faint center guideline — the "ruler's edge" that ticks extend from */
+.timeline-rail .timeline-spine::before {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  transition: background 0.18s ease;
+}
+.timeline-rail:hover .timeline-spine::before {
+  background: var(--border);
+}
+
+/* Ruler gridlines — major/minor horizontal reference lines for ordinal
+ * position ("turn 10", "turn 20"...). Anchored to the spine (right
+ * edge of the rail), extending left. Subtle when collapsed, labels
+ * fade in on hover. Non-interactive. */
+.timeline-rail .timeline-gridline {
+  position: absolute;
+  right: 0;
+  width: 8px;
+  height: 0;
+  border-top: 1px solid var(--border);
+  opacity: 0.3;
+  transition: opacity 0.18s ease, width 0.18s ease;
+  pointer-events: none;
+}
+.timeline-rail:hover .timeline-gridline {
+  width: 14px;
+  opacity: 0.55;
+}
+.timeline-rail .gridline-major {
+  border-top-color: var(--text-muted);
+  opacity: 0.5;
+}
+.timeline-rail:hover .gridline-major {
+  opacity: 0.85;
+  width: 22px;
+}
+.timeline-rail .gridline-label {
+  position: absolute;
+  right: 24px;
+  top: -7px;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.timeline-rail:hover .gridline-label { opacity: 0.75; }
+
+/* Ticks — horizontal notches extending LEFT from the spine. Base
+ * width varies by kind (major events get longer notches). --heat
+ * scales up user/command ticks based on per-turn cost. Fisheye zoom
+ * multiplies on top for the 5 nearest ticks to the cursor. */
+.timeline-rail .timeline-tick {
+  position: absolute;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  transform: translateY(-1px) scaleX(var(--tick-scale, 1));
+  transform-origin: right center;
+  transition: width 0.12s ease, height 0.12s ease, background 0.12s ease,
+              box-shadow 0.12s ease,
+              transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none; /* the rail itself handles clicks; ticks are visual */
+}
+
+/* Fisheye zoom — applied by JS via the 5 nearest ticks. Uses scaleX
+ * so the horizontal notches stretch outward from the spine (longer
+ * marks, not taller circles). zoom-0 is closest (biggest). */
+.timeline-rail .timeline-tick.zoom-0 { --tick-scale: 3.0; z-index: 12; }
+.timeline-rail .timeline-tick.zoom-1 { --tick-scale: 2.1; z-index: 11; }
+.timeline-rail .timeline-tick.zoom-2 { --tick-scale: 1.45; z-index: 10; }
+/* Ruler-style notches. Base width: major events get longer notches,
+ * sub-events get shorter ones. --heat (0-1, set inline from per-turn
+ * cost) scales the notch length further so expensive turns protrude
+ * further from the spine. */
+
+/* User turn — medium notch, heat-sensitive */
+.timeline-rail .tick-user {
+  width: calc(5px + var(--heat, 0) * 4px);
+  background: var(--accent-session, #8b5cf6);
+  opacity: calc(0.65 + var(--heat, 0) * 0.35);
+}
+.timeline-rail:hover .tick-user {
+  width: calc(9px + var(--heat, 0) * 8px);
+  opacity: calc(0.85 + var(--heat, 0) * 0.15);
+}
+
+/* Slash command — medium notch, distinct color */
+.timeline-rail .tick-command {
+  width: calc(5px + var(--heat, 0) * 4px);
+  background: var(--accent-conversation, #06b6d4);
+  opacity: calc(0.65 + var(--heat, 0) * 0.35);
+}
+.timeline-rail:hover .tick-command {
+  width: calc(9px + var(--heat, 0) * 8px);
+  opacity: calc(0.85 + var(--heat, 0) * 0.15);
+}
+
+/* Compact boundary — longest notch, bold because it resets context */
+.timeline-rail .tick-compact {
+  width: 10px;
+  height: 2px;
+  background: var(--accent-project, #3b82f6);
+  opacity: 0.75;
+}
+.timeline-rail:hover .tick-compact {
+  width: 22px;
+  height: 3px;
+  opacity: 1;
+}
+
+/* Sub-agent (Task dispatch) — short minor notch */
+.timeline-rail .tick-agent {
+  width: 3px;
+  height: 1px;
+  background: var(--primary, #da7756);
+  opacity: 0.55;
+}
+.timeline-rail:hover .tick-agent {
+  width: 5px;
+  height: 2px;
+  opacity: 0.9;
+}
+
+/* Skill invocation — short minor notch, muted color */
+.timeline-rail .tick-skill {
+  width: 3px;
+  height: 1px;
+  background: var(--text-muted, #888);
+  opacity: 0.5;
+}
+.timeline-rail:hover .tick-skill {
+  width: 5px;
+  height: 2px;
+  opacity: 0.85;
+}
+
+/* The locked-nearest tick gets a primary-color halo */
+.timeline-rail .tick-nearest {
+  background: var(--primary) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 30%, transparent);
+}
+
+/* Current-position marker — horizontal bar snapping across the full
+ * visible width at your current scroll pct. Always visible. */
+.timeline-rail .timeline-current {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: color-mix(in srgb, var(--primary) 85%, transparent);
+  pointer-events: none;
+  transform: translateY(-1px);
+  transition: top 0.08s linear;
+  border-radius: 1px;
+  z-index: 8;
+}
+
+/* Playhead — dashed guide snapping to the hovered tick. Only visible
+ * while the rail is hovered. */
+.timeline-rail .timeline-playhead {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--primary) 75%, transparent);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease, top 0.08s ease;
+  transform: translateY(-0.5px);
+  z-index: 9;
+}
+.timeline-rail:hover .timeline-playhead { opacity: 0.9; }
+
+/* Floating tooltip — positioned to the LEFT of the rail, tracks mouse Y,
+ * snaps to the nearest tick. Invisible until hover. right offset clears
+ * the expanded rail (rail at right:14px + width:52px = ends at 66px from
+ * viewport right; tooltip starts at right:80px so there's breathing room). */
+.timeline-tooltip {
+  position: fixed;
+  right: 80px;
+  top: 0;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 151;
+  min-width: 160px;
+  max-width: 320px;
+  transform: translateY(-50%);
+}
+.timeline-rail:hover ~ .timeline-tooltip,
+.timeline-tooltip.show {
+  opacity: 1;
+}
+.timeline-tooltip .tt-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.timeline-tooltip .tt-offset {
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.timeline-tooltip .tt-snippet {
+  display: block;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 4px;
+}
+.timeline-tooltip .tt-kind {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text-muted);
+}
+.timeline-tooltip.kind-user .tt-kind { background: color-mix(in srgb, var(--accent-session, #8b5cf6) 18%, transparent); color: var(--accent-session, #8b5cf6); }
+.timeline-tooltip.kind-command .tt-kind { background: color-mix(in srgb, var(--accent-conversation, #06b6d4) 18%, transparent); color: var(--accent-conversation, #06b6d4); }
+.timeline-tooltip.kind-compact .tt-kind { background: color-mix(in srgb, var(--accent-project, #3b82f6) 18%, transparent); color: var(--accent-project, #3b82f6); }
+.timeline-tooltip.kind-agent .tt-kind { background: color-mix(in srgb, var(--primary, #da7756) 18%, transparent); color: var(--primary, #da7756); }
+.timeline-tooltip.kind-skill .tt-kind { background: color-mix(in srgb, var(--text-muted, #888) 14%, transparent); color: var(--text-muted, #888); }
+.timeline-tooltip .tt-index {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.timeline-tooltip .tt-index:empty { display: none; }
+
+.timeline-tooltip .tt-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+.timeline-tooltip .tt-meta:empty { display: none; }
+.timeline-tooltip .tt-cost:empty, .timeline-tooltip .tt-tokens:empty, .timeline-tooltip .tt-cum:empty { display: none; }
+.timeline-tooltip .tt-cost {
+  color: var(--primary);
+  font-weight: 600;
+}
+.timeline-tooltip .tt-cum {
+  color: var(--text);
+  opacity: 0.75;
+}
+.timeline-tooltip .tt-cum::before { content: '∑ '; opacity: 0.5; }
+.timeline-tooltip .tt-tokens::before { content: '⧫ '; opacity: 0.6; }
+
+.timeline-rail .timeline-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 10px;
+  opacity: 0.4;
+  writing-mode: vertical-rl;
+}
+
+/* Hide on narrow viewports; outline sidebar is the fallback nav */
+@media (max-width: 1024px) {
+  .timeline-rail, .timeline-tooltip { display: none; }
+}
+
 .session-page-header {
   margin-bottom: 20px;
   padding-bottom: 16px;
@@ -5727,6 +6075,257 @@ setTimeout(jumpToHashTarget, 150);
 // Listen for manual hash changes (e.g. nav clicks after initial load)
 window.addEventListener('hashchange', jumpToHashTarget);
 
+// Timeline rail — semantic scrubber with hover-scrub, fisheye zoom,
+// hysteresis, and rAF-throttled motion.
+const timelineRail = document.getElementById('timeline-rail');
+const timelineSpine = document.getElementById('timeline-spine');
+const timelineCurrent = document.getElementById('timeline-current');
+const timelinePlayhead = document.getElementById('timeline-playhead');
+const timelineTooltip = document.getElementById('timeline-tooltip');
+const timelineTicksRaw = timelineRail ? Array.from(timelineRail.querySelectorAll('.timeline-tick')) : [];
+
+// Snapshot tick data once so hover-scrub is O(log n) and doesn't re-parse
+// attributes on every mousemove. Cost / cumulative / token strings are
+// preformatted server-side so the tooltip just displays them.
+const timelineTicks = timelineTicksRaw.map(el => {
+  const pct = parseFloat(el.style.top) || 0;
+  return {
+    el:         el,
+    uuid:       el.dataset.uuid || '',
+    offset:     el.dataset.offset || '',
+    snippet:    el.dataset.snippet || '',
+    kind:       el.dataset.kind || 'user',
+    cost:       el.dataset.cost || '',
+    cumulative: el.dataset.cumulative || '',
+    tokens:     el.dataset.tokens || '',
+    index:      el.dataset.index || '',
+    pct:        pct,
+  };
+}).sort((a, b) => a.pct - b.pct);
+
+// Interaction state
+let currentNearest = null;         // Tick currently shown in the tooltip
+let zoomedTicks = [];              // Ticks with active fisheye zoom classes
+let rafHandle = null;              // Pending rAF id
+let pendingClientY = null;         // Latest mouse Y, coalesced to next frame
+let leaveTimer = null;             // mouseleave grace-period timer
+
+// Hysteresis: cursor must move this much closer (as %% of rail height)
+// to a new tick before we switch the tooltip away from the locked one.
+// Prevents flicker between adjacent ticks when the cursor sits on the edge.
+const TIMELINE_HYSTERESIS_PCT = 1.5;
+const TIMELINE_LEAVE_GRACE_MS = 120;
+
+function clearNearest() {
+  if (currentNearest) currentNearest.el.classList.remove('tick-nearest');
+  currentNearest = null;
+}
+
+function clearZoom() {
+  for (const t of zoomedTicks) {
+    t.el.classList.remove('zoom-0', 'zoom-1', 'zoom-2');
+  }
+  zoomedTicks = [];
+}
+
+// Binary-search helper: returns the index of the tick whose pct is
+// closest to the cursor. Returns -1 when there are no ticks.
+function nearestTickIndex(cursorPct) {
+  if (timelineTicks.length === 0) return -1;
+  let lo = 0, hi = timelineTicks.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (timelineTicks[mid].pct < cursorPct) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0 &&
+      Math.abs(timelineTicks[lo - 1].pct - cursorPct) <
+      Math.abs(timelineTicks[lo].pct - cursorPct)) {
+    return lo - 1;
+  }
+  return lo;
+}
+
+// Apply fisheye zoom to the 5 ticks nearest centerIdx (±2 around it).
+function applyFisheyeZoom(centerIdx) {
+  clearZoom();
+  if (centerIdx < 0) return;
+  const radius = 2;
+  const start = Math.max(0, centerIdx - radius);
+  const end = Math.min(timelineTicks.length - 1, centerIdx + radius);
+  for (let i = start; i <= end; i++) {
+    const distance = Math.abs(i - centerIdx);
+    timelineTicks[i].el.classList.add('zoom-' + distance);
+    zoomedTicks.push(timelineTicks[i]);
+  }
+}
+
+// Hysteresis: return the locked tick unless the cursor is meaningfully
+// closer (by TIMELINE_HYSTERESIS_PCT) to a different tick. Prevents
+// rapid flipping between adjacent ticks at their midpoint.
+function selectWithHysteresis(cursorPct, candidateIdx) {
+  if (candidateIdx < 0) return null;
+  const candidate = timelineTicks[candidateIdx];
+  if (!currentNearest) return candidate;
+  if (currentNearest.el === candidate.el) return currentNearest;
+  const distToCurrent = Math.abs(cursorPct - currentNearest.pct);
+  const distToCandidate = Math.abs(cursorPct - candidate.pct);
+  if (distToCandidate + TIMELINE_HYSTERESIS_PCT < distToCurrent) {
+    return candidate;
+  }
+  return currentNearest;
+}
+
+function updateTimelineCurrent() {
+  if (!timelineCurrent) return;
+  const doc = document.documentElement;
+  const scrollTop = window.scrollY || doc.scrollTop || 0;
+  const scrollMax = (doc.scrollHeight - doc.clientHeight);
+  if (scrollMax <= 0) {
+    timelineCurrent.style.top = '0%%';
+    return;
+  }
+  const pct = (scrollTop / scrollMax) * 100;
+  timelineCurrent.style.top = pct.toFixed(2) + '%%';
+}
+
+function showTooltip(tick, clientY) {
+  if (!timelineTooltip || !tick) return;
+
+  // Content
+  const kindEl = timelineTooltip.querySelector('.tt-kind');
+  const offsetEl = timelineTooltip.querySelector('.tt-offset');
+  const indexEl = timelineTooltip.querySelector('.tt-index');
+  const snippetEl = timelineTooltip.querySelector('.tt-snippet');
+  const costEl = timelineTooltip.querySelector('.tt-cost');
+  const cumEl = timelineTooltip.querySelector('.tt-cum');
+  const tokensEl = timelineTooltip.querySelector('.tt-tokens');
+  if (kindEl) kindEl.textContent = tick.kind;
+  if (offsetEl) offsetEl.textContent = tick.offset ? '+' + tick.offset : '';
+  if (indexEl) indexEl.textContent = tick.index ? 'turn ' + tick.index : '';
+  if (snippetEl) snippetEl.textContent = tick.snippet || '(no preview)';
+  if (costEl) costEl.textContent = tick.cost || '';
+  if (cumEl) cumEl.textContent = tick.cumulative ? 'so far ' + tick.cumulative : '';
+  if (tokensEl) tokensEl.textContent = tick.tokens || '';
+
+  timelineTooltip.className = 'timeline-tooltip kind-' + tick.kind + ' show';
+
+  // Viewport clamp — keep the tooltip fully visible even near top/bottom edges.
+  // Use the tooltip's actual height once it's laid out.
+  const tooltipHeight = timelineTooltip.offsetHeight || 64;
+  const margin = 12;
+  const minY = tooltipHeight / 2 + margin;
+  const maxY = window.innerHeight - tooltipHeight / 2 - margin;
+  const clampedY = Math.max(minY, Math.min(maxY, clientY));
+  timelineTooltip.style.top = clampedY + 'px';
+}
+
+function hideTooltip() {
+  if (timelineTooltip) timelineTooltip.classList.remove('show');
+  clearNearest();
+  clearZoom();
+  if (timelinePlayhead) timelinePlayhead.style.opacity = '0';
+}
+
+function processRailFrame() {
+  rafHandle = null;
+  if (pendingClientY === null || !timelineSpine || timelineTicks.length === 0) return;
+  const rect = timelineSpine.getBoundingClientRect();
+  if (rect.height <= 0) return;
+  const cursorY = pendingClientY;
+  pendingClientY = null;
+  const pct = Math.max(0, Math.min(100, ((cursorY - rect.top) / rect.height) * 100));
+
+  const candidateIdx = nearestTickIndex(pct);
+  applyFisheyeZoom(candidateIdx);
+
+  const tick = selectWithHysteresis(pct, candidateIdx);
+  if (!tick) return;
+
+  if (tick !== currentNearest) {
+    clearNearest();
+    tick.el.classList.add('tick-nearest');
+    currentNearest = tick;
+  }
+
+  if (timelinePlayhead) {
+    timelinePlayhead.style.top = tick.pct.toFixed(2) + '%%';
+    timelinePlayhead.style.opacity = '0.9';
+  }
+
+  // Snap tooltip Y to the tick's screen position (stable, not floating with cursor)
+  const tickScreenY = rect.top + (tick.pct / 100) * rect.height;
+  showTooltip(tick, tickScreenY);
+}
+
+function handleRailMouse(e) {
+  // Cancel any pending leave grace timer — user is still engaging
+  if (leaveTimer !== null) { clearTimeout(leaveTimer); leaveTimer = null; }
+
+  pendingClientY = e.clientY;
+  if (rafHandle === null) {
+    rafHandle = requestAnimationFrame(processRailFrame);
+  }
+}
+
+function handleRailLeave() {
+  // Grace period: user might have slipped slightly off the rail; wait
+  // a moment before fading out so re-entering feels uninterrupted.
+  if (leaveTimer !== null) clearTimeout(leaveTimer);
+  leaveTimer = setTimeout(() => {
+    leaveTimer = null;
+    hideTooltip();
+  }, TIMELINE_LEAVE_GRACE_MS);
+}
+
+function handleRailEnter() {
+  if (leaveTimer !== null) { clearTimeout(leaveTimer); leaveTimer = null; }
+}
+
+function handleRailClick(e) {
+  if (!currentNearest) return;
+  e.preventDefault();
+  window.location.hash = '#msg-' + currentNearest.uuid;
+}
+
+if (timelineRail) {
+  updateTimelineCurrent();
+  window.addEventListener('scroll', updateTimelineCurrent, { passive: true });
+  window.addEventListener('resize', updateTimelineCurrent);
+
+  if (timelineTicks.length > 0) {
+    timelineRail.addEventListener('mouseenter', handleRailEnter);
+    timelineRail.addEventListener('mousemove', handleRailMouse, { passive: true });
+    timelineRail.addEventListener('mouseleave', handleRailLeave);
+    timelineRail.addEventListener('click', handleRailClick);
+  }
+}
+
+function jumpTickRelative(delta) {
+  if (timelineTicks.length === 0) return;
+  const doc = document.documentElement;
+  const scrollTop = window.scrollY || doc.scrollTop || 0;
+  const scrollMax = (doc.scrollHeight - doc.clientHeight);
+  const currentPct = scrollMax > 0 ? (scrollTop / scrollMax) * 100 : 0;
+
+  let idx;
+  if (delta > 0) {
+    idx = timelineTicks.findIndex(t => t.pct > currentPct + 0.5);
+    if (idx === -1) idx = timelineTicks.length - 1;
+  } else {
+    idx = -1;
+    for (let i = 0; i < timelineTicks.length; i++) {
+      if (timelineTicks[i].pct < currentPct - 0.5) idx = i;
+      else break;
+    }
+    if (idx === -1) idx = 0;
+  }
+  const target = timelineTicks[idx];
+  if (target && target.uuid) {
+    window.location.hash = '#msg-' + target.uuid;
+  }
+}
+
 document.addEventListener('keydown', function(e) {
   if (e.target.matches('input, textarea')) return;
   switch(e.key) {
@@ -5738,6 +6337,8 @@ document.addEventListener('keydown', function(e) {
     case 'i': document.getElementById('tb-info')?.click(); break;
     case 'w': btnWatch?.click(); break;
     case 'r': document.getElementById('tb-refresh')?.click(); break;
+    case '[': jumpTickRelative(-1); e.preventDefault(); break;
+    case ']': jumpTickRelative(1); e.preventDefault(); break;
   }
 });
 
