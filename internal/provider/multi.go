@@ -1,30 +1,58 @@
 package provider
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
 )
 
 type Multi struct {
 	backends []Backend
-	cache    *sessionCache
+	cache    *sessionCache // in-memory LRU (fast, volatile)
+	disk     *diskCache    // persistent gob store (survives restart); may be nil
 }
 
 func NewMulti(backends ...Backend) *Multi {
-	return &Multi{
+	m := &Multi{
 		backends: backends,
 		cache:    newSessionCache(16),
 	}
+	// Best-effort disk cache. Failure (unwriteable data dir, permission
+	// issues) just drops to memory-only — not a fatal condition.
+	if dc, err := newDiskCache(filepath.Join(config.DataDir(), "session-cache")); err == nil {
+		m.disk = dc
+	}
+	return m
 }
 
-// ClearSessionCache drops all in-memory parsed-session entries. Used
-// by diagnostics and tests. Not part of a stable API.
+// NewMultiWithDiskCache is used by tests that need a specific cache
+// directory. Production callers should use NewMulti.
+func NewMultiWithDiskCache(diskDir string, backends ...Backend) *Multi {
+	m := &Multi{
+		backends: backends,
+		cache:    newSessionCache(16),
+	}
+	if diskDir != "" {
+		if dc, err := newDiskCache(diskDir); err == nil {
+			m.disk = dc
+		}
+	}
+	return m
+}
+
+// ClearSessionCache drops all parsed-session entries from both the
+// in-memory LRU and the persistent disk cache. Used by diagnostics
+// and tests. Not part of a stable API.
 func (m *Multi) ClearSessionCache() {
 	if m.cache != nil {
 		m.cache.clear()
+	}
+	if m.disk != nil {
+		_ = m.disk.clear()
 	}
 }
 
@@ -128,15 +156,37 @@ func (m *Multi) FindSession(projectName, sessionID string) (*parser.Session, err
 func (m *Multi) ParseSession(filePath string) (*parser.Session, error) {
 	absPath, _ := filepath.Abs(filePath)
 
-	// Cache layer: if we parsed this file recently and mtime/size are
-	// unchanged, return the cached tree. Otherwise delegate to the
-	// appropriate backend and cache the result.
-	if m.cache != nil {
-		return m.cache.getOrLoad(filePath, func() (*parser.Session, error) {
-			return m.parseThroughBackends(filePath, absPath)
-		})
+	// Two-tier cache: in-memory LRU first (hot path), then disk cache
+	// (cold but still avoids re-parsing). Both invalidate on mtime+size
+	// mismatch so external edits to the session file are picked up.
+	if m.cache == nil {
+		return m.parseThroughBackends(filePath, absPath)
 	}
-	return m.parseThroughBackends(filePath, absPath)
+
+	return m.cache.getOrLoad(filePath, func() (*parser.Session, error) {
+		// Memory miss — try disk if available before falling through
+		// to a live parse. Stat the source file once; reuse for both
+		// disk lookup and the backend's cache write.
+		info, statErr := os.Stat(filePath)
+
+		if m.disk != nil && statErr == nil {
+			if sess, hit := m.disk.get(filePath, info.ModTime(), info.Size()); hit {
+				return sess, nil
+			}
+		}
+
+		sess, err := m.parseThroughBackends(filePath, absPath)
+		if err != nil || sess == nil {
+			return sess, err
+		}
+
+		// Persist to disk for next restart. Silently ignore write errors.
+		if m.disk != nil && statErr == nil {
+			m.disk.put(filePath, sess, info.ModTime(), info.Size())
+		}
+
+		return sess, nil
+	})
 }
 
 // parseThroughBackends is the original backend-dispatch logic. Pulled
