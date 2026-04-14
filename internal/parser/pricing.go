@@ -114,89 +114,128 @@ var pricingTable = map[string]ModelPricing{
 	"gpt-5.4-nano": costGPT54Nano_005_04,
 }
 
-// LookupPricing returns pricing for a model name. Matching mirrors
-// Claude Code's `firstPartyNameToCanonical`: case-insensitive substring
-// with more-specific patterns checked first (so "claude-opus-4-6" takes
-// precedence over "claude-opus-4"). Handles Bedrock ARNs, dated model
-// IDs, and bare canonical names uniformly.
+// LookupPricing returns pricing for a model name. Matching uses
+// delimiter-aware substring checks so "gpt-5" inside "gpt-51" doesn't
+// trigger the GPT-5 tier and "gpt-5" inside "openai/gpt-5-codex-mini"
+// correctly resolves to the mini tier.
 //
-// Returns nil when the model is unknown — callers should treat nil as
+// Order matters: more-specific versions are checked first, and within
+// the GPT-5 family the nano/mini variant checks run AFTER a family
+// match is established but BEFORE the default full tier returns.
+//
+// Returns nil when the model is unknown — callers treat nil as
 // "cost unavailable" rather than mis-attributing.
 //
-// KNOWN LIMITATION: Opus 4.6 in fast mode is billed at tier 30/150, not
-// tier 5/25. ccx currently returns the default tier for Opus 4.6
+// KNOWN LIMITATION: Opus 4.6 in fast mode is billed at tier 30/150,
+// not tier 5/25. ccx currently returns the default tier for Opus 4.6
 // regardless of speed. Fast-mode support would require piping the
-// message's `usage.speed` field through cost computation — tracked as
-// a follow-up.
+// message's `usage.speed` field through cost computation.
 func LookupPricing(model string) *ModelPricing {
 	if model == "" {
 		return nil
 	}
 	name := strings.ToLower(model)
 
-	// Order matters: more specific versions first (4-6 before 4-5 before 4-1 before 4)
-	switch {
-	case strings.Contains(name, "claude-opus-4-6"):
-		p := pricingTable["claude-opus-4-6"]
-		p.Model = "claude-opus-4-6"
-		return &p
-	case strings.Contains(name, "claude-opus-4-5"):
-		p := pricingTable["claude-opus-4-5"]
-		p.Model = "claude-opus-4-5"
-		return &p
-	case strings.Contains(name, "claude-opus-4-1"):
-		p := pricingTable["claude-opus-4-1"]
-		p.Model = "claude-opus-4-1"
-		return &p
-	case strings.Contains(name, "claude-opus-4"):
-		p := pricingTable["claude-opus-4"]
-		p.Model = "claude-opus-4"
-		return &p
-	case strings.Contains(name, "claude-sonnet-4-6"):
-		p := pricingTable["claude-sonnet-4-6"]
-		p.Model = "claude-sonnet-4-6"
-		return &p
-	case strings.Contains(name, "claude-sonnet-4-5"):
-		p := pricingTable["claude-sonnet-4-5"]
-		p.Model = "claude-sonnet-4-5"
-		return &p
-	case strings.Contains(name, "claude-sonnet-4"):
-		p := pricingTable["claude-sonnet-4"]
-		p.Model = "claude-sonnet-4"
-		return &p
-	case strings.Contains(name, "claude-haiku-4-5"):
-		p := pricingTable["claude-haiku-4-5"]
-		p.Model = "claude-haiku-4-5"
-		return &p
-	case strings.Contains(name, "claude-3-7-sonnet"):
-		p := pricingTable["claude-3-7-sonnet"]
-		p.Model = "claude-3-7-sonnet"
-		return &p
-	case strings.Contains(name, "claude-3-5-sonnet"):
-		p := pricingTable["claude-3-5-sonnet"]
-		p.Model = "claude-3-5-sonnet"
-		return &p
-	case strings.Contains(name, "claude-3-5-haiku"):
-		p := pricingTable["claude-3-5-haiku"]
-		p.Model = "claude-3-5-haiku"
-		return &p
-	// Codex / GPT-5.x family. Order matters: nano / mini checked before
-	// the plain "gpt-5" substring match so "gpt-5-mini" doesn't
-	// degrade to "gpt-5" rates.
-	case strings.Contains(name, "gpt-5.4-nano"), strings.Contains(name, "gpt-5-nano"):
-		p := pricingTable["gpt-5.4-nano"]
-		p.Model = "gpt-5.4-nano"
-		return &p
-	case strings.Contains(name, "gpt-5.4-mini"), strings.Contains(name, "gpt-5-mini"):
-		p := pricingTable["gpt-5.4-mini"]
-		p.Model = "gpt-5.4-mini"
-		return &p
-	case strings.Contains(name, "gpt-5.4"), strings.Contains(name, "gpt-5"):
-		p := pricingTable["gpt-5.4"]
-		p.Model = "gpt-5.4"
-		return &p
+	// Claude family — more specific before less specific
+	for _, key := range []string{
+		"claude-opus-4-6",
+		"claude-opus-4-5",
+		"claude-opus-4-1",
+		"claude-opus-4",
+		"claude-sonnet-4-6",
+		"claude-sonnet-4-5",
+		"claude-sonnet-4",
+		"claude-haiku-4-5",
+		"claude-3-7-sonnet",
+		"claude-3-5-sonnet",
+		"claude-3-5-haiku",
+	} {
+		if containsDelimited(name, key) {
+			p := pricingTable[key]
+			p.Model = key
+			return &p
+		}
 	}
+
+	// GPT-5 / GPT-5.4 family — match the family prefix first, then
+	// check for the nano/mini variant token as a post-filter so the
+	// match order is "family then variant" instead of "each variant
+	// tried in sequence". Prevents "gpt-5o-mini" from false-matching
+	// the base tier and "gpt-51" from being treated as gpt-5.
+	if containsDelimited(name, "gpt-5.4") || containsDelimited(name, "gpt-5") {
+		switch {
+		case hasVariantToken(name, "nano"):
+			p := pricingTable["gpt-5.4-nano"]
+			p.Model = "gpt-5.4-nano"
+			return &p
+		case hasVariantToken(name, "mini"):
+			p := pricingTable["gpt-5.4-mini"]
+			p.Model = "gpt-5.4-mini"
+			return &p
+		default:
+			p := pricingTable["gpt-5.4"]
+			p.Model = "gpt-5.4"
+			return &p
+		}
+	}
+
 	return nil
+}
+
+// containsDelimited returns true when `family` appears in `name`
+// followed by a delimiter (-, ., /, _, space) or the end of the
+// string. Prevents false matches like `gpt-5` inside `gpt-51` or
+// `claude-opus-4` inside `claude-opus-42`.
+func containsDelimited(name, family string) bool {
+	start := 0
+	for {
+		idx := strings.Index(name[start:], family)
+		if idx < 0 {
+			return false
+		}
+		end := start + idx + len(family)
+		if end >= len(name) {
+			return true
+		}
+		next := name[end]
+		if next == '-' || next == '.' || next == '/' || next == '_' || next == ' ' || next == ':' {
+			return true
+		}
+		start = start + idx + 1
+		if start >= len(name) {
+			return false
+		}
+	}
+}
+
+// hasVariantToken returns true when the given variant token (`mini`,
+// `nano`) appears in name surrounded by delimiters on both sides
+// (either a leading delimiter + trailing delimiter, or at end-of-
+// string). Matches `-mini-`, `-mini/`, `-mini_`, `.mini.`, and
+// anything-of-that-shape. Does NOT match `cuminary` or `terminal`.
+func hasVariantToken(name, variant string) bool {
+	delims := "-./_ :"
+	for _, sep := range delims {
+		needle := string(sep) + variant
+		// Suffix match: "...-mini" / "...:nano"
+		if strings.HasSuffix(name, needle) {
+			return true
+		}
+		// Embedded match: "...-mini-..." / "...-mini/..."
+		idx := strings.Index(name, needle)
+		for idx >= 0 {
+			end := idx + len(needle)
+			if end < len(name) && strings.ContainsRune(delims, rune(name[end])) {
+				return true
+			}
+			next := strings.Index(name[idx+1:], needle)
+			if next < 0 {
+				break
+			}
+			idx = idx + 1 + next
+		}
+	}
+	return false
 }
 
 // ComputeCost returns USD for the given token usage at the given pricing.

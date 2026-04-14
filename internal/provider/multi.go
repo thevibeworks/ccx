@@ -154,23 +154,34 @@ func (m *Multi) FindSession(projectName, sessionID string) (*parser.Session, err
 }
 
 func (m *Multi) ParseSession(filePath string) (*parser.Session, error) {
-	absPath, _ := filepath.Abs(filePath)
+	absPath, err := filepath.Abs(filePath)
+	if err != nil || absPath == "" {
+		// If we can't canonicalize the path, fall back to the raw form
+		// so a degenerate input (empty string, bad symlink) still gets
+		// the error from parseThroughBackends instead of a silent
+		// cache-miss loop.
+		absPath = filePath
+	}
 
 	// Two-tier cache: in-memory LRU first (hot path), then disk cache
 	// (cold but still avoids re-parsing). Both invalidate on mtime+size
 	// mismatch so external edits to the session file are picked up.
+	//
+	// The cache key is the ABSOLUTE path so two callers with different
+	// representations of the same file ("./a.jsonl" vs "/wd/a.jsonl")
+	// hit the same slot instead of redundantly parsing twice.
 	if m.cache == nil {
 		return m.parseThroughBackends(filePath, absPath)
 	}
 
-	return m.cache.getOrLoad(filePath, func() (*parser.Session, error) {
+	return m.cache.getOrLoad(absPath, func() (*parser.Session, error) {
 		// Memory miss — try disk if available before falling through
 		// to a live parse. Stat the source file once; reuse for both
 		// disk lookup and the backend's cache write.
 		info, statErr := os.Stat(filePath)
 
 		if m.disk != nil && statErr == nil {
-			if sess, hit := m.disk.get(filePath, info.ModTime(), info.Size()); hit {
+			if sess, hit := m.disk.get(absPath, info.ModTime(), info.Size()); hit {
 				return sess, nil
 			}
 		}
@@ -182,7 +193,7 @@ func (m *Multi) ParseSession(filePath string) (*parser.Session, error) {
 
 		// Persist to disk for next restart. Silently ignore write errors.
 		if m.disk != nil && statErr == nil {
-			m.disk.put(filePath, sess, info.ModTime(), info.Size())
+			m.disk.put(absPath, sess, info.ModTime(), info.Size())
 		}
 
 		return sess, nil
