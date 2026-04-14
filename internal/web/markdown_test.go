@@ -40,10 +40,10 @@ func TestParseATXHeading_NotHeadings(t *testing.T) {
 		"Just a paragraph",
 		"####### Too many hashes",
 		"##NoSpace",
-		"## ",     // no content (just trailing whitespace)
-		"##",      // no content at all
-		"#",       // single # with no content
-		"",        // empty line
+		"## ",               // no content (just trailing whitespace)
+		"##",                // no content at all
+		"#",                 // single # with no content
+		"",                  // empty line
 		" ## leading space", // indented — not a heading per CommonMark
 	}
 	for _, line := range notHeadings {

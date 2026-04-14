@@ -72,12 +72,12 @@ func main() {
 // costTier is a parsed tier definition from modelCost.ts. Names mirror
 // the TypeScript constant names so logs and diffs are obvious.
 type costTier struct {
-	Name           string
-	InputTokens    float64
-	OutputTokens   float64
-	PromptCacheW   float64 // promptCacheWriteTokens
-	PromptCacheR   float64 // promptCacheReadTokens
-	WebSearch      float64 // webSearchRequests
+	Name         string
+	InputTokens  float64
+	OutputTokens float64
+	PromptCacheW float64 // promptCacheWriteTokens
+	PromptCacheR float64 // promptCacheReadTokens
+	WebSearch    float64 // webSearchRequests
 }
 
 // tierBlockRe matches an exported cost tier constant like:
