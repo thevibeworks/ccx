@@ -10,10 +10,22 @@ import (
 
 type Multi struct {
 	backends []Backend
+	cache    *sessionCache
 }
 
 func NewMulti(backends ...Backend) *Multi {
-	return &Multi{backends: backends}
+	return &Multi{
+		backends: backends,
+		cache:    newSessionCache(16),
+	}
+}
+
+// ClearSessionCache drops all in-memory parsed-session entries. Used
+// by diagnostics and tests. Not part of a stable API.
+func (m *Multi) ClearSessionCache() {
+	if m.cache != nil {
+		m.cache.clear()
+	}
 }
 
 func (m *Multi) ID() string { return "multi" }
@@ -115,6 +127,22 @@ func (m *Multi) FindSession(projectName, sessionID string) (*parser.Session, err
 
 func (m *Multi) ParseSession(filePath string) (*parser.Session, error) {
 	absPath, _ := filepath.Abs(filePath)
+
+	// Cache layer: if we parsed this file recently and mtime/size are
+	// unchanged, return the cached tree. Otherwise delegate to the
+	// appropriate backend and cache the result.
+	if m.cache != nil {
+		return m.cache.getOrLoad(filePath, func() (*parser.Session, error) {
+			return m.parseThroughBackends(filePath, absPath)
+		})
+	}
+	return m.parseThroughBackends(filePath, absPath)
+}
+
+// parseThroughBackends is the original backend-dispatch logic. Pulled
+// out so the cache layer can invoke it on miss without duplicating the
+// dispatch rules.
+func (m *Multi) parseThroughBackends(filePath, absPath string) (*parser.Session, error) {
 	for _, b := range m.backends {
 		for _, home := range b.Homes() {
 			absHome, _ := filepath.Abs(home)
