@@ -93,11 +93,11 @@ type tokenUsageInfo struct {
 }
 
 type tokenUsageTotals struct {
-	InputTokens          int `json:"input_tokens"`
-	CachedInputTokens    int `json:"cached_input_tokens"`
-	OutputTokens         int `json:"output_tokens"`
+	InputTokens           int `json:"input_tokens"`
+	CachedInputTokens     int `json:"cached_input_tokens"`
+	OutputTokens          int `json:"output_tokens"`
 	ReasoningOutputTokens int `json:"reasoning_output_tokens"`
-	TotalTokens          int `json:"total_tokens"`
+	TotalTokens           int `json:"total_tokens"`
 }
 
 type execCommandEndPayload struct {
@@ -712,9 +712,15 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 	handledCallIDs := make(map[string]bool)
 	completedCallIDs := make(map[string]bool)
 	// Tracks the running token totals seen in the most recent
-	// token_count event. Subsequent events carry new totals; the delta
-	// is attributed to the most recent assistant message without Usage.
+	// token_count event AND the index into messages beyond which we
+	// haven't yet attributed. On each token_count, we distribute the
+	// delta-since-last-event across every untagged assistant in
+	// messages[usageWatermark:], then advance the watermark. This
+	// handles multi-assistant turns (reasoning + agent_message) and
+	// turns that produce multiple agent_message events between
+	// token_count events.
 	var previousTotals tokenUsageTotals
+	usageWatermark := 0
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScannerBufferBytes)
@@ -1063,25 +1069,36 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 					stats.OutputTokens = total.OutputTokens
 
 					// Per-message attribution: diff this total against the
-					// running previousTotals and attach the delta to the
-					// most recent assistant message that doesn't already
-					// carry usage. Rough but usable — Codex doesn't tag
-					// tokens to individual messages the way the Anthropic
-					// API does, so delta-since-last-token_count is the best
-					// we can do without a protocol change.
+					// running previousTotals and distribute the delta
+					// evenly across every untagged assistant message since
+					// the last token_count event.
+					//
+					// Even-split isn't perfectly accurate per-message for
+					// multi-assistant turns (reasoning + agent_message +
+					// another agent_message), but the per-TURN aggregation
+					// the UI displays reassembles correctly because each
+					// turn sums all its messages. Without this fix, only
+					// the latest assistant got tokens and all earlier
+					// ones in the burst showed $0.00.
 					delta := parser.MessageUsage{
 						InputTokens:     clampNonNegative(total.InputTokens - previousTotals.InputTokens),
 						OutputTokens:    clampNonNegative(total.OutputTokens - previousTotals.OutputTokens),
 						CacheReadTokens: clampNonNegative(total.CachedInputTokens - previousTotals.CachedInputTokens),
 						ReasoningTokens: clampNonNegative(total.ReasoningOutputTokens - previousTotals.ReasoningOutputTokens),
 					}
-					if delta.Total() > 0 {
-						if target := latestAssistantWithoutUsage(messages); target != nil {
-							delta.CostUSD = parser.ComputeCost(&delta, parser.LookupPricing(target.Model))
-							target.Usage = &delta
-						}
+					if delta.Total() > 0 && usageWatermark <= len(messages) {
+						distributeCodexDelta(messages[usageWatermark:], delta)
 					}
-					previousTotals = total
+					usageWatermark = len(messages)
+					// Use max() as the new floor so a running-total
+					// regression doesn't double-count on recovery:
+					// 100→200→150→250 should emit deltas 100, 0, 50 — not
+					// 100, 0, 100.
+					previousTotals.InputTokens = maxInt(previousTotals.InputTokens, total.InputTokens)
+					previousTotals.OutputTokens = maxInt(previousTotals.OutputTokens, total.OutputTokens)
+					previousTotals.CachedInputTokens = maxInt(previousTotals.CachedInputTokens, total.CachedInputTokens)
+					previousTotals.ReasoningOutputTokens = maxInt(previousTotals.ReasoningOutputTokens, total.ReasoningOutputTokens)
+					previousTotals.TotalTokens = maxInt(previousTotals.TotalTokens, total.TotalTokens)
 				}
 
 			case "thread_name_updated":
@@ -1565,14 +1582,8 @@ func buildMessageTree(messages []*parser.Message) []*parser.Message {
 }
 
 // latestAssistantWithoutUsage walks messages in reverse and returns
-// the first assistant message that doesn't already carry Usage data.
-// Returns nil if every assistant is already annotated, or if there
-// are no assistants at all.
-//
-// Used by the token_count handler to attribute a token delta to the
-// most recent untagged assistant — rough per-turn cost estimation for
-// Codex sessions (which report running totals rather than per-message
-// counts).
+// the first assistant message without Usage. Kept for tests that
+// already rely on it; new code should prefer distributeCodexDelta.
 func latestAssistantWithoutUsage(messages []*parser.Message) *parser.Message {
 	for i := len(messages) - 1; i >= 0; i-- {
 		m := messages[i]
@@ -1586,6 +1597,65 @@ func latestAssistantWithoutUsage(messages []*parser.Message) *parser.Message {
 	return nil
 }
 
+// distributeCodexDelta evenly splits a token delta across every
+// assistant message in `recent` that doesn't already carry Usage.
+// Computes per-message cost via LookupPricing on the target's model.
+//
+// The distribution is even by count, not proportional to individual
+// message output size, because Codex's wire format doesn't expose
+// per-message counts — only running totals at checkpoints. The
+// per-TURN aggregation the UI displays reassembles correctly since
+// each turn sums all its messages, so the approximation is invisible
+// at the turn level.
+//
+// If no untagged assistants exist in `recent`, the delta is silently
+// dropped. This is correct: the delta is already reflected in the
+// session-level stats, and there's no message to attach it to.
+func distributeCodexDelta(recent []*parser.Message, delta parser.MessageUsage) {
+	untagged := make([]*parser.Message, 0, len(recent))
+	for _, m := range recent {
+		if m == nil || m.Kind != parser.KindAssistant {
+			continue
+		}
+		if m.Usage == nil {
+			untagged = append(untagged, m)
+		}
+	}
+	n := len(untagged)
+	if n == 0 {
+		return
+	}
+
+	share := parser.MessageUsage{
+		InputTokens:       delta.InputTokens / n,
+		OutputTokens:      delta.OutputTokens / n,
+		CacheReadTokens:   delta.CacheReadTokens / n,
+		CacheCreateTokens: delta.CacheCreateTokens / n,
+		ReasoningTokens:   delta.ReasoningTokens / n,
+	}
+	// First message absorbs any integer-division remainder so the sum
+	// of per-message usage equals the delta exactly.
+	remainder := parser.MessageUsage{
+		InputTokens:       delta.InputTokens - share.InputTokens*n,
+		OutputTokens:      delta.OutputTokens - share.OutputTokens*n,
+		CacheReadTokens:   delta.CacheReadTokens - share.CacheReadTokens*n,
+		CacheCreateTokens: delta.CacheCreateTokens - share.CacheCreateTokens*n,
+		ReasoningTokens:   delta.ReasoningTokens - share.ReasoningTokens*n,
+	}
+	for i, m := range untagged {
+		per := share
+		if i == 0 {
+			per.InputTokens += remainder.InputTokens
+			per.OutputTokens += remainder.OutputTokens
+			per.CacheReadTokens += remainder.CacheReadTokens
+			per.CacheCreateTokens += remainder.CacheCreateTokens
+			per.ReasoningTokens += remainder.ReasoningTokens
+		}
+		per.CostUSD = parser.ComputeCost(&per, parser.LookupPricing(m.Model))
+		m.Usage = &per
+	}
+}
+
 // clampNonNegative returns v if v >= 0, else 0. Used when diffing
 // Codex token totals — a running-total event that reset or regressed
 // would otherwise produce negative deltas.
@@ -1594,4 +1664,13 @@ func clampNonNegative(v int) int {
 		return 0
 	}
 	return v
+}
+
+// maxInt returns the larger of a and b. Go stdlib adds this in 1.21
+// but the codebase targets a lower floor. Tiny helper, kept local.
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
