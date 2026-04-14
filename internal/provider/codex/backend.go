@@ -93,10 +93,11 @@ type tokenUsageInfo struct {
 }
 
 type tokenUsageTotals struct {
-	InputTokens       int `json:"input_tokens"`
-	CachedInputTokens int `json:"cached_input_tokens"`
-	OutputTokens      int `json:"output_tokens"`
-	TotalTokens       int `json:"total_tokens"`
+	InputTokens          int `json:"input_tokens"`
+	CachedInputTokens    int `json:"cached_input_tokens"`
+	OutputTokens         int `json:"output_tokens"`
+	ReasoningOutputTokens int `json:"reasoning_output_tokens"`
+	TotalTokens          int `json:"total_tokens"`
 }
 
 type execCommandEndPayload struct {
@@ -710,6 +711,10 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 	pendingTools := make(map[string]pendingToolCall)
 	handledCallIDs := make(map[string]bool)
 	completedCallIDs := make(map[string]bool)
+	// Tracks the running token totals seen in the most recent
+	// token_count event. Subsequent events carry new totals; the delta
+	// is attributed to the most recent assistant message without Usage.
+	var previousTotals tokenUsageTotals
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScannerBufferBytes)
@@ -1050,9 +1055,33 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 			case "token_count":
 				var payload tokenCountPayload
 				if err := json.Unmarshal(rollout.Payload, &payload); err == nil && payload.Info != nil {
-					stats.InputTokens = payload.Info.TotalTokenUsage.InputTokens
-					stats.CacheReadTokens = payload.Info.TotalTokenUsage.CachedInputTokens
-					stats.OutputTokens = payload.Info.TotalTokenUsage.OutputTokens
+					total := payload.Info.TotalTokenUsage
+					// Session-level aggregate (latest snapshot wins — Codex
+					// always emits running totals, not deltas).
+					stats.InputTokens = total.InputTokens
+					stats.CacheReadTokens = total.CachedInputTokens
+					stats.OutputTokens = total.OutputTokens
+
+					// Per-message attribution: diff this total against the
+					// running previousTotals and attach the delta to the
+					// most recent assistant message that doesn't already
+					// carry usage. Rough but usable — Codex doesn't tag
+					// tokens to individual messages the way the Anthropic
+					// API does, so delta-since-last-token_count is the best
+					// we can do without a protocol change.
+					delta := parser.MessageUsage{
+						InputTokens:     clampNonNegative(total.InputTokens - previousTotals.InputTokens),
+						OutputTokens:    clampNonNegative(total.OutputTokens - previousTotals.OutputTokens),
+						CacheReadTokens: clampNonNegative(total.CachedInputTokens - previousTotals.CachedInputTokens),
+						ReasoningTokens: clampNonNegative(total.ReasoningOutputTokens - previousTotals.ReasoningOutputTokens),
+					}
+					if delta.Total() > 0 {
+						if target := latestAssistantWithoutUsage(messages); target != nil {
+							delta.CostUSD = parser.ComputeCost(&delta, parser.LookupPricing(target.Model))
+							target.Usage = &delta
+						}
+					}
+					previousTotals = total
 				}
 
 			case "thread_name_updated":
@@ -1533,4 +1562,36 @@ func buildMessageTree(messages []*parser.Message) []*parser.Message {
 	}
 
 	return roots
+}
+
+// latestAssistantWithoutUsage walks messages in reverse and returns
+// the first assistant message that doesn't already carry Usage data.
+// Returns nil if every assistant is already annotated, or if there
+// are no assistants at all.
+//
+// Used by the token_count handler to attribute a token delta to the
+// most recent untagged assistant — rough per-turn cost estimation for
+// Codex sessions (which report running totals rather than per-message
+// counts).
+func latestAssistantWithoutUsage(messages []*parser.Message) *parser.Message {
+	for i := len(messages) - 1; i >= 0; i-- {
+		m := messages[i]
+		if m == nil || m.Kind != parser.KindAssistant {
+			continue
+		}
+		if m.Usage == nil {
+			return m
+		}
+	}
+	return nil
+}
+
+// clampNonNegative returns v if v >= 0, else 0. Used when diffing
+// Codex token totals — a running-total event that reset or regressed
+// would otherwise produce negative deltas.
+func clampNonNegative(v int) int {
+	if v < 0 {
+		return 0
+	}
+	return v
 }

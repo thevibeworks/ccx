@@ -40,24 +40,69 @@ func TestLookupPricing_EmptyReturnsNil(t *testing.T) {
 	}
 }
 
-func TestLookupPricing_NonClaudeFamilyReturnsNil(t *testing.T) {
-	// Guard against ccusage's #934 regression: non-Claude models
-	// (gpt-4, gpt-5, grok, etc.) must NOT accidentally match any
-	// Claude tier. Our matching is substring-based but anchored
-	// on "claude-*" prefixes, so any string that doesn't contain
-	// a Claude family marker returns nil.
-	nonClaude := []string{
+func TestLookupPricing_UnknownFamilyReturnsNil(t *testing.T) {
+	// Guard against cross-family mismatches: any model name that's
+	// not in a family we explicitly price (Claude, GPT-5/5.4) must
+	// return nil. Keeps us from silently pricing Grok or Llama
+	// requests at Claude rates.
+	unknown := []string{
 		"gpt-4",
-		"gpt-5.4-mini",
+		"gpt-4-turbo",
 		"grok-2",
 		"llama-3-70b",
 		"mistral-large",
 		"",
 	}
-	for _, model := range nonClaude {
+	for _, model := range unknown {
 		if p := LookupPricing(model); p != nil {
-			t.Errorf("LookupPricing(%q) = %+v, want nil (non-Claude family)", model, p)
+			t.Errorf("LookupPricing(%q) = %+v, want nil (unknown family)", model, p)
 		}
+	}
+}
+
+func TestLookupPricing_GPT5Family(t *testing.T) {
+	cases := []struct {
+		model     string
+		canonical string
+		wantInput float64
+	}{
+		{"gpt-5", "gpt-5.4", 10.00},
+		{"gpt-5.4", "gpt-5.4", 10.00},
+		{"gpt-5-mini", "gpt-5.4-mini", 0.25},
+		{"gpt-5.4-mini", "gpt-5.4-mini", 0.25},
+		{"gpt-5-nano", "gpt-5.4-nano", 0.05},
+		{"gpt-5.4-nano", "gpt-5.4-nano", 0.05},
+		// mini/nano must win before the plain gpt-5 substring
+		{"GPT-5.4-MINI", "gpt-5.4-mini", 0.25},
+	}
+	for _, c := range cases {
+		p := LookupPricing(c.model)
+		if p == nil {
+			t.Errorf("LookupPricing(%q) returned nil", c.model)
+			continue
+		}
+		if p.Model != c.canonical {
+			t.Errorf("LookupPricing(%q).Model = %q, want %q", c.model, p.Model, c.canonical)
+		}
+		if p.InputPer1M != c.wantInput {
+			t.Errorf("LookupPricing(%q).InputPer1M = %v, want %v", c.model, p.InputPer1M, c.wantInput)
+		}
+	}
+}
+
+func TestComputeCost_ReasoningTokensBilledAsOutput(t *testing.T) {
+	// Codex / GPT-5 reasoning tokens should be billed at the same
+	// rate as regular output tokens.
+	pricing := &ModelPricing{InputPer1M: 10, OutputPer1M: 80}
+	usage := &MessageUsage{
+		InputTokens:     1_000_000, // $10
+		OutputTokens:    1_000_000, // $80
+		ReasoningTokens: 500_000,   // $40
+	}
+	got := ComputeCost(usage, pricing)
+	want := 10.0 + 80.0 + 40.0 // 130 USD
+	if got != want {
+		t.Errorf("ComputeCost = %v, want %v", got, want)
 	}
 }
 
