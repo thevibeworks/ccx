@@ -7,9 +7,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- **Per-turn spend breakdown in the info panel** (#2): The info panel now shows a Per-turn spend section with one clickable row per user turn, sorted by cost desc so expensive turns surface first. Each row links to `#msg-<anchor>` which composes with the load-earlier fix to deep-link into any turn regardless of progressive-load state. Answers "where did my quota go?" inside the session viewer, without leaving ccx.
+- **Per-message token usage on `Message`**: The parser now persists `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, and computed USD cost on each assistant `Message`. Previously only session-level aggregates were kept.
+- **Embedded Claude pricing table**: Pinned list pricing for Claude Opus 4.x, Sonnet 4.x, Haiku 4.5, and legacy 3.5 Sonnet/Haiku. Offline-by-design: no runtime fetch, no LiteLLM dependency. Unknown models resolve to nil (no fuzzy match) — callers treat nil as "cost unavailable" rather than mis-attributing.
+- **Session-level Cost row**: Info panel's Tokens section now shows a Cost line when at least one message has pricing-resolved usage, computed as the exact sum of per-message costs (single source of truth — `session.Stats.CostUSD == sum(message.Usage.CostUSD)` by construction).
+
 ### Fixed
 - **Deep-link navigation into collapsed history** (#3): Hash URLs (`#msg-<uuid>`) targeting messages inside progressively-loaded "Load earlier" sections now auto-reload with `?all=1` and scroll to the target instead of silently failing. Ancestor threads and `<details>` elements are unfolded on arrival so the target is actually visible. `hashchange` events also trigger the same jump logic, so in-app navigation via `#msg-` links works after initial load.
 - **In-session search 0-match experience** (#3): When search returns no hits but the session has hidden history, the info line now shows a "search full history" link that reloads with full content; the pending query is preserved via `sessionStorage` and re-applied after reload so the user picks up where they left off.
+- **Short session ID crash**: `renderSessionPage` no longer panics when the session ID is shorter than 8 characters (was `session.ID[:8]` unguarded).
+
+### Accuracy notes
+- **What we count**: Per-turn cost is the sum of every billable assistant message within the turn, priced at the pinned list rates. Sidechain (`isSidechain: true`) assistant messages ARE included because you ARE billed for them — ccx does not attempt sidechain cache-read dedup (which would produce numbers that don't match the invoice).
+- **When a number is omitted**: If the model is unknown to the pricing table, the Cost line is omitted and the per-turn breakdown shows a "No pricing match" note with token-only rows. We would rather not show a number than show a wrong one.
 
 ## [0.2.5] - 2026-01-07
 
