@@ -559,6 +559,38 @@ func TestHandleSession_TimelineRailEmptyFallback(t *testing.T) {
 	}
 }
 
+func TestHandleSession_SessionNavIsNarrowByDefault(t *testing.T) {
+	// The session-nav sidebar should emit the narrow-by-default CSS
+	// rules (panel-nav.session-nav width:56px, hover → 260px expand).
+	// This is a smoke test — the actual layout behaviour is CSS-only
+	// and can't be exercised from Go, but we can verify the right
+	// selectors are in the rendered page.
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-test-project/test-session-123", nil)
+	w := httptest.NewRecorder()
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, `.panel-nav.session-nav {`) {
+		t.Error("expected .panel-nav.session-nav CSS block (narrow default state)")
+	}
+	if !strings.Contains(body, `width: 56px;`) {
+		t.Error("expected collapsed 56px width for session-nav")
+	}
+	if !strings.Contains(body, `.panel-nav.session-nav:hover`) {
+		t.Error("expected hover-expand rule on session-nav")
+	}
+	if !strings.Contains(body, `width: 260px;`) {
+		t.Error("expected expanded 260px width on hover")
+	}
+}
+
 func TestHandleSession_SpendSectionShowsTokenBreakdownForUnpricedModel(t *testing.T) {
 	// Session with an unknown model still renders the breakdown (token-only),
 	// because seeing which turns used the most tokens is still useful even
