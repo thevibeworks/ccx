@@ -107,6 +107,15 @@ func ParseSession(filePath string) (*Session, error) {
 	stats.CacheReadTokens = totalCacheRead
 	stats.CacheCreateTokens = totalCacheCreate
 
+	// Session cost is the sum of per-message costs. We compute it post-parse
+	// so the session total is guaranteed equal to the sum of per-turn costs
+	// the UI renders (single source of truth).
+	for _, msg := range messages {
+		if msg.Usage != nil {
+			stats.CostUSD += msg.Usage.CostUSD
+		}
+	}
+
 	var startTime, endTime time.Time
 	if len(messages) > 0 {
 		startTime = messages[0].Timestamp
@@ -166,6 +175,23 @@ func parseMessage(raw rawMessage) *Message {
 		Model:       raw.Message.Model,
 		Subtype:     raw.Subtype,
 		raw:         raw,
+	}
+
+	// Populate per-message usage. Prefer message.usage (API response shape),
+	// fall back to top-level usage. Cost is 0 when the model is unknown.
+	usage := raw.Message.Usage
+	if usage == nil {
+		usage = raw.Usage
+	}
+	if usage != nil {
+		mu := &MessageUsage{
+			InputTokens:       usage.InputTokens,
+			OutputTokens:      usage.OutputTokens,
+			CacheReadTokens:   usage.CacheReadInputTokens,
+			CacheCreateTokens: usage.CacheCreationInputTokens,
+		}
+		mu.CostUSD = ComputeCost(mu, LookupPricing(msg.Model))
+		msg.Usage = mu
 	}
 
 	msg.Content = parseContent(raw.Message.Content)
@@ -474,6 +500,18 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 			stats.OutputTokens += usage.OutputTokens
 			stats.CacheReadTokens += usage.CacheReadInputTokens
 			stats.CacheCreateTokens += usage.CacheCreationInputTokens
+
+			// Accumulate cost using the same pricing path the full parser uses,
+			// so session-list totals match the session-view total.
+			if pricing := LookupPricing(raw.Message.Model); pricing != nil {
+				mu := &MessageUsage{
+					InputTokens:       usage.InputTokens,
+					OutputTokens:      usage.OutputTokens,
+					CacheReadTokens:   usage.CacheReadInputTokens,
+					CacheCreateTokens: usage.CacheCreationInputTokens,
+				}
+				stats.CostUSD += ComputeCost(mu, pricing)
+			}
 		}
 
 		// Extract metadata from first message that has it

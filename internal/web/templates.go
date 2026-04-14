@@ -281,7 +281,11 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 func renderSessionPage(session *parser.Session, projectName string, allSessions []*parser.Session, memCount int, showThinking, showTools, loadAll bool, theme string) string {
 	var b strings.Builder
 
-	title := fmt.Sprintf("Session %s - ccx", session.ID[:8])
+	idPrefix := session.ID
+	if len(idPrefix) > 8 {
+		idPrefix = idPrefix[:8]
+	}
+	title := fmt.Sprintf("Session %s - ccx", idPrefix)
 	b.WriteString(pageHeader(title, theme))
 	b.WriteString(renderTopNav(projectName, session.ID))
 	b.WriteString(`<div class="layout session-layout">`)
@@ -484,7 +488,19 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 			}
 		}
 		b.WriteString(fmt.Sprintf(`<div class="info-row info-total" title="Input + Output tokens"><span class="info-label">Total</span><span class="info-value"><strong>%s</strong></span></div>`, formatTokens(totalTokens)))
+		// Cost row, shown when pricing resolved for at least one model
+		if session.Stats.CostUSD > 0 {
+			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="Sum of per-message USD cost using pinned Anthropic list pricing"><span class="info-label">Cost</span><span class="info-value"><strong>%s</strong></span></div>`, formatCost(session.Stats.CostUSD)))
+		}
 		b.WriteString(`</div>`)
+	}
+
+	// Per-turn spend section — the crown jewel of v0.next.
+	// Only render when we have at least one turn with billable usage.
+	allMsgs := flattenMessages(session.RootMessages)
+	turns := parser.ComputeTurnStats(allMsgs)
+	if hasBillableUsage(turns) {
+		b.WriteString(renderSpendSection(turns, session.Stats.CostUSD))
 	}
 
 	b.WriteString(`</div>`)
@@ -1497,6 +1513,117 @@ func formatTokens(n int) string {
 		return fmt.Sprintf("%.1fk", k)
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+// formatCost returns a USD string with adaptive precision:
+//
+//	< $0.01      -> "<$0.01"
+//	< $1         -> "$0.0123"
+//	>= $1        -> "$1.23"
+//	>= $100      -> "$123"
+//	>= $10,000   -> "$12.3k"
+//
+// No rounding games, no locale. Cost is the user's whole reason for
+// looking — show what's billed.
+func formatCost(usd float64) string {
+	if usd <= 0 {
+		return "$0.00"
+	}
+	if usd < 0.01 {
+		return "<$0.01"
+	}
+	if usd < 1 {
+		return fmt.Sprintf("$%.4f", usd)
+	}
+	if usd < 100 {
+		return fmt.Sprintf("$%.2f", usd)
+	}
+	if usd < 10_000 {
+		return fmt.Sprintf("$%.0f", usd)
+	}
+	return fmt.Sprintf("$%.1fk", usd/1000)
+}
+
+// hasBillableUsage reports whether any turn in the slice has non-zero
+// tokens. Used to decide whether to render the spend section at all.
+func hasBillableUsage(turns []*parser.TurnStats) bool {
+	for _, t := range turns {
+		if t != nil && t.TotalTokens() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// renderSpendSection renders the per-turn breakdown inside the info panel.
+// Turns are sorted by cost desc (most expensive first) so quota hogs
+// surface immediately. Rows link to #msg-<anchor> which composes with
+// the load-earlier hash-nav fix shipped in #3.
+func renderSpendSection(turns []*parser.TurnStats, sessionTotal float64) string {
+	var b strings.Builder
+
+	// Sort by cost desc (stable — ties break by original turn index).
+	// We don't sort the underlying slice; work on a copy so callers get
+	// chronological order back.
+	sorted := make([]*parser.TurnStats, len(turns))
+	copy(sorted, turns)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].CostUSD != sorted[j].CostUSD {
+			return sorted[i].CostUSD > sorted[j].CostUSD
+		}
+		return sorted[i].Index < sorted[j].Index
+	})
+
+	b.WriteString(`<div class="info-section info-section-spend">`)
+	b.WriteString(`<div class="info-section-header">Per-turn spend</div>`)
+
+	priced := 0
+	for _, t := range sorted {
+		if t.CostUSD > 0 {
+			priced++
+		}
+	}
+	if priced == 0 {
+		// Tokens present but no pricing matched any model (unknown model).
+		// Still useful to show token-only breakdown; label the limitation.
+		b.WriteString(`<div class="spend-note">No pricing match for model — showing token totals.</div>`)
+	}
+
+	b.WriteString(`<div class="spend-list">`)
+	for _, t := range sorted {
+		// Skip turns with literally zero activity (no tokens, no cost)
+		if t.TotalTokens() == 0 && t.CostUSD == 0 {
+			continue
+		}
+		snippet := t.Snippet
+		if len(snippet) > 42 {
+			snippet = snippet[:39] + "..."
+		}
+		label := fmt.Sprintf("%d. %s", t.Index, snippet)
+		tokensLabel := formatTokens(t.TotalTokens())
+
+		b.WriteString(fmt.Sprintf(
+			`<a class="spend-row" href="#msg-%s" title="Jump to turn %d — %s tokens, %s"><span class="spend-label">%s</span><span class="spend-cost">%s</span></a>`,
+			html.EscapeString(sanitizeID(t.AnchorID)),
+			t.Index,
+			tokensLabel,
+			formatCost(t.CostUSD),
+			html.EscapeString(label),
+			formatCost(t.CostUSD),
+		))
+	}
+	b.WriteString(`</div>`)
+
+	// Footer: total cost summary + known-models link
+	if sessionTotal > 0 {
+		b.WriteString(fmt.Sprintf(
+			`<div class="spend-footer">Session total: <strong>%s</strong></div>`,
+			formatCost(sessionTotal),
+		))
+	}
+
+	b.WriteString(`</div>`)
+	return b.String()
 }
 
 // renderConversationNav renders a collapsible tree navigation
@@ -3383,10 +3510,65 @@ code, pre, .session-id, .model-badge {
   z-index: 200;
   display: none;
   min-width: 260px;
-  max-width: 320px;
-  overflow: hidden;
+  max-width: 340px;
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
 }
 .info-panel.show { display: block; }
+/* Per-turn spend section */
+.info-row.info-cost .info-value { color: var(--primary); }
+.info-section-spend .spend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 4px -4px 0 -4px;
+}
+.info-section-spend .spend-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  font-size: 11px;
+  text-decoration: none;
+  color: var(--text);
+  border-radius: 4px;
+}
+.info-section-spend .spend-row:hover {
+  background: var(--bg-alt, rgba(127,127,127,0.08));
+}
+.info-section-spend .spend-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.info-section-spend .spend-cost {
+  font-variant-numeric: tabular-nums;
+  color: var(--primary);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.info-section-spend .spend-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 4px 0;
+}
+.info-section-spend .spend-footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+}
+.info-section-spend .spend-footer strong {
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
 .info-section {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);

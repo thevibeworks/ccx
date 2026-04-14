@@ -73,8 +73,30 @@ type SessionStats struct {
 	CacheReadTokens   int
 	CacheCreateTokens int
 
+	// Cost (USD). Zero when no priced model was seen.
+	CostUSD float64
+
 	// Duration
 	DurationSeconds float64
+}
+
+// MessageUsage holds per-assistant-message API token counts plus the
+// computed cost (USD, using the embedded pricing table). Populated on
+// full parse; nil when the message has no usage field.
+type MessageUsage struct {
+	InputTokens       int
+	OutputTokens      int
+	CacheReadTokens   int
+	CacheCreateTokens int
+	CostUSD           float64 // 0 if model is unknown to the pricing table
+}
+
+// Total returns the sum of all four token categories.
+func (u *MessageUsage) Total() int {
+	if u == nil {
+		return 0
+	}
+	return u.InputTokens + u.OutputTokens + u.CacheReadTokens + u.CacheCreateTokens
 }
 
 type Message struct {
@@ -95,6 +117,8 @@ type Message struct {
 	AgentID     string
 	Model       string // Model ID (e.g., claude-sonnet-4-5-20250929)
 	Subtype     string // For system messages: compact_boundary, local_command
+
+	Usage *MessageUsage // Per-message API token usage + cost. nil if absent.
 
 	RawJSON string // Original JSONL line verbatim
 	raw     rawMessage

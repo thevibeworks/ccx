@@ -368,6 +368,110 @@ func TestHandleSession_LoadAllBypassesProgressive(t *testing.T) {
 	}
 }
 
+// setupPricedSessionDir creates a project with a session containing real
+// per-message usage and a known model so the spend section renders with
+// non-zero cost. Used to test the per-turn breakdown UI (issue #2).
+func setupPricedSessionDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	projectDir := filepath.Join(dir, "projects", "-priced-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two turns, known model, known usage. Turn 2 intentionally more expensive
+	// than turn 1 so sorting by cost desc is observable.
+	content := `{"type":"user","timestamp":"2026-04-01T10:00:00Z","uuid":"u1","message":{"content":"cheap turn"}}
+{"type":"assistant","timestamp":"2026-04-01T10:00:01Z","uuid":"a1","parentUuid":"u1","message":{"role":"assistant","content":"reply","model":"claude-sonnet-4-5","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+{"type":"user","timestamp":"2026-04-01T10:01:00Z","uuid":"u2","parentUuid":"a1","message":{"content":"expensive turn with way more tokens"}}
+{"type":"assistant","timestamp":"2026-04-01T10:01:02Z","uuid":"a2","parentUuid":"u2","message":{"role":"assistant","content":"big reply","model":"claude-sonnet-4-5","usage":{"input_tokens":5000,"output_tokens":3000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+`
+
+	sessionFile := filepath.Join(projectDir, "priced-session-xyz.jsonl")
+	if err := os.WriteFile(sessionFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestHandleSession_SpendSectionRendersWithCost(t *testing.T) {
+	dir := setupPricedSessionDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-priced-project/priced-session-xyz", nil)
+	w := httptest.NewRecorder()
+
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+
+	// Spend section must be present with a total
+	if !strings.Contains(body, `info-section-spend`) {
+		t.Error("expected info-section-spend in rendered info panel")
+	}
+	if !strings.Contains(body, `Per-turn spend`) {
+		t.Error("expected 'Per-turn spend' header")
+	}
+	if !strings.Contains(body, `spend-row`) {
+		t.Error("expected spend-row elements linking to turn anchors")
+	}
+	if !strings.Contains(body, `Session total:`) {
+		t.Error("expected session total footer in spend section")
+	}
+	// Cost row must appear in the Tokens section
+	if !strings.Contains(body, `"info-row info-cost"`) {
+		t.Error("expected info-cost row in Tokens section")
+	}
+	// The expensive turn's anchor must be linked (#msg-u2)
+	if !strings.Contains(body, `href="#msg-u2"`) {
+		t.Error("expected spend row linking to turn anchor #msg-u2")
+	}
+}
+
+func TestHandleSession_SpendSectionShowsTokenBreakdownForUnpricedModel(t *testing.T) {
+	// Session with an unknown model still renders the breakdown (token-only),
+	// because seeing which turns used the most tokens is still useful even
+	// when cost can't be computed.
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "projects", "-unpriced-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"type":"user","timestamp":"2026-04-01T10:00:00Z","uuid":"u1","message":{"content":"hi"}}
+{"type":"assistant","timestamp":"2026-04-01T10:00:01Z","uuid":"a1","parentUuid":"u1","message":{"role":"assistant","content":"hi","model":"gpt-4","usage":{"input_tokens":100,"output_tokens":50}}}
+`
+	if err := os.WriteFile(filepath.Join(projectDir, "unpriced-session-abc.jsonl"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-unpriced-project/unpriced-session-abc", nil)
+	w := httptest.NewRecorder()
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+
+	if !strings.Contains(body, `info-section-spend`) {
+		t.Error("expected info-section-spend even for unpriced models (token-only breakdown is useful)")
+	}
+	if !strings.Contains(body, `No pricing match`) {
+		t.Error("expected 'No pricing match' note when model is unknown")
+	}
+	// Cost row in Tokens section should NOT appear (no cost resolved)
+	if strings.Contains(body, `"info-row info-cost"`) {
+		t.Error("info-cost row should NOT render when session cost is 0")
+	}
+}
+
 func TestHandleAPIExport_JSON(t *testing.T) {
 	dir := setupTestDir(t)
 	setTestBackend(dir)
