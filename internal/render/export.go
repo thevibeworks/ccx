@@ -17,6 +17,14 @@ type ExportOptions struct {
 }
 
 func Export(session *parser.Session, opts ExportOptions) (string, error) {
+	// exec is a turn-by-turn executive summary (user request, files
+	// touched, final agent response). It bypasses the normal brief +
+	// format pipeline because it's structurally different: a report,
+	// not a rendered conversation transcript.
+	if strings.EqualFold(opts.Format, "exec") || strings.EqualFold(opts.Format, "exec-md") {
+		return ExecMarkdown(session), nil
+	}
+
 	if opts.Brief {
 		session = BriefSession(session)
 	}
