@@ -22,7 +22,7 @@ type ModelPricing struct {
 	CacheWritePer1M float64 // USD per 1,000,000 cache-creation input tokens
 }
 
-// Named cost tiers — these names mirror the constants in Claude Code's
+// Named Claude cost tiers — mirror the constants in Claude Code's
 // modelCost.ts so drift detection can compare tier-by-tier.
 //
 // Source: reference/claude-code-2188/src/utils/modelCost.ts
@@ -51,6 +51,32 @@ var (
 		InputPer1M: 1.00, OutputPer1M: 5.00,
 		CacheReadPer1M: 0.10, CacheWritePer1M: 1.25,
 	}
+
+	// Codex / GPT-5.x tiers.
+	//
+	// UNVERIFIED: these rates are pinned from OpenAI's published
+	// gpt-5 pricing circa late 2025 (list pricing, no enterprise
+	// discount). Cache reads are billed at ~50% of input per OpenAI's
+	// cached-prompt pricing — OpenAI does NOT split cache into 5m/1h
+	// creation tiers the way Anthropic does, so CacheWritePer1M stays 0.
+	// Reasoning output tokens are priced at the same rate as regular
+	// output tokens.
+	//
+	// If OpenAI rebases gpt-5.4 rates these constants MUST be updated.
+	// No automated verification tool yet (there's no equivalent of
+	// Claude Code's modelCost.ts in the Codex reference checkout).
+	costGPT54_10_80 = ModelPricing{
+		InputPer1M: 10.00, OutputPer1M: 80.00,
+		CacheReadPer1M: 5.00, CacheWritePer1M: 0,
+	}
+	costGPT54Mini_025_2 = ModelPricing{
+		InputPer1M: 0.25, OutputPer1M: 2.00,
+		CacheReadPer1M: 0.125, CacheWritePer1M: 0,
+	}
+	costGPT54Nano_005_04 = ModelPricing{
+		InputPer1M: 0.05, OutputPer1M: 0.40,
+		CacheReadPer1M: 0.025, CacheWritePer1M: 0,
+	}
 )
 
 // pricingTable maps canonical model names to their pricing tier. Keys
@@ -78,6 +104,14 @@ var pricingTable = map[string]ModelPricing{
 	"claude-opus-4-1": costTier_15_75,
 	"claude-opus-4-5": costTier_5_25,
 	"claude-opus-4-6": costTier_5_25, // Default (non-fast-mode)
+
+	// Codex / GPT-5.x models — see tier constants above for caveats.
+	"gpt-5":        costGPT54_10_80,
+	"gpt-5-mini":   costGPT54Mini_025_2,
+	"gpt-5-nano":   costGPT54Nano_005_04,
+	"gpt-5.4":      costGPT54_10_80,
+	"gpt-5.4-mini": costGPT54Mini_025_2,
+	"gpt-5.4-nano": costGPT54Nano_005_04,
 }
 
 // LookupPricing returns pricing for a model name. Matching mirrors
@@ -146,13 +180,32 @@ func LookupPricing(model string) *ModelPricing {
 		p := pricingTable["claude-3-5-haiku"]
 		p.Model = "claude-3-5-haiku"
 		return &p
+	// Codex / GPT-5.x family. Order matters: nano / mini checked before
+	// the plain "gpt-5" substring match so "gpt-5-mini" doesn't
+	// degrade to "gpt-5" rates.
+	case strings.Contains(name, "gpt-5.4-nano"), strings.Contains(name, "gpt-5-nano"):
+		p := pricingTable["gpt-5.4-nano"]
+		p.Model = "gpt-5.4-nano"
+		return &p
+	case strings.Contains(name, "gpt-5.4-mini"), strings.Contains(name, "gpt-5-mini"):
+		p := pricingTable["gpt-5.4-mini"]
+		p.Model = "gpt-5.4-mini"
+		return &p
+	case strings.Contains(name, "gpt-5.4"), strings.Contains(name, "gpt-5"):
+		p := pricingTable["gpt-5.4"]
+		p.Model = "gpt-5.4"
+		return &p
 	}
 	return nil
 }
 
 // ComputeCost returns USD for the given token usage at the given pricing.
-// Returns 0 when pricing is nil. Cached reads and cached writes are billed
-// at their discounted/surcharged rates respectively.
+// Returns 0 when pricing is nil.
+//
+// Cached reads and cached writes are billed at their discounted/
+// surcharged rates respectively. Reasoning tokens (Codex-only) are
+// billed at the output rate — OpenAI treats extended-thinking output
+// as regular output for pricing purposes.
 func ComputeCost(u *MessageUsage, p *ModelPricing) float64 {
 	if u == nil || p == nil {
 		return 0
@@ -163,6 +216,7 @@ func ComputeCost(u *MessageUsage, p *ModelPricing) float64 {
 	cost += float64(u.OutputTokens) * p.OutputPer1M / perMillion
 	cost += float64(u.CacheReadTokens) * p.CacheReadPer1M / perMillion
 	cost += float64(u.CacheCreateTokens) * p.CacheWritePer1M / perMillion
+	cost += float64(u.ReasoningTokens) * p.OutputPer1M / perMillion
 	return cost
 }
 
