@@ -5,6 +5,12 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [Unreleased]
+
+### Fixed
+- **Deep-link navigation into collapsed history** (#3): Hash URLs (`#msg-<uuid>`) targeting messages inside progressively-loaded "Load earlier" sections now auto-reload with `?all=1` and scroll to the target instead of silently failing. Ancestor threads and `<details>` elements are unfolded on arrival so the target is actually visible. `hashchange` events also trigger the same jump logic, so in-app navigation via `#msg-` links works after initial load.
+- **In-session search 0-match experience** (#3): When search returns no hits but the session has hidden history, the info line now shows a "search full history" link that reloads with full content; the pending query is preserved via `sessionStorage` and re-applied after reload so the user picks up where they left off.
+
 ## [0.2.5] - 2026-01-07
 
 ### Added

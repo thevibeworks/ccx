@@ -266,6 +266,108 @@ func TestHandleSession_NotFound(t *testing.T) {
 	}
 }
 
+// setupLargeSessionDir creates a project with a session large enough (>500 msgs)
+// to trigger progressive loading. Used to test the load-earlier hash-nav fix.
+func setupLargeSessionDir(t *testing.T, msgCount int) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	projectDir := filepath.Join(dir, "projects", "-large-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var b strings.Builder
+	for i := 0; i < msgCount; i++ {
+		uuid := "m" + strings.Repeat("0", 8-len(itoa(i))) + itoa(i)
+		parent := ""
+		if i > 0 {
+			prev := "m" + strings.Repeat("0", 8-len(itoa(i-1))) + itoa(i-1)
+			parent = `,"parentUuid":"` + prev + `"`
+		}
+		kind := "user"
+		if i%2 == 1 {
+			kind = "assistant"
+		}
+		b.WriteString(`{"type":"` + kind + `","timestamp":"2024-01-01T10:00:00Z","uuid":"` + uuid + `"` + parent + `,"message":{"content":"msg ` + itoa(i) + `"}}` + "\n")
+	}
+
+	sessionFile := filepath.Join(projectDir, "large-session-abc.jsonl")
+	if err := os.WriteFile(sessionFile, []byte(b.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var digits []byte
+	for i > 0 {
+		digits = append([]byte{byte('0' + i%10)}, digits...)
+		i /= 10
+	}
+	return string(digits)
+}
+
+func TestHandleSession_ProgressiveLoadingMarkersPresent(t *testing.T) {
+	dir := setupLargeSessionDir(t, 600)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-large-project/large-session-abc", nil)
+	w := httptest.NewRecorder()
+
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+
+	// The load-earlier button must be rendered (progressive loading is active)
+	if !strings.Contains(body, `id="load-earlier"`) {
+		t.Error("expected load-earlier element to be rendered for 600-msg session")
+	}
+	// The hidden-reload branch must be wired up in the hash handler
+	if !strings.Contains(body, `document.getElementById('load-earlier')`) {
+		t.Error("expected hash handler to check for load-earlier when target not found")
+	}
+	if !strings.Contains(body, `jumpToHashTarget`) {
+		t.Error("expected jumpToHashTarget function in session page JS")
+	}
+	// The pending-search persistence must be in loadEarlierMessages
+	if !strings.Contains(body, `ccx-pending-search`) {
+		t.Error("expected sessionStorage ccx-pending-search key for search persistence across reload")
+	}
+}
+
+func TestHandleSession_LoadAllBypassesProgressive(t *testing.T) {
+	dir := setupLargeSessionDir(t, 600)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-large-project/large-session-abc?all=1", nil)
+	w := httptest.NewRecorder()
+
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+
+	// With ?all=1, the load-earlier button must not be rendered (no hidden sections)
+	if strings.Contains(body, `id="load-earlier"`) {
+		t.Error("load-earlier element should not be present when ?all=1 is set")
+	}
+	// But the hash handler JS is still present — we just don't need to trigger it
+	if !strings.Contains(body, `jumpToHashTarget`) {
+		t.Error("jumpToHashTarget should still be wired up even when loadAll is active")
+	}
+}
+
 func TestHandleAPIExport_JSON(t *testing.T) {
 	dir := setupTestDir(t)
 	setTestBackend(dir)
