@@ -3043,6 +3043,103 @@ code, pre, .session-id, .model-badge {
   position: sticky;
   top: 48px;
 }
+
+/* Session nav: narrow-by-default, expand-on-hover.
+ *
+ * Default state is 56px — wide enough for a session-id stub + provider
+ * badge, narrow enough that the reading content gets the space it
+ * needs. On hover the sidebar expands to 260px via overlay (absolute
+ * positioning inside a 56px flex slot) so the outline sidebar and main
+ * content don't shift sideways when the cursor drifts over.
+ *
+ * The outer <aside.session-nav> keeps its 56px footprint in the flex
+ * layout. The inner stack (.panel-header + .panel-list) is the element
+ * that actually widens — anchored left to the aside so expansion grows
+ * rightward into a floating column with a soft shadow. */
+.panel-nav.session-nav {
+  width: 56px;
+  min-width: 56px;
+  background: transparent;
+  border-right: none;
+  position: sticky;
+  top: 48px;
+  z-index: 20;
+  overflow: visible;
+  display: block;
+}
+.panel-nav.session-nav .panel-header,
+.panel-nav.session-nav .panel-list {
+  width: 56px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  transition: width 0.18s ease, box-shadow 0.18s ease;
+}
+.panel-nav.session-nav:hover .panel-header,
+.panel-nav.session-nav:hover .panel-list {
+  width: 260px;
+  box-shadow: 6px 0 18px rgba(0, 0, 0, 0.08);
+}
+.panel-nav.session-nav .panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 14px 0;
+  text-align: center;
+  font-size: 0; /* Hide the "Sessions" text when collapsed */
+}
+.panel-nav.session-nav .panel-header::before {
+  content: 'S';
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  line-height: 24px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent-session) 15%, transparent);
+  color: var(--accent-session);
+}
+.panel-nav.session-nav:hover .panel-header {
+  padding: 12px 16px;
+  font-size: 13px;
+  text-align: left;
+}
+.panel-nav.session-nav:hover .panel-header::before { display: none; }
+.panel-nav.session-nav .panel-list {
+  max-height: calc(100vh - 48px - 52px);
+  overflow-y: auto;
+}
+/* Collapsed panel items: compact pill showing only session id */
+.panel-nav.session-nav .panel-item {
+  padding: 8px 6px;
+  gap: 2px;
+  overflow: hidden;
+}
+.panel-nav.session-nav:hover .panel-item {
+  padding: 8px 16px;
+}
+.panel-nav.session-nav .panel-item .panel-summary {
+  display: none;
+}
+.panel-nav.session-nav:hover .panel-item .panel-summary {
+  display: block;
+}
+.panel-nav.session-nav .panel-item .panel-id {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+.panel-nav.session-nav:hover .panel-item .panel-id {
+  font-size: 11px;
+}
+/* Hide the provider badge's right-align magic when collapsed so it
+ * centers under the id stub instead of floating off-screen */
+.panel-nav.session-nav .panel-item .panel-id-row {
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.panel-nav.session-nav:hover .panel-item .panel-id-row {
+  justify-content: flex-start;
+}
 .panel-header {
   padding: 12px 16px;
   font-weight: 600;
