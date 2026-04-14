@@ -140,6 +140,8 @@ func formatToExt(format string) string {
 		return ".md"
 	case "org":
 		return ".org"
+	case "exec", "exec-md":
+		return "-exec.md"
 	default:
 		return ".html"
 	}
