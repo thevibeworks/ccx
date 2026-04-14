@@ -433,6 +433,132 @@ func TestHandleSession_SpendSectionRendersWithCost(t *testing.T) {
 	}
 }
 
+func TestHandleSession_TimelineRailRendered(t *testing.T) {
+	dir := setupPricedSessionDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-priced-project/priced-session-xyz", nil)
+	w := httptest.NewRecorder()
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+
+	// Rail structure
+	if !strings.Contains(body, `id="timeline-rail"`) {
+		t.Error("expected timeline-rail aside in rendered page")
+	}
+	if !strings.Contains(body, `id="timeline-spine"`) {
+		t.Error("expected timeline-spine id on the rail")
+	}
+	if !strings.Contains(body, `id="timeline-current"`) {
+		t.Error("expected timeline-current scroll indicator")
+	}
+	if !strings.Contains(body, `id="timeline-playhead"`) {
+		t.Error("expected timeline-playhead hover indicator")
+	}
+	if !strings.Contains(body, `id="timeline-tooltip"`) {
+		t.Error("expected timeline-tooltip sibling element")
+	}
+
+	// Ticks are spans with data-* attributes (no native anchor nav;
+	// click is dispatched via the rail's click handler and JS hash nav)
+	if !strings.Contains(body, `tick-user`) {
+		t.Error("expected tick-user class on user-prompt ticks")
+	}
+	if !strings.Contains(body, `data-uuid="u1"`) {
+		t.Error("expected data-uuid=u1 on a timeline tick")
+	}
+	if !strings.Contains(body, `data-uuid="u2"`) {
+		t.Error("expected data-uuid=u2 on a timeline tick")
+	}
+	if !strings.Contains(body, `data-offset=`) {
+		t.Error("expected data-offset attribute on ticks for hover tooltip")
+	}
+	if !strings.Contains(body, `data-snippet=`) {
+		t.Error("expected data-snippet attribute on ticks for hover tooltip")
+	}
+
+	// JS handlers wired up
+	if !strings.Contains(body, `jumpTickRelative`) {
+		t.Error("expected jumpTickRelative function for [/] keyboard nav")
+	}
+	if !strings.Contains(body, `handleRailMouse`) {
+		t.Error("expected handleRailMouse for hover-to-scrub interaction")
+	}
+	if !strings.Contains(body, `nearestTickIndex`) {
+		t.Error("expected nearestTickIndex binary-search helper")
+	}
+
+	// Cost-weighted integration: ticks must carry data-cost and --heat
+	// inline, wired from the matching TurnStats.
+	if !strings.Contains(body, `data-cost=`) {
+		t.Error("expected data-cost attribute on at least one priced tick")
+	}
+	if !strings.Contains(body, `data-tokens=`) {
+		t.Error("expected data-tokens attribute on at least one priced tick")
+	}
+	if !strings.Contains(body, `data-cumulative=`) {
+		t.Error("expected data-cumulative attribute for running total in tooltip")
+	}
+	if !strings.Contains(body, `data-index=`) {
+		t.Error("expected data-index attribute for turn ordinal in tooltip")
+	}
+	if !strings.Contains(body, `--heat:`) {
+		t.Error("expected --heat CSS var inline on timeline ticks")
+	}
+
+	// Fisheye zoom + hysteresis + rAF-throttled interaction model
+	if !strings.Contains(body, `zoom-0`) {
+		t.Error("expected zoom-0 class for fisheye-nearest tick")
+	}
+	if !strings.Contains(body, `applyFisheyeZoom`) {
+		t.Error("expected applyFisheyeZoom JS helper")
+	}
+	if !strings.Contains(body, `selectWithHysteresis`) {
+		t.Error("expected selectWithHysteresis helper to prevent tooltip flicker between adjacent ticks")
+	}
+	if !strings.Contains(body, `requestAnimationFrame(processRailFrame)`) {
+		t.Error("expected rAF-throttled mousemove processing")
+	}
+	if !strings.Contains(body, `TIMELINE_LEAVE_GRACE_MS`) {
+		t.Error("expected mouseleave grace-period constant")
+	}
+}
+
+func TestHandleSession_TimelineRailEmptyFallback(t *testing.T) {
+	// Session with a single message (zero duration span) should still
+	// render the rail but with the empty spine class — not crash.
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "projects", "-solo-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"type":"user","timestamp":"2026-04-01T10:00:00Z","uuid":"u1","message":{"content":"only message"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(projectDir, "solo-session-abc.jsonl"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-solo-project/solo-session-abc", nil)
+	w := httptest.NewRecorder()
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, `id="timeline-rail"`) {
+		t.Error("expected timeline-rail even for single-message session")
+	}
+	if !strings.Contains(body, `timeline-empty`) {
+		t.Error("expected timeline-empty class when session has no span")
+	}
+}
+
 func TestHandleSession_SpendSectionShowsTokenBreakdownForUnpricedModel(t *testing.T) {
 	// Session with an unknown model still renders the breakdown (token-only),
 	// because seeing which turns used the most tokens is still useful even
