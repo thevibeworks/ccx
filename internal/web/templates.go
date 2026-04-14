@@ -1315,6 +1315,30 @@ func renderMarkdown(text string) string {
 			continue
 		}
 
+		// Heading detection: 1-6 leading '#' followed by a space and text.
+		// Matches CommonMark ATX headings. Anything else falls through to
+		// the paragraph renderer below.
+		if level, headingText, ok := parseATXHeading(line); ok {
+			escaped := html.EscapeString(headingText)
+			escaped = processInlineCode(escaped)
+			escaped = processBold(escaped)
+			b.WriteString(fmt.Sprintf(`<div class="md-h%d">%s</div>`, level, escaped))
+			continue
+		}
+
+		// List detection: "- item" / "* item" / "N. item". Render as an
+		// unnumbered line (the bullet is kept literal) rather than a flat
+		// paragraph so the structure is visually preserved in the feed.
+		trimmedLine := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmedLine, "- ") || strings.HasPrefix(trimmedLine, "* ") {
+			text := trimmedLine[2:]
+			escaped := html.EscapeString(text)
+			escaped = processInlineCode(escaped)
+			escaped = processBold(escaped)
+			b.WriteString(`<div class="md-li">• ` + escaped + `</div>`)
+			continue
+		}
+
 		// Process inline formatting
 		escaped := html.EscapeString(line)
 		escaped = processInlineCode(escaped)
@@ -1370,6 +1394,36 @@ func parseTableRow(row string) []string {
 	row = strings.TrimSpace(row)
 	row = strings.Trim(row, "|")
 	return strings.Split(row, "|")
+}
+
+// parseATXHeading recognizes a CommonMark-style ATX heading ("# title"
+// through "###### title"). Returns the heading level (1-6), the inner
+// text with heading syntax stripped, and ok=true on match.
+//
+// Rejected: more than 6 leading #s, no space after the #s, empty inner
+// text (we prefer to render those as plain paragraphs so the rail has
+// nothing but real headings to latch onto), and any leading whitespace
+// (CommonMark allows up to 3 spaces but ccx's pipeline trims lines
+// before reaching here).
+func parseATXHeading(line string) (int, string, bool) {
+	i := 0
+	for i < 6 && i < len(line) && line[i] == '#' {
+		i++
+	}
+	if i == 0 || i >= len(line) {
+		return 0, "", false
+	}
+	// Must be followed by a space or tab (CommonMark requirement)
+	if line[i] != ' ' && line[i] != '\t' {
+		return 0, "", false
+	}
+	text := strings.TrimSpace(line[i+1:])
+	// Strip trailing #s per CommonMark (e.g. "## heading ##")
+	text = strings.TrimRight(text, " #")
+	if text == "" {
+		return 0, "", false
+	}
+	return i, text, true
 }
 
 // processInlineCode converts `code` to <code>code</code>
@@ -1703,14 +1757,28 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 				b.WriteString(`</summary>`)
 				b.WriteString(`<div class="nav-children">`)
 
-				// Render children (limit to avoid bloat)
-				maxChildren := 10
-				for j, child := range g.children {
-					if j >= maxChildren {
-						b.WriteString(fmt.Sprintf(`<span class="nav-more">+%d more</span>`, len(g.children)-maxChildren))
-						break
+				// Render children with a budget. If the turn has more
+				// than maxChildren entries we show the first (maxChildren-1),
+				// a "+N more" marker, and then the LAST child — which is
+				// usually the assistant's final summary message. Without
+				// preserving the tail, long tool-heavy turns would drop
+				// their summary from the outline entirely.
+				const maxChildren = 10
+				total := len(g.children)
+				if total <= maxChildren {
+					for _, child := range g.children {
+						renderNavChild(b, child)
 					}
-					renderNavChild(b, child)
+				} else {
+					head := maxChildren - 1
+					for _, child := range g.children[:head] {
+						renderNavChild(b, child)
+					}
+					hidden := total - head - 1
+					if hidden > 0 {
+						b.WriteString(fmt.Sprintf(`<span class="nav-more">+%d more</span>`, hidden))
+					}
+					renderNavChild(b, g.children[total-1])
 				}
 				b.WriteString(`</div></details>`)
 			}
