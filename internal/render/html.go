@@ -17,26 +17,31 @@ func truncateID(id string, n int) string {
 
 func exportHTML(session *parser.Session, opts ExportOptions) (string, error) {
 	var b strings.Builder
+	fragment := opts.Envelope == EnvelopeFragment
 
-	isDark := opts.Theme == "dark"
-	css := htmlCSS(isDark)
+	if !fragment {
+		isDark := opts.Theme == "dark"
+		css := htmlCSS(isDark)
 
-	b.WriteString("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
-	b.WriteString("<meta charset=\"UTF-8\">\n")
-	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n")
-	b.WriteString(fmt.Sprintf("<title>Session: %s</title>\n", html.EscapeString(truncateID(session.ID, 8))))
-	b.WriteString("<style>\n")
-	b.WriteString(css)
-	b.WriteString("</style>\n")
-	b.WriteString("</head>\n<body>\n")
+		b.WriteString("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
+		b.WriteString("<meta charset=\"UTF-8\">\n")
+		b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n")
+		b.WriteString(fmt.Sprintf("<title>Session: %s</title>\n", html.EscapeString(truncateID(session.ID, 8))))
+		b.WriteString("<style>\n")
+		b.WriteString(css)
+		b.WriteString("</style>\n")
+		b.WriteString("</head>\n<body>\n")
+	}
 
 	b.WriteString("<div class=\"container\">\n")
-	b.WriteString("<header>\n")
-	b.WriteString(fmt.Sprintf("<h1>Session: %s</h1>\n", html.EscapeString(truncateID(session.ID, 8))))
-	b.WriteString(fmt.Sprintf("<p class=\"meta\">Started: %s | Messages: %d | Tools: %d</p>\n",
-		session.StartTime.Format("2006-01-02 15:04"),
-		session.Stats.MessageCount, session.Stats.ToolCalls))
-	b.WriteString("</header>\n")
+	if !fragment {
+		b.WriteString("<header>\n")
+		b.WriteString(fmt.Sprintf("<h1>Session: %s</h1>\n", html.EscapeString(truncateID(session.ID, 8))))
+		b.WriteString(fmt.Sprintf("<p class=\"meta\">Started: %s | Messages: %d | Tools: %d</p>\n",
+			session.StartTime.Format("2006-01-02 15:04"),
+			session.Stats.MessageCount, session.Stats.ToolCalls))
+		b.WriteString("</header>\n")
+	}
 
 	b.WriteString("<div class=\"messages\">\n")
 	for _, msg := range session.RootMessages {
@@ -46,10 +51,12 @@ func exportHTML(session *parser.Session, opts ExportOptions) (string, error) {
 
 	b.WriteString("</div>\n")
 
-	b.WriteString("<script>\n")
-	b.WriteString(htmlJS())
-	b.WriteString("</script>\n")
-	b.WriteString("</body>\n</html>")
+	if !fragment {
+		b.WriteString("<script>\n")
+		b.WriteString(htmlJS())
+		b.WriteString("</script>\n")
+		b.WriteString("</body>\n</html>")
+	}
 
 	return b.String(), nil
 }
