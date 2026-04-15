@@ -157,6 +157,29 @@ func TestCompareAgainstCCX_DetectsDrift(t *testing.T) {
 	}
 }
 
+func TestCompareAgainstCCX_IgnoresCodexOnlyRowsInStaleCheck(t *testing.T) {
+	dir := writeFakeSource(t)
+	tiers, err := parseModelCostTiers(filepath.Join(dir, "src", "utils", "modelCost.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := parseModelCostsMap(filepath.Join(dir, "src", "utils", "modelCost.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configs, err := parseFirstPartyNames(filepath.Join(dir, "src", "utils", "model", "configs.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	drift := compareAgainstCCX(tiers, m, configs, false)
+	for _, d := range drift {
+		if strings.Contains(d, "gpt-5") {
+			t.Fatalf("Codex-only pricing rows should not be flagged as Claude drift, got: %s", d)
+		}
+	}
+}
+
 func TestCanonicalize_OrderMatters(t *testing.T) {
 	// The canonicalize function must match more specific patterns
 	// before less specific ones. Verifies the tool stays in sync with

@@ -720,6 +720,7 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 	// turns that produce multiple agent_message events between
 	// token_count events.
 	var previousTotals tokenUsageTotals
+	var pendingUsageDelta parser.MessageUsage
 	usageWatermark := 0
 
 	scanner := bufio.NewScanner(file)
@@ -1062,6 +1063,13 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 				var payload tokenCountPayload
 				if err := json.Unmarshal(rollout.Payload, &payload); err == nil && payload.Info != nil {
 					total := payload.Info.TotalTokenUsage
+					if pendingUsageDelta.Total() > 0 && usageWatermark <= len(messages) {
+						if hasUntaggedAssistant(messages[usageWatermark:]) {
+							distributeCodexDelta(messages[usageWatermark:], pendingUsageDelta)
+							usageWatermark = len(messages)
+							pendingUsageDelta = parser.MessageUsage{}
+						}
+					}
 					// Session-level aggregate (latest snapshot wins — Codex
 					// always emits running totals, not deltas).
 					stats.InputTokens = total.InputTokens
@@ -1087,9 +1095,13 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 						ReasoningTokens: clampNonNegative(total.ReasoningOutputTokens - previousTotals.ReasoningOutputTokens),
 					}
 					if delta.Total() > 0 && usageWatermark <= len(messages) {
-						distributeCodexDelta(messages[usageWatermark:], delta)
+						if hasUntaggedAssistant(messages[usageWatermark:]) {
+							distributeCodexDelta(messages[usageWatermark:], delta)
+							usageWatermark = len(messages)
+						} else {
+							pendingUsageDelta = addUsage(pendingUsageDelta, delta)
+						}
 					}
-					usageWatermark = len(messages)
 					// Use max() as the new floor so a running-total
 					// regression doesn't double-count on recovery:
 					// 100→200→150→250 should emit deltas 100, 0, 50 — not
@@ -1278,6 +1290,12 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+	if pendingUsageDelta.Total() > 0 && usageWatermark <= len(messages) {
+		if hasUntaggedAssistant(messages[usageWatermark:]) {
+			distributeCodexDelta(messages[usageWatermark:], pendingUsageDelta)
+		}
+	}
+	stats.CostUSD = sumMessageCosts(messages)
 
 	if firstTime.IsZero() || lastTime.IsZero() {
 		if info, err := os.Stat(filePath); err == nil {
@@ -1595,6 +1613,39 @@ func latestAssistantWithoutUsage(messages []*parser.Message) *parser.Message {
 		}
 	}
 	return nil
+}
+
+func hasUntaggedAssistant(messages []*parser.Message) bool {
+	for _, m := range messages {
+		if m == nil || m.Kind != parser.KindAssistant {
+			continue
+		}
+		if m.Usage == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func addUsage(a, b parser.MessageUsage) parser.MessageUsage {
+	return parser.MessageUsage{
+		InputTokens:       a.InputTokens + b.InputTokens,
+		OutputTokens:      a.OutputTokens + b.OutputTokens,
+		CacheReadTokens:   a.CacheReadTokens + b.CacheReadTokens,
+		CacheCreateTokens: a.CacheCreateTokens + b.CacheCreateTokens,
+		ReasoningTokens:   a.ReasoningTokens + b.ReasoningTokens,
+	}
+}
+
+func sumMessageCosts(messages []*parser.Message) float64 {
+	var total float64
+	for _, m := range messages {
+		if m == nil || m.Usage == nil {
+			continue
+		}
+		total += m.Usage.CostUSD
+	}
+	return total
 }
 
 // distributeCodexDelta evenly splits a token delta across every

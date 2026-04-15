@@ -88,7 +88,7 @@ func ExecMarkdown(session *parser.Session) string {
 			continue
 		}
 
-		if msg.Kind == parser.KindUserPrompt || msg.Kind == parser.KindCommand {
+		if (msg.Kind == parser.KindUserPrompt || msg.Kind == parser.KindCommand) && !msg.IsSidechain {
 			if current != nil {
 				blocks = append(blocks, *current)
 			}

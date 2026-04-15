@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // writeSession writes the given JSONL content to a temp file and returns
@@ -172,8 +173,14 @@ func TestComputeTurnStats_SidechainInclusion(t *testing.T) {
 	}
 
 	turns := ComputeTurnStats(FlattenSessionMessages(session))
-	if len(turns) == 0 {
-		t.Fatal("expected at least 1 turn")
+	if len(turns) != 1 {
+		t.Fatalf("expected 1 turn, got %d", len(turns))
+	}
+	if turns[0].AnchorID != "u1" {
+		t.Fatalf("turns[0].AnchorID = %q, want u1", turns[0].AnchorID)
+	}
+	if turns[0].MessageCount != 4 {
+		t.Fatalf("turns[0].MessageCount = %d, want 4", turns[0].MessageCount)
 	}
 
 	var sumCost float64
@@ -196,5 +203,37 @@ func TestComputeTurnStats_SidechainInclusion(t *testing.T) {
 	}
 	if !foundSidechainAnchor {
 		t.Error("expected at least one turn to have HasSidechain=true")
+	}
+}
+
+func TestComputeTurnStats_IncludesReasoningTokens(t *testing.T) {
+	start := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+	messages := []*Message{
+		{
+			UUID:      "u1",
+			Kind:      KindUserPrompt,
+			Timestamp: start,
+			Content:   []ContentBlock{{Type: "text", Text: "think harder"}},
+		},
+		{
+			UUID:      "a1",
+			Kind:      KindAssistant,
+			Model:     "gpt-5",
+			Timestamp: start.Add(time.Second),
+			Usage: &MessageUsage{
+				InputTokens:     100,
+				OutputTokens:    20,
+				ReasoningTokens: 50,
+				CostUSD:         0.012,
+			},
+		},
+	}
+
+	turns := ComputeTurnStats(messages)
+	if len(turns) != 1 {
+		t.Fatalf("len(turns) = %d, want 1", len(turns))
+	}
+	if turns[0].TotalTokens() != 170 {
+		t.Fatalf("turns[0].TotalTokens() = %d, want 170", turns[0].TotalTokens())
 	}
 }

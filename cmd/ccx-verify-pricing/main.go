@@ -323,6 +323,9 @@ func compareAgainstCCX(
 	}
 	sort.Strings(ccxKeys)
 	for _, k := range ccxKeys {
+		if !strings.HasPrefix(k, "claude-") {
+			continue
+		}
 		if !ccxByCanonical[k] {
 			drift = append(drift, fmt.Sprintf("ccx has %q but Claude Code source does not reference it", k))
 		}
