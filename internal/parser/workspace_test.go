@@ -197,6 +197,58 @@ func TestWorkspace_NilSafe(t *testing.T) {
 	}
 }
 
+func TestWorkspaceKeyFor_UsesSessionCWDOverProjectPath(t *testing.T) {
+	// When both Project.Path and session CWD are present, session CWD
+	// wins. Project.Path in the legacy model may point at the encoded
+	// home folder; session CWD is the reliable source.
+	p := &Project{
+		Name:        "alpha",
+		EncodedName: "-home-user-alpha",
+		Path:        "/home/user/.claude/projects/-home-user-alpha",
+		Sessions: []*Session{
+			{ID: "s1", CWD: "/home/user/alpha", EndTime: time.Now()},
+		},
+	}
+	got := workspaceKeyFor(p)
+	want := CanonicalizeWorkspacePath("/home/user/alpha")
+	if got != want {
+		t.Errorf("workspaceKeyFor = %q, want %q", got, want)
+	}
+}
+
+func TestIsRealCwd_RejectsAgentHomePaths(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"/Users/eric/real", true},
+		{"/home/user/work", true},
+		{"/home/user/.claude/projects/-foo", false},
+		{"/srv/.codex/sessions/2026/s1", false},
+		{"relative/path", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isRealCwd(c.in); got != c.want {
+			t.Errorf("isRealCwd(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestCanonicalizeWorkspacePath_NonexistentPathStillCanonicalises(t *testing.T) {
+	// A path that doesn't exist on disk (deleted project) must still
+	// produce a stable key so two sessions for the same gone-from-
+	// disk directory still group together.
+	a := CanonicalizeWorkspacePath("/absolutely/does/not/exist/foo/")
+	b := CanonicalizeWorkspacePath("/absolutely/does/not/exist/foo")
+	if a == "" {
+		t.Fatal("expected non-empty canonical form for non-existent path")
+	}
+	if a != b {
+		t.Errorf("trailing-slash drift on non-existent path: %q vs %q", a, b)
+	}
+}
+
 func TestCanonicalizeWorkspacePath_ExpandsTilde(t *testing.T) {
 	got := CanonicalizeWorkspacePath("~/some-nonexistent-path-for-ccx-test")
 	if got == "" || got == "~/some-nonexistent-path-for-ccx-test" {

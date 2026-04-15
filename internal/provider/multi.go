@@ -88,14 +88,17 @@ func (m *Multi) DiscoverProjects() ([]*parser.Project, error) {
 
 		for _, p := range projects {
 			// Pick the best cwd source for this provider-level project
-			// before computing a canonical merge key. Fall back to the
-			// old encoded-name key when the project truly has no cwd
-			// (shouldn't happen but defends against corrupt metadata).
+			// before computing a canonical merge key.
 			cp := *p
 			cp.Path = projectLookupPath(&cp)
 			key := parser.CanonicalizeWorkspacePath(cp.Path)
 			if key == "" {
-				key = cp.EncodedName
+				// Canonicalization failed: fall back to encoded name,
+				// BUT namespace it per provider so Claude Code's
+				// "-Users-eric-foo" doesn't silently merge with Codex's
+				// "-Users-eric-foo" when they're not actually the same
+				// cwd (e.g. one or both have no cwd metadata at all).
+				key = "enc:" + b.ID() + ":" + cp.EncodedName
 			}
 
 			existing := merged[key]

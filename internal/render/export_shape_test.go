@@ -125,6 +125,101 @@ func TestExport_ShapeInvalidFallsBackToFull(t *testing.T) {
 	}
 }
 
+func TestExport_ShapeExchangeHTMLRendersAsMarkup(t *testing.T) {
+	// HTML envelope + shape=exchange must produce real HTML, not raw
+	// markdown wrapped in <pre>. The digest should render headings
+	// as <h1>/<h2>, prompts as <blockquote>, dividers as <hr>.
+	session := makeSessionWithOneExchange(t)
+	out, err := Export(session, ExportOptions{
+		Format: "html",
+		Shape:  ShapeExchange,
+	})
+	if err != nil {
+		t.Fatalf("Export error: %v", err)
+	}
+	if strings.Contains(out, "<pre>") {
+		t.Errorf("exchange HTML should render as <h*>/<blockquote>, not <pre>. got: %s", out)
+	}
+	if !strings.Contains(out, "<h1>") {
+		t.Errorf("expected <h1> digest header, got: %s", out)
+	}
+	if !strings.Contains(out, "<h2>") {
+		t.Errorf("expected <h2> per exchange, got: %s", out)
+	}
+	if !strings.Contains(out, "<blockquote>") {
+		t.Errorf("expected <blockquote> for the prompt snippet, got: %s", out)
+	}
+	if !strings.Contains(out, "<hr>") {
+		t.Errorf("expected <hr> separators, got: %s", out)
+	}
+}
+
+func TestExport_DigestMarkdownToHTML_EscapesUntrusted(t *testing.T) {
+	// The digest builder drops session IDs and prompts into markdown
+	// verbatim. The HTML pass must escape < > & in that content.
+	in := "## <script>alert(1)</script>\n\n> & a quote\n\n---\n"
+	out := digestMarkdownToHTML(in)
+	if strings.Contains(out, "<script>") {
+		t.Errorf("unescaped script tag in digest HTML: %s", out)
+	}
+	if !strings.Contains(out, "&lt;script&gt;") {
+		t.Errorf("expected escaped <script>, got: %s", out)
+	}
+	if !strings.Contains(out, "&amp;") {
+		t.Errorf("expected escaped &, got: %s", out)
+	}
+}
+
+func TestBuildReplyMap_OneAnchorOneReply(t *testing.T) {
+	start := time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC)
+	u1 := &parser.Message{
+		UUID: "u1", Kind: parser.KindUserPrompt, Timestamp: start,
+		Content: []parser.ContentBlock{{Type: "text", Text: "ask"}},
+	}
+	a1 := &parser.Message{
+		UUID: "a1", Kind: parser.KindAssistant, Timestamp: start,
+		Content: []parser.ContentBlock{
+			{Type: "text", Text: "first pass"},
+			{Type: "text", Text: "final answer"},
+		},
+	}
+	u2 := &parser.Message{
+		UUID: "u2", Kind: parser.KindUserPrompt, Timestamp: start.Add(time.Minute),
+		Content: []parser.ContentBlock{{Type: "text", Text: "follow up"}},
+	}
+	a2 := &parser.Message{
+		UUID: "a2", Kind: parser.KindAssistant, Timestamp: start.Add(2 * time.Minute),
+		Content: []parser.ContentBlock{{Type: "text", Text: "follow reply"}},
+	}
+
+	replies := buildReplyMap([]*parser.Message{u1, a1, u2, a2})
+	if replies["u1"] != "final answer" {
+		t.Errorf("u1 reply = %q, want 'final answer' (last text block wins)", replies["u1"])
+	}
+	if replies["u2"] != "follow reply" {
+		t.Errorf("u2 reply = %q, want 'follow reply'", replies["u2"])
+	}
+}
+
+func TestBuildReplyMap_IgnoresSidechainAssistants(t *testing.T) {
+	u1 := &parser.Message{
+		UUID: "u1", Kind: parser.KindUserPrompt,
+		Content: []parser.ContentBlock{{Type: "text", Text: "q"}},
+	}
+	sidechainA := &parser.Message{
+		UUID: "sc-a", Kind: parser.KindAssistant, IsSidechain: true,
+		Content: []parser.ContentBlock{{Type: "text", Text: "sub reply"}},
+	}
+	mainA := &parser.Message{
+		UUID: "a1", Kind: parser.KindAssistant,
+		Content: []parser.ContentBlock{{Type: "text", Text: "main reply"}},
+	}
+	replies := buildReplyMap([]*parser.Message{u1, sidechainA, mainA})
+	if replies["u1"] != "main reply" {
+		t.Errorf("sidechain assistant should not win: got %q", replies["u1"])
+	}
+}
+
 func TestExport_ShapeTraceDropsSidechains(t *testing.T) {
 	start := time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC)
 	sidechainAssistant := &parser.Message{

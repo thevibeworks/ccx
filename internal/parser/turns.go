@@ -170,7 +170,17 @@ func ComputeExchanges(messages []*Message) []*Exchange {
 			if current.Model == "" && msg.Model != "" {
 				current.Model = msg.Model
 			}
-			current.Steps = append(current.Steps, extractSteps(msg)...)
+			// Only collect steps from MAIN-TREE assistant messages. A
+			// sub-agent's tool calls are interesting for the sub-agent
+			// itself, not for the enclosing user turn: bubbling them up
+			// would inflate the parent exchange's tool/badge counts and
+			// spam the rail with 20+ satellite markers for a single
+			// sub-agent dispatch. The subagent is already represented
+			// by the parent's Task tool_use, which DOES count as a
+			// StepSubagent on the parent.
+			if !msg.IsSidechain {
+				current.Steps = append(current.Steps, extractSteps(msg)...)
+			}
 		}
 		if msg.Kind == KindCompactSummary && msg.UUID != current.AnchorID {
 			current.Steps = append(current.Steps, Step{
