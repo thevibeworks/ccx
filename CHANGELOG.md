@@ -7,6 +7,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-14
+
 ### Added
 - **Executive-style `exec` export format** (#7): New `ccx export --format exec` mode that renders a session as a turn-by-turn executive report — user request (quoted), files touched (from Edit/Write/MultiEdit/NotebookEdit/Create tool calls, deduped and sorted), and the agent's final summary per turn. Per-turn cost and token footprint at the bottom of each turn when pricing is available. Context-compaction boundaries render as `— context compaction —` dividers between turns. Empty turns (meta, markers) are dropped. Designed for sharing "what did the agent do" without dragging every tool invocation along — much shorter than `--brief` and focused on outcomes.
 - **Per-turn spend breakdown in the info panel** (#2): The info panel now shows a Per-turn spend section with one clickable row per user turn, sorted by cost desc so expensive turns surface first. Each row links to `#msg-<anchor>` which composes with the load-earlier fix to deep-link into any turn regardless of progressive-load state. Answers "where did my quota go?" inside the session viewer, without leaving ccx.
@@ -32,9 +34,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Data layer / Codex (#8)
 - **`MessageUsage.ReasoningTokens` field**: Codex GPT-5/5.4 sessions emit `reasoning_output_tokens` (the extended-thinking output counter). ccx's unified `MessageUsage` struct now carries this field so Codex sessions get their thinking tokens priced at output rate (matching OpenAI's billing). Zero for Claude sessions.
 - **GPT-5 / GPT-5.4 pricing table**: `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano` now resolve via `LookupPricing` to pinned tiers. Match order handles `nano` before `mini` before plain `gpt-5` so names like `gpt-5-mini-2025-07-07` don't degrade to the more-expensive full-sized tier. **UNVERIFIED**: these rates are pinned from publicly known GPT-5 list pricing — there's no equivalent of Claude Code's `modelCost.ts` in the Codex reference checkout to automate drift detection yet. Update `internal/parser/pricing.go` if OpenAI rebases gpt-5.4.
-- **Codex per-message usage attribution**: the Codex backend's `ParseSession` full-parse path now diffs successive `token_count` events and attributes the delta to the most-recent assistant message without `Usage` set (via `latestAssistantWithoutUsage`). This unlocks the #2 per-turn spend breakdown and #5 timeline-rail cost heat for Codex sessions — previously every Codex assistant message had `nil` Usage and every turn showed $0. Rough but usable: Codex's wire format reports running totals instead of per-message counts, so delta-since-last-event is the best attribution available without a protocol change.
+- **Codex per-message usage attribution**: the Codex backend's `ParseSession` full-parse path now diffs successive `token_count` events and attributes the delta across every untagged assistant message in the pending burst via `usageWatermark` + `distributeCodexDelta`. This also preserves usage when `token_count` arrives before the assistant output and keeps session cost equal to the sum of attributed message costs. Result: the #2 per-turn spend breakdown and #5 timeline-rail cost heat work for Codex sessions instead of silently showing $0.
 - **`ComputeCost` includes reasoning tokens**: reasoning tokens now contribute to cost at the output rate.
 - **Extended `tokenUsageTotals` struct** to parse `reasoning_output_tokens`.
+- **Turn accounting fixes**: sidechain prompts now stay inside the parent user turn, reasoning tokens are included in per-turn totals, and `export --format exec` uses the same sidechain-aware turn boundary as the spend panel.
 
 ### Pricing (#10)
 - **Fixed: Opus 4.5/4.6 overcharge.** Previously these models were hardcoded at tier `$15 input / $75 output` (the Opus 4/4.1 rate). Claude Code's own source has them at tier `$5 input / $25 output` (a roughly 3x lower rate). ccx was overstating the cost of every Opus 4.5/4.6 turn by ~3x. Now fixed in `internal/parser/pricing.go`.
@@ -166,6 +169,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Dark/light theme toggle with persistence
 - Keyboard navigation (j/k scroll, gg/G jump, / search, t theme, z collapse)
 
+[Unreleased]: https://github.com/thevibeworks/ccx/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/thevibeworks/ccx/compare/v0.3.2...v0.4.0
 [0.2.5]: https://github.com/thevibeworks/ccx/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/thevibeworks/ccx/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/thevibeworks/ccx/compare/v0.2.2...v0.2.3
