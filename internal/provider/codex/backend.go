@@ -723,6 +723,15 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 	var pendingUsageDelta parser.MessageUsage
 	usageWatermark := 0
 
+	// Codex 0.120.0+ rollouts occasionally emit the same user_message
+	// event twice in a row (byte-identical payload, identical
+	// timestamp) as part of resume/replay. Track the last seen one so
+	// we can drop immediate duplicates — if we don't, the session
+	// page shows the same prompt twice at the top before anything
+	// else renders and users think the UI is broken.
+	var lastUserMessageText string
+	var lastUserMessageTS time.Time
+
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScannerBufferBytes)
 
@@ -793,6 +802,18 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 				if text == "" {
 					text = "(empty)"
 				}
+				// Drop immediate duplicates: Codex rollouts sometimes
+				// replay the first user message. Matches same text AND
+				// same-or-close timestamp (within 2s) so we only collapse
+				// the replay case, never a user who legitimately pasted
+				// the same thing twice minutes apart.
+				if text == lastUserMessageText && !ts.IsZero() && !lastUserMessageTS.IsZero() &&
+					absDuration(ts.Sub(lastUserMessageTS)) < 2*time.Second {
+					continue
+				}
+				lastUserMessageText = text
+				lastUserMessageTS = ts
+
 				if firstUserSummary == "" {
 					firstUserSummary = text
 				}
@@ -1570,6 +1591,13 @@ func fallbackToolName(name string) string {
 		return "Tool"
 	}
 	return name
+}
+
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
 }
 
 func buildMessageTree(messages []*parser.Message) []*parser.Message {
