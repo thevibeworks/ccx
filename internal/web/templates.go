@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -2792,6 +2794,84 @@ func pageHeader(title, theme string) string {
 `, theme, html.EscapeString(title), faviconLink(), cssStyles())
 }
 
+// renderNotFoundPage emits a styled 404 page with a pre-filled
+// "report this bug" link to the ccx GitHub issues page.
+//
+// kind is a one-word category ("session", "project", "page",
+// "export") used in the headline. detail is an optional one-line
+// explanation that helps the user understand what went wrong
+// (e.g. "couldn't resolve session 019d8f43... in project foo").
+//
+// The bug report link captures the failing URL, user agent, and
+// timestamp — everything a maintainer needs to reproduce without
+// asking follow-up questions. The issue body is a Markdown template
+// the user can edit before submitting.
+func renderNotFoundPage(w http.ResponseWriter, r *http.Request, kind, detail string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
+
+	failingURL := r.URL.String()
+	userAgent := r.UserAgent()
+	timestamp := time.Now().Format(time.RFC3339)
+
+	// Pre-filled issue title + body. The user can (and should) edit
+	// them before submitting; we just take the boring parts off
+	// their plate.
+	title := "404: " + kind + " not found"
+	if detail != "" {
+		title = "404: " + detail
+	}
+	bodyTemplate := "### What I tried to access\n\n" +
+		"```\n" + failingURL + "\n```\n\n" +
+		"### What I expected\n\n" +
+		"_Replace this with what you expected to see._\n\n" +
+		"### What actually happened\n\n" +
+		"ccx web returned a 404 page.\n\n"
+	if detail != "" {
+		bodyTemplate += "Detail from the 404 page: `" + detail + "`\n\n"
+	}
+	bodyTemplate += "### Environment\n\n" +
+		"- Timestamp: " + timestamp + "\n" +
+		"- User-Agent: `" + userAgent + "`\n" +
+		"- ccx version: _(paste output of `ccx --version` here)_\n"
+
+	issueURL := "https://github.com/thevibeworks/ccx/issues/new?" +
+		"labels=bug" +
+		"&title=" + url.QueryEscape(title) +
+		"&body=" + url.QueryEscape(bodyTemplate)
+
+	var b strings.Builder
+	b.WriteString(pageHeader("ccx — not found", "light"))
+	b.WriteString(renderTopNav("", ""))
+	b.WriteString(`<main class="nf-main">`)
+	b.WriteString(`<div class="nf-box">`)
+	b.WriteString(`<div class="nf-glyph" aria-hidden="true">404</div>`)
+	b.WriteString(`<h1 class="nf-title">Can't find this ` + html.EscapeString(kind) + `.</h1>`)
+	if detail != "" {
+		b.WriteString(`<p class="nf-detail">` + html.EscapeString(detail) + `</p>`)
+	}
+	b.WriteString(`<pre class="nf-url">` + html.EscapeString(failingURL) + `</pre>`)
+	b.WriteString(`<p class="nf-note">`)
+	b.WriteString(`This can happen if the session was deleted, if ccx's project index is stale, `)
+	b.WriteString(`or — more interestingly — if we broke something. If you didn't expect this, `)
+	b.WriteString(`please tell us:`)
+	b.WriteString(`</p>`)
+	b.WriteString(`<div class="nf-actions">`)
+	b.WriteString(`<a class="nf-btn nf-primary" href="` + html.EscapeString(issueURL) + `" target="_blank" rel="noopener noreferrer">`)
+	b.WriteString(`<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:middle;margin-right:6px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`)
+	b.WriteString(`Report this bug`)
+	b.WriteString(`</a>`)
+	b.WriteString(`<a class="nf-btn" href="/">← All projects</a>`)
+	b.WriteString(`<a class="nf-btn" href="/search">Search sessions</a>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`</main>`)
+	b.WriteString(renderFooter())
+	b.WriteString("</body></html>")
+
+	fmt.Fprint(w, b.String())
+}
+
 func faviconLink() string {
 	// Bold favicon: cc in white, x in coral
 	return `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23111'/%3E%3Ctext x='3' y='23' font-family='ui-monospace,monospace' font-weight='800' font-size='14'%3E%3Ctspan fill='%23fff'%3Ecc%3C/tspan%3E%3Ctspan fill='%23da7756'%3Ex%3C/tspan%3E%3C/text%3E%3C/svg%3E">`
@@ -3095,6 +3175,96 @@ code, pre, .session-id, .model-badge {
 .footer-sep { opacity: 0.5; }
 .footer-text { font-size: 12px; color: inherit; text-decoration: none; }
 .footer-text:hover { opacity: 0.8; }
+
+/* 404 not-found page — renderNotFoundPage */
+.nf-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 64px 24px 120px;
+  min-height: calc(100vh - 200px);
+}
+.nf-box {
+  max-width: 560px;
+  width: 100%;
+  text-align: left;
+}
+.nf-glyph {
+  font-family: var(--font-mono);
+  font-size: 72px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -2px;
+  color: var(--primary);
+  opacity: 0.85;
+  margin-bottom: 12px;
+}
+.nf-title {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 8px;
+  letter-spacing: -0.2px;
+}
+.nf-detail {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 14px;
+  font-family: var(--font-mono);
+}
+.nf-url {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0 0 18px;
+  word-break: break-all;
+}
+.nf-note {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0 0 20px;
+}
+.nf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.nf-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-decoration: none;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.nf-btn:hover {
+  color: var(--text);
+  background: var(--bg-tertiary);
+  border-color: var(--text-muted);
+}
+.nf-btn.nf-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.nf-btn.nf-primary:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+  color: #fff;
+}
 
 /* Two-panel navigation */
 .panel-nav {
