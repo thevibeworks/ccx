@@ -251,25 +251,17 @@ func TestRealFixture_ClaudeCode_Exchanges(t *testing.T) {
 	}
 }
 
-// TestRealFixture_ClaudeCode_SubagentStepsMisclassified is a
-// CHARACTERIZATION test locking in the current extractSteps bug.
+// TestRealFixture_ClaudeCode_SubagentStepsClassified verifies the
+// extractSteps fix for Bug #3. The fixture invokes TaskCreate × 4
+// and Agent × 1 to dispatch sub-agents, all 5 of which must now
+// classify as StepSubagent instead of falling through to StepToolUse.
 //
-// The fixture invokes TaskCreate × 4 and Agent × 1 to dispatch
-// sub-agents, but parser.extractSteps only recognises
-// ToolName == "Task" as a StepSubagent. The CC 2.1.88 → 2.1.104
-// tool-name migration (Agent → TaskCreate, with Task still reserved)
-// means every real sub-agent dispatch in modern CC sessions shows
-// as StepToolUse instead of StepSubagent.
-//
-// Result: the timeline rail's sub-agent satellite count and the
-// tooltip badge row both undercount sub-agents on modern CC
-// sessions.
+// Before the fix: StepSubagent = 0 (broken — only ToolName=="Task"
+// was recognised).
+// After the fix:  StepSubagent = 5.
 //
 // Bug: testdata/test-session/README.md § Bug #3.
-//
-// When fixed, StepSubagent should be 5 (4 × TaskCreate + 1 × Agent)
-// and the corresponding StepToolUse count for those names drops to 0.
-func TestRealFixture_ClaudeCode_SubagentStepsMisclassified(t *testing.T) {
+func TestRealFixture_ClaudeCode_SubagentStepsClassified(t *testing.T) {
 	session := parseClaudeFixture(t)
 	flat := parser.FlattenSessionMessages(session)
 	exchanges := parser.ComputeExchanges(flat)
@@ -278,16 +270,9 @@ func TestRealFixture_ClaudeCode_SubagentStepsMisclassified(t *testing.T) {
 	}
 	ex := exchanges[0]
 
-	// Current (buggy) state: 0 StepSubagent detected.
-	if ex.CountSteps(parser.StepSubagent) != 0 {
-		t.Errorf("StepSubagent = %d, want 0 (current broken behaviour). If you taught parser.extractSteps to recognise TaskCreate and Agent as sub-agent dispatches, update this test to 5 — 4 TaskCreate + 1 Agent in the fixture.", ex.CountSteps(parser.StepSubagent))
-	}
-
-	// And their 5 invocations currently fall through to StepToolUse.
-	// The total StepToolUse count includes every other non-subagent
-	// tool too, so we only check that it's >= 5 (looser bound).
-	if toolSteps := ex.CountSteps(parser.StepToolUse); toolSteps < 5 {
-		t.Errorf("StepToolUse = %d, want >= 5 (TaskCreate+Agent fall through here today)", toolSteps)
+	// 4 TaskCreate + 1 Agent = 5 sub-agent dispatches.
+	if got := ex.CountSteps(parser.StepSubagent); got != 5 {
+		t.Errorf("StepSubagent = %d, want 5 (4 TaskCreate + 1 Agent)", got)
 	}
 }
 

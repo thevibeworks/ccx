@@ -215,11 +215,26 @@ func ComputeTurnStats(messages []*Message) []*Exchange {
 	return ComputeExchanges(messages)
 }
 
+// subagentToolNames is the set of tool_use names that dispatch a
+// sub-agent in Claude Code. The canonical name evolved across CLI
+// versions: 2.1.88 emitted "Task" (name of the tool file:
+// AgentTool) and "Agent" as a legacy alias; 2.1.104+ emitted
+// "TaskCreate" as the primary name alongside TaskGet / TaskList /
+// TaskStop / TaskUpdate / TaskOutput for the full lifecycle. Any of
+// the three names means "this tool_use spawned a sub-agent" and
+// should classify as StepSubagent.
+var subagentToolNames = map[string]bool{
+	"Task":       true, // 2.1.88 canonical
+	"TaskCreate": true, // 2.1.104+ canonical
+	"Agent":      true, // legacy alias
+}
+
 // extractSteps inspects an assistant message's tool_use blocks and
-// returns one Step per interesting call. Task and Skill get their own
-// kinds so the rail can paint them distinctly; ordinary tool calls are
-// captured as StepToolUse so they contribute to the "N tools" badge
-// without adding visual clutter.
+// returns one Step per interesting call. Sub-agent dispatch and
+// Skill invocation get their own kinds so the rail can paint them
+// distinctly; ordinary tool calls are captured as StepToolUse so
+// they contribute to the "N tools" badge without adding visual
+// clutter.
 func extractSteps(msg *Message) []Step {
 	if msg == nil || msg.Kind != KindAssistant {
 		return nil
@@ -229,8 +244,8 @@ func extractSteps(msg *Message) []Step {
 		if block.Type != "tool_use" {
 			continue
 		}
-		switch block.ToolName {
-		case "Task":
+		switch {
+		case subagentToolNames[block.ToolName]:
 			steps = append(steps, Step{
 				Kind:      StepSubagent,
 				UUID:      msg.UUID,
@@ -238,7 +253,7 @@ func extractSteps(msg *Message) []Step {
 				Label:     subagentLabel(block),
 				Timestamp: msg.Timestamp,
 			})
-		case "Skill":
+		case block.ToolName == "Skill":
 			steps = append(steps, Step{
 				Kind:      StepSkill,
 				UUID:      msg.UUID,
