@@ -136,11 +136,17 @@ func dropSidechains(msgs []*parser.Message) []*parser.Message {
 // exportExchange renders one block per Exchange: user prompt, last
 // assistant text, stats footer. Works across all formats via a simple
 // plaintext/markdown pass; HTML wraps it in a minimal container.
+//
+// Flattens once up front and builds an (anchor → final reply) map in
+// the same pass, so digesting a 500-exchange session is O(N) total
+// instead of the previous O(N²).
 func exportExchange(session *parser.Session, opts ExportOptions) (string, error) {
 	if session == nil {
 		return "", fmt.Errorf("session is nil")
 	}
-	exchanges := parser.ComputeExchanges(parser.FlattenSessionMessages(session))
+	flat := parser.FlattenSessionMessages(session)
+	exchanges := parser.ComputeExchanges(flat)
+	replies := buildReplyMap(flat)
 
 	var md strings.Builder
 	md.WriteString("# Session digest: " + truncateID(session.ID, 8) + "\n\n")
@@ -163,9 +169,11 @@ func exportExchange(session *parser.Session, opts ExportOptions) (string, error)
 		}
 		md.WriteString("\n\n")
 
+		// Snippet is the first line of the prompt; good enough for a
+		// digest. If you want the full text, use --shape=full|brief.
 		md.WriteString("> " + indentLines(ex.Snippet, "> ") + "\n\n")
 
-		if reply := finalAssistantReply(session, ex.AnchorID); reply != "" {
+		if reply := replies[ex.AnchorID]; reply != "" {
 			md.WriteString(reply + "\n\n")
 		}
 
@@ -197,11 +205,10 @@ func exportExchange(session *parser.Session, opts ExportOptions) (string, error)
 	case "md", "markdown", "":
 		return body, nil
 	case "org":
-		// Lightweight MD→Org conversion: swap ## to * and the rest
-		// is close enough for a digest.
-		orgBody := strings.ReplaceAll(body, "## ", "** ")
-		orgBody = strings.ReplaceAll(orgBody, "# ", "* ")
-		return orgBody, nil
+		// Line-by-line MD→Org: only transform leading heading markers
+		// so an `> # quoted` line inside a user prompt doesn't get
+		// mangled into an org header.
+		return mdDigestToOrg(body), nil
 	case "html":
 		return wrapExchangeHTML(session, body, opts), nil
 	default:
@@ -209,49 +216,134 @@ func exportExchange(session *parser.Session, opts ExportOptions) (string, error)
 	}
 }
 
-func wrapExchangeHTML(session *parser.Session, body string, opts ExportOptions) string {
-	if opts.Envelope == EnvelopeFragment {
-		return `<article class="ccx-digest"><pre>` + escapeHTMLText(body) + `</pre></article>`
-	}
-	var b strings.Builder
-	b.WriteString("<!DOCTYPE html>\n<html><head><meta charset=\"UTF-8\"><title>Digest: ")
-	b.WriteString(escapeHTMLText(truncateID(session.ID, 8)))
-	b.WriteString("</title><style>body{font-family:system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#222;line-height:1.55}pre{white-space:pre-wrap;font-family:inherit}</style></head><body><pre>")
-	b.WriteString(escapeHTMLText(body))
-	b.WriteString("</pre></body></html>")
-	return b.String()
-}
-
-// finalAssistantReply returns the last assistant text block in the
-// exchange anchored at anchorID. Used by shape=exchange.
-func finalAssistantReply(session *parser.Session, anchorID string) string {
-	msgs := parser.FlattenSessionMessages(session)
-	var started bool
-	var reply string
-	for _, m := range msgs {
+// buildReplyMap walks a flat wire-order message slice once and returns
+// a map from each Exchange anchor UUID to the last assistant text
+// block in that exchange. Used by shape=exchange to avoid re-walking
+// the session for every exchange.
+func buildReplyMap(flat []*parser.Message) map[string]string {
+	out := make(map[string]string)
+	var currentAnchor string
+	for _, m := range flat {
 		if m == nil {
 			continue
 		}
-		if m.UUID == anchorID {
-			started = true
-			continue
-		}
-		if !started {
-			continue
-		}
-		// Stop at the next exchange anchor.
 		if (m.Kind == parser.KindUserPrompt || m.Kind == parser.KindCommand) && !m.IsSidechain {
-			break
+			currentAnchor = m.UUID
+			continue
+		}
+		if currentAnchor == "" {
+			continue
 		}
 		if m.Kind == parser.KindAssistant && !m.IsSidechain {
 			for _, block := range m.Content {
 				if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
-					reply = block.Text
+					out[currentAnchor] = block.Text
 				}
 			}
 		}
 	}
-	return reply
+	return out
+}
+
+// mdDigestToOrg transforms a known-shape digest (produced by
+// exportExchange) into Org-mode, only rewriting leading heading
+// markers so in-prompt markdown quoted with '> ' survives unchanged.
+func mdDigestToOrg(md string) string {
+	lines := strings.Split(md, "\n")
+	for i, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "## "):
+			lines[i] = "** " + strings.TrimPrefix(line, "## ")
+		case strings.HasPrefix(line, "# "):
+			lines[i] = "* " + strings.TrimPrefix(line, "# ")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// wrapExchangeHTML renders the already-built markdown digest body as
+// HTML. Instead of dumping raw markdown inside a <pre>, this does a
+// minimal MD→HTML pass so headings, horizontal rules, blockquotes,
+// and italics render as HTML for real.
+func wrapExchangeHTML(session *parser.Session, body string, opts ExportOptions) string {
+	htmlBody := digestMarkdownToHTML(body)
+	if opts.Envelope == EnvelopeFragment {
+		return `<article class="ccx-digest">` + htmlBody + `</article>`
+	}
+	var b strings.Builder
+	b.WriteString("<!DOCTYPE html>\n<html><head><meta charset=\"UTF-8\"><title>Digest: ")
+	b.WriteString(escapeHTMLText(truncateID(session.ID, 8)))
+	b.WriteString("</title><style>")
+	b.WriteString("body{font-family:system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#222;line-height:1.55}")
+	b.WriteString("h1{font-size:22px;margin:0 0 16px}h2{font-size:15px;color:#555;margin:20px 0 6px;font-weight:600}")
+	b.WriteString("blockquote{margin:0 0 8px;padding:6px 12px;border-left:3px solid #ccc;color:#555}")
+	b.WriteString("hr{border:none;border-top:1px solid #eee;margin:16px 0}")
+	b.WriteString("em{color:#888;font-style:normal;font-size:12px;display:block;margin-bottom:8px}")
+	b.WriteString("article.ccx-digest{max-width:inherit}")
+	b.WriteString("</style></head><body><article class=\"ccx-digest\">")
+	b.WriteString(htmlBody)
+	b.WriteString("</article></body></html>")
+	return b.String()
+}
+
+// digestMarkdownToHTML is a small, known-shape markdown-to-HTML pass.
+// It is NOT a general CommonMark implementation — it only understands
+// the exact set of constructs that exportExchange produces:
+//
+//   - `# heading`          → <h1>
+//   - `## heading`         → <h2>
+//   - `> blockquote`       → <blockquote>
+//   - `_italic_`           → <em>
+//   - `---`                → <hr>
+//   - blank lines          → paragraph breaks
+//
+// Everything else is passed through with HTML-escaped text. This is
+// intentional: we already control the producer, so we don't need a
+// full parser.
+func digestMarkdownToHTML(md string) string {
+	var b strings.Builder
+	lines := strings.Split(md, "\n")
+
+	flushQuote := func(buf *[]string) {
+		if len(*buf) == 0 {
+			return
+		}
+		b.WriteString("<blockquote>")
+		for i, l := range *buf {
+			if i > 0 {
+				b.WriteString("<br>")
+			}
+			b.WriteString(escapeHTMLText(l))
+		}
+		b.WriteString("</blockquote>\n")
+		*buf = (*buf)[:0]
+	}
+
+	var quoteBuf []string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "> ") {
+			quoteBuf = append(quoteBuf, strings.TrimPrefix(line, "> "))
+			continue
+		}
+		flushQuote(&quoteBuf)
+		switch {
+		case line == "":
+			b.WriteString("\n")
+		case line == "---":
+			b.WriteString("<hr>\n")
+		case strings.HasPrefix(line, "## "):
+			b.WriteString("<h2>" + escapeHTMLText(strings.TrimPrefix(line, "## ")) + "</h2>\n")
+		case strings.HasPrefix(line, "# "):
+			b.WriteString("<h1>" + escapeHTMLText(strings.TrimPrefix(line, "# ")) + "</h1>\n")
+		case strings.HasPrefix(line, "_") && strings.HasSuffix(line, "_") && len(line) > 2:
+			inner := line[1 : len(line)-1]
+			b.WriteString("<em>" + escapeHTMLText(inner) + "</em>\n")
+		default:
+			b.WriteString("<p>" + escapeHTMLText(line) + "</p>\n")
+		}
+	}
+	flushQuote(&quoteBuf)
+	return b.String()
 }
 
 func indentLines(text, prefix string) string {

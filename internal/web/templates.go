@@ -3995,6 +3995,11 @@ code, pre, .session-id, .model-badge {
   display: inline-block;
 }
 .nav-expand:hover { background: var(--bg-tertiary); color: var(--text); }
+.nav-expand:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  color: var(--text);
+}
 .nav-expand[aria-expanded="true"]::before { transform: rotate(90deg); }
 .nav-group > .nav-row > .nav-title { flex: 1; min-width: 0; }
 .nav-time {

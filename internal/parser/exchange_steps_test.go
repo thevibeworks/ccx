@@ -177,6 +177,52 @@ func TestExchange_CountSteps(t *testing.T) {
 	}
 }
 
+func TestComputeExchanges_DropsSidechainStepsFromParentExchange(t *testing.T) {
+	// A sub-agent Task dispatch must itself count as one StepSubagent
+	// on the parent exchange. But the sub-agent's own tool_use blocks
+	// must NOT bubble up into the parent's tool count — they belong
+	// to the sub-agent, not the user's exchange.
+	subagentTools := &Message{
+		UUID: "sc1", Kind: KindAssistant, IsSidechain: true,
+		Content: []ContentBlock{
+			{Type: "tool_use", ToolName: "Read"},
+			{Type: "tool_use", ToolName: "Edit"},
+			{Type: "tool_use", ToolName: "Bash"},
+		},
+	}
+	mainAssistant := &Message{
+		UUID: "a1", Kind: KindAssistant,
+		Content: []ContentBlock{
+			{
+				Type:     "tool_use",
+				ToolName: "Task",
+				ToolInput: map[string]any{
+					"subagent_type": "Explore",
+					"description":   "find deps",
+				},
+			},
+		},
+		Children: []*Message{subagentTools},
+	}
+	user := &Message{
+		UUID: "u1", Kind: KindUserPrompt,
+		Children: []*Message{mainAssistant},
+	}
+	session := &Session{RootMessages: []*Message{user}}
+
+	exchanges := ComputeExchanges(FlattenSessionMessages(session))
+	if len(exchanges) != 1 {
+		t.Fatalf("want 1 exchange, got %d", len(exchanges))
+	}
+	ex := exchanges[0]
+	if ex.CountSteps(StepSubagent) != 1 {
+		t.Errorf("Subagent count = %d, want 1 (the Task dispatch)", ex.CountSteps(StepSubagent))
+	}
+	if ex.CountSteps(StepToolUse) != 0 {
+		t.Errorf("Tool count = %d, want 0 (sidechain tools must not bubble up)", ex.CountSteps(StepToolUse))
+	}
+}
+
 func TestComputeTurnStats_Alias(t *testing.T) {
 	// The deprecated alias should forward to ComputeExchanges and
 	// return the same Exchange type (which aliases TurnStats).

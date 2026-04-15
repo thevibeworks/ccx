@@ -85,12 +85,26 @@ func (w *Workspace) AllSessions() []*Session {
 // produce the same result.
 //
 //   - Expands ~ to the user home
-//   - Resolves symlinks via filepath.EvalSymlinks (best effort)
+//   - Resolves symlinks via filepath.EvalSymlinks when the path
+//     actually exists on disk. EvalSymlinks on a case-insensitive
+//     filesystem returns the case the FS actually stores, which
+//     defuses case drift at the source without us having to
+//     unconditionally lowercase.
 //   - Cleans the result (collapses //, strips trailing /)
-//   - Case-folds on macOS (HFS+/APFS are case-insensitive by default)
+//   - For paths that DON'T exist on disk (deleted projects), applies
+//     a platform-aware case-fold as a fallback so old sessions for
+//     the same real directory still group together. On darwin /
+//     windows where the default FS is case-insensitive we lowercase;
+//     on linux we preserve case.
 //
-// Returns the input cleaned if the path doesn't exist on disk, so
-// old sessions for deleted workspaces still group together.
+// Note on APFS case-sensitive volumes: APFS supports per-volume and
+// per-directory case sensitivity. Two truly distinct directories
+// differing only in case would still exist on such a volume, and
+// EvalSymlinks returns their literal cased paths — so they remain
+// distinct after this function. The fallback lowercase only kicks
+// in for deleted paths, where distinguishing two gone-from-disk
+// directories that differed only in case is inherently lossy
+// regardless.
 func CanonicalizeWorkspacePath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -101,19 +115,35 @@ func CanonicalizeWorkspacePath(path string) string {
 			path = filepath.Join(home, strings.TrimPrefix(path, "~"))
 		}
 	}
-	// Try to resolve symlinks; fall back to Clean on failure.
-	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != "" {
+	// Try to resolve symlinks. On success, trust the FS-returned
+	// casing — a case-insensitive FS will fold for us, a case-
+	// sensitive FS will preserve the distinction we care about.
+	resolved, resolvedOK := evalSymlinks(path)
+	if resolvedOK {
 		path = resolved
 	}
 	path = filepath.Clean(path)
-	// Strip any remaining trailing separator (Clean leaves / as /).
 	if len(path) > 1 {
 		path = strings.TrimRight(path, string(filepath.Separator))
 	}
-	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+	// Fallback case-fold ONLY when we couldn't resolve via the FS —
+	// otherwise we'd collapse case-sensitive volumes' distinct
+	// directories into one Workspace row.
+	if !resolvedOK && (runtime.GOOS == "darwin" || runtime.GOOS == "windows") {
 		path = strings.ToLower(path)
 	}
 	return path
+}
+
+func evalSymlinks(path string) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || resolved == "" {
+		return "", false
+	}
+	return resolved, true
 }
 
 // WorkspaceHashFor returns a short stable fingerprint of the canonical
@@ -174,31 +204,54 @@ func GroupProjectsByWorkspace(projects []*Project) []*Workspace {
 }
 
 // workspaceKeyFor picks the best available real-path source for a
-// Project and canonicalizes it. Preference order:
-//  1. Project.Path (if it points at a real cwd, not the encoded folder)
-//  2. First session's CWD
-//  3. Decoded EncodedName
+// Project and canonicalizes it.
+//
+// Preference order:
+//  1. First session's CWD (most reliable — comes from the JSONL metadata)
+//  2. Project.Path when it looks like a real cwd rather than an
+//     encoded-name projects folder
+//  3. Decoded EncodedName (lossy fallback for dash-encoded names)
+//
+// CWD first means we sidestep the fragility of hardcoded
+// "/.claude/projects/" / "/.codex/sessions/" string checks that used
+// to fail for XDG-relocated homes (CLAUDE_CODE_HOME=/srv/claude) or
+// Windows path separators.
 func workspaceKeyFor(p *Project) string {
 	if p == nil {
 		return ""
-	}
-	// Project.Path in the legacy model is the encoded projects/xxx
-	// folder. Only use it when it looks like a real cwd (starts with /
-	// and isn't under the claude/codex home).
-	if strings.HasPrefix(p.Path, "/") &&
-		!strings.Contains(p.Path, "/.claude/projects/") &&
-		!strings.Contains(p.Path, "/.codex/sessions/") {
-		return CanonicalizeWorkspacePath(p.Path)
 	}
 	for _, s := range p.Sessions {
 		if s != nil && strings.TrimSpace(s.CWD) != "" {
 			return CanonicalizeWorkspacePath(s.CWD)
 		}
 	}
+	if isRealCwd(p.Path) {
+		return CanonicalizeWorkspacePath(p.Path)
+	}
 	if p.EncodedName != "" {
 		return CanonicalizeWorkspacePath(decodeProjectName(p.EncodedName))
 	}
 	return ""
+}
+
+// isRealCwd reports whether a path looks like the user's actual
+// working directory rather than an agent-home encoded projects
+// folder. Used as a secondary source when the Project has no session
+// CWD metadata.
+func isRealCwd(path string) bool {
+	if path == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	// Normalize separators before checking so Windows paths with
+	// backslashes match too.
+	normalized := filepath.ToSlash(path)
+	if strings.Contains(normalized, "/.claude/projects/") {
+		return false
+	}
+	if strings.Contains(normalized, "/.codex/sessions/") {
+		return false
+	}
+	return true
 }
 
 func workspaceDisplayFor(canonical string, p *Project) string {
