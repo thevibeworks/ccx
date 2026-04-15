@@ -1685,11 +1685,25 @@ func renderSpendSection(turns []*parser.TurnStats, sessionTotal float64) string 
 	return b.String()
 }
 
-// renderConversationNav renders a collapsible tree navigation
+// renderConversationNav emits the outline sidebar.
+//
+// Each Exchange group is a <div class="nav-group"> with two distinct
+// clickable targets:
+//
+//	<a  class="nav-title"  href="#msg-…">prompt preview … 14:03</a>
+//	<button class="nav-expand" aria-expanded="…">▶</button>
+//
+// Clicking the title jumps to the message. Clicking the expand button
+// (and only the expand button) toggles the group's children. There is
+// no <details>/<summary> overlap between "toggle" and "jump": one
+// element, one action.
+//
+// The last three exchanges default to expanded; earlier ones collapse.
+// Group children are rendered in a <div class="nav-children"> that the
+// JS can hide/show via the aria-expanded attribute on the group root.
 func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 	allMsgs := flattenMessages(messages)
 
-	// Group messages: each user prompt starts a new group
 	type navGroup struct {
 		user     *parser.Message
 		children []*parser.Message
@@ -1700,13 +1714,11 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 	for _, msg := range allMsgs {
 		switch msg.Kind {
 		case parser.KindUserPrompt, parser.KindCommand, parser.KindCompactSummary:
-			// Start new group
 			if currentGroup != nil {
 				groups = append(groups, *currentGroup)
 			}
 			currentGroup = &navGroup{user: msg}
 		default:
-			// Add to current group
 			if currentGroup != nil {
 				currentGroup.children = append(currentGroup.children, msg)
 			}
@@ -1716,72 +1728,88 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 		groups = append(groups, *currentGroup)
 	}
 
-	// Render groups as collapsible tree
 	for i, g := range groups {
-		isLast := i >= len(groups)-3 // Expand last 3 groups
+		isLast := i >= len(groups)-3 // default-expand last 3 exchanges
+		uuid := sanitizeID(g.user.UUID)
+		timeAttr := ""
+		if !g.user.Timestamp.IsZero() {
+			timeAttr = g.user.Timestamp.Local().Format("15:04")
+		}
 
-		// User/command/compact header
 		switch g.user.Kind {
 		case parser.KindCompactSummary:
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-compact" data-msg="%s">`,
-				sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
-			b.WriteString(`<span class="nav-icon">◇</span><span class="nav-text">COMPACT</span></a>`)
+				uuid, html.EscapeString(uuid)))
+			b.WriteString(`<span class="nav-icon" aria-hidden="true">◇</span><span class="nav-text">COMPACT</span>`)
+			if timeAttr != "" {
+				b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
+			}
+			b.WriteString(`</a>`)
 
 		case parser.KindCommand:
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-command" data-msg="%s">`,
-				sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
-			b.WriteString(fmt.Sprintf(`<span class="nav-icon">⌘</span><span class="nav-text">%s</span></a>`,
+				uuid, html.EscapeString(uuid)))
+			b.WriteString(fmt.Sprintf(`<span class="nav-icon" aria-hidden="true">⌘</span><span class="nav-text">%s</span>`,
 				html.EscapeString(g.user.CommandName)))
+			if timeAttr != "" {
+				b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
+			}
+			b.WriteString(`</a>`)
 
 		case parser.KindUserPrompt:
 			preview := getNavPreview(g.user)
 			childCount := len(g.children)
 
 			if childCount == 0 {
-				// No children - simple link
 				b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-user" data-msg="%s">`,
-					sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
-				b.WriteString(fmt.Sprintf(`<span class="nav-icon">▶</span><span class="nav-text">%s</span></a>`,
+					uuid, html.EscapeString(uuid)))
+				b.WriteString(fmt.Sprintf(`<span class="nav-icon" aria-hidden="true">▶</span><span class="nav-text">%s</span>`,
 					html.EscapeString(preview)))
-			} else {
-				// Has children - collapsible
-				openAttr := ""
-				if isLast {
-					openAttr = " open"
+				if timeAttr != "" {
+					b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
 				}
-				b.WriteString(fmt.Sprintf(`<details class="nav-group"%s>`, openAttr))
-				b.WriteString(fmt.Sprintf(`<summary class="nav-item nav-user" data-msg="%s">`, html.EscapeString(sanitizeID(g.user.UUID))))
-				b.WriteString(fmt.Sprintf(`<span class="nav-icon">▶</span><span class="nav-text">%s</span>`,
-					html.EscapeString(preview)))
-				b.WriteString(fmt.Sprintf(`<span class="nav-count">%d</span>`, childCount))
-				b.WriteString(`</summary>`)
-				b.WriteString(`<div class="nav-children">`)
-
-				// Render children with a budget. If the turn has more
-				// than maxChildren entries we show the first (maxChildren-1),
-				// a "+N more" marker, and then the LAST child — which is
-				// usually the assistant's final summary message. Without
-				// preserving the tail, long tool-heavy turns would drop
-				// their summary from the outline entirely.
-				const maxChildren = 10
-				total := len(g.children)
-				if total <= maxChildren {
-					for _, child := range g.children {
-						renderNavChild(b, child)
-					}
-				} else {
-					head := maxChildren - 1
-					for _, child := range g.children[:head] {
-						renderNavChild(b, child)
-					}
-					hidden := total - head - 1
-					if hidden > 0 {
-						b.WriteString(fmt.Sprintf(`<span class="nav-more">+%d more</span>`, hidden))
-					}
-					renderNavChild(b, g.children[total-1])
-				}
-				b.WriteString(`</div></details>`)
+				b.WriteString(`</a>`)
+				continue
 			}
+
+			expandedAttr := "false"
+			if isLast {
+				expandedAttr = "true"
+			}
+			b.WriteString(fmt.Sprintf(`<div class="nav-group" data-expanded="%s">`, expandedAttr))
+			b.WriteString(`<div class="nav-row">`)
+			b.WriteString(fmt.Sprintf(`<button type="button" class="nav-expand" aria-expanded="%s" aria-label="Toggle exchange" data-target="%s"></button>`,
+				expandedAttr, html.EscapeString(uuid)))
+			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-title nav-user" data-msg="%s">`,
+				uuid, html.EscapeString(uuid)))
+			b.WriteString(fmt.Sprintf(`<span class="nav-text">%s</span>`, html.EscapeString(preview)))
+			b.WriteString(fmt.Sprintf(`<span class="nav-count">%d</span>`, childCount))
+			if timeAttr != "" {
+				b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
+			}
+			b.WriteString(`</a>`)
+			b.WriteString(`</div>`) // .nav-row
+
+			b.WriteString(`<div class="nav-children">`)
+			const maxChildren = 10
+			total := len(g.children)
+			if total <= maxChildren {
+				for _, child := range g.children {
+					renderNavChild(b, child)
+				}
+			} else {
+				head := maxChildren - 1
+				for _, child := range g.children[:head] {
+					renderNavChild(b, child)
+				}
+				hidden := total - head - 1
+				if hidden > 0 {
+					b.WriteString(fmt.Sprintf(`<span class="nav-more">+%d more</span>`, hidden))
+				}
+				renderNavChild(b, g.children[total-1])
+			}
+			b.WriteString(`</div>`) // .nav-children
+			b.WriteString(`</div>`) // .nav-group
 		}
 	}
 }
@@ -2774,20 +2802,46 @@ func pageFooter() string {
 <div id="loading-overlay" class="loading-overlay">
   <div class="cli-spinner">
     <span class="cli-spinner-char"></span>
-    <span>Loading...</span>
+    <span id="spinner-verb">Loading</span>
   </div>
 </div>
 <script>
 // Global loading overlay control
 const loadingOverlay = document.getElementById('loading-overlay');
-window.showLoading = function() { loadingOverlay?.classList.add('active'); };
-window.hideLoading = function() { loadingOverlay?.classList.remove('active'); };
+const spinnerVerbEl = document.getElementById('spinner-verb');
+
+// ccx-flavored gerund list. Pure decoration — the label the spinner
+// shows has no correlation with what ccx is actually doing. See
+// internal/web/spinner_verbs.go for the Go-side source of truth.
+const SPINNER_VERBS = ` + spinnerVerbsJSArray() + `;
+let spinnerTimer = null;
+function pickSpinnerVerb() {
+  return SPINNER_VERBS[Math.floor(Math.random() * SPINNER_VERBS.length)] + '...';
+}
+function startSpinnerRotation() {
+  if (spinnerVerbEl) spinnerVerbEl.textContent = pickSpinnerVerb();
+  if (spinnerTimer) return;
+  spinnerTimer = setInterval(() => {
+    if (spinnerVerbEl) spinnerVerbEl.textContent = pickSpinnerVerb();
+  }, 1400);
+}
+function stopSpinnerRotation() {
+  if (spinnerTimer) { clearInterval(spinnerTimer); spinnerTimer = null; }
+}
+
+window.showLoading = function() {
+  loadingOverlay?.classList.add('active');
+  startSpinnerRotation();
+};
+window.hideLoading = function() {
+  loadingOverlay?.classList.remove('active');
+  stopSpinnerRotation();
+};
 
 // Show loading on navigation (skip downloads/API links)
 document.querySelectorAll('a[href^="/"]').forEach(a => {
   a.addEventListener('click', function(e) {
     const href = this.getAttribute('href') || '';
-    // Skip: modifier keys, API/export links, anchor links
     if (e.metaKey || e.ctrlKey || e.shiftKey) return;
     if (href.startsWith('/api/')) return;
     if (href.startsWith('#')) return;
@@ -2817,6 +2871,17 @@ func cssStyles() string {
   /* Provider accent colors */
   --accent-cc: #da7756;
   --accent-cx: #10b981;
+  /* Semantic event tokens — one color per event kind, used by the
+   * rail, outline, info panel, badges, and any future surface. If
+   * you want to rebrand an event kind, change it HERE, not in a
+   * dozen component rules. */
+  --event-prompt:   var(--accent-session, #8b5cf6);
+  --event-command:  var(--accent-conversation, #06b6d4);
+  --event-compact:  #fa0;
+  --event-tool:     var(--text-muted);
+  --event-subagent: var(--accent-project, #3b82f6);
+  --event-skill:    var(--accent-session, #8b5cf6);
+  --event-plugin:   var(--accent-conversation, #06b6d4);
   --user-bg: #fff8f5;
   --user-border: #da7756;
   --assistant-bg: #f5faf5;
@@ -3898,25 +3963,74 @@ code, pre, .session-id, .model-badge {
 .nav-meta { padding-left: 20px; opacity: 0.4; font-style: italic; }
 .nav-meta .nav-icon { color: #999; }
 
-/* Collapsible nav groups */
+/* Exchange outline groups: title + expand button + children.
+   Two distinct click targets — clicking the title jumps to the message,
+   clicking the expand button toggles children. No overlap. */
 .nav-group { margin: 2px 0; }
-.nav-group > summary { list-style: none; cursor: pointer; }
-.nav-group > summary::-webkit-details-marker { display: none; }
-.nav-group > summary .nav-icon { transition: transform 0.15s; }
-.nav-group[open] > summary .nav-icon { transform: rotate(90deg); }
+.nav-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+.nav-expand {
+  flex-shrink: 0;
+  width: 16px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.nav-expand::before {
+  content: '▸';
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+.nav-expand:hover { background: var(--bg-tertiary); color: var(--text); }
+.nav-expand[aria-expanded="true"]::before { transform: rotate(90deg); }
+.nav-group > .nav-row > .nav-title { flex: 1; min-width: 0; }
+.nav-time {
+  margin-left: 6px;
+  font-size: 9px;
+  color: var(--text-muted);
+  opacity: 0.65;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
 .nav-count {
-  margin-left: auto;
+  margin-left: 6px;
   font-size: 9px;
   background: var(--bg-tertiary);
   padding: 1px 5px;
   border-radius: 8px;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 .nav-children {
   padding-left: 12px;
   border-left: 1px solid var(--border);
   margin-left: 10px;
   margin-top: 2px;
+  overflow: hidden;
+  transition: max-height 0.18s ease, opacity 0.18s ease;
+}
+.nav-group[data-expanded="false"] > .nav-children {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  pointer-events: none;
+}
+.nav-group[data-expanded="true"] > .nav-children {
+  max-height: 2000px;
+  opacity: 1;
 }
 .nav-children .nav-item { font-size: 9px; padding: 2px 6px; }
 .nav-more {
@@ -3978,14 +4092,12 @@ code, pre, .session-id, .model-badge {
   z-index: 150;
   background: transparent;
   border: none;
-  border-left: 1px solid transparent;
-  transition: width 0.18s ease, padding 0.18s ease, border-left-color 0.18s ease;
+  transition: width 0.18s ease, padding 0.18s ease;
   cursor: crosshair;
 }
 .timeline-rail:hover {
   width: 52px;
   padding-left: 28px;
-  border-left-color: color-mix(in srgb, var(--border) 60%, transparent);
 }
 .timeline-rail.has-no-ticks { pointer-events: none; }
 
@@ -4080,7 +4192,7 @@ code, pre, .session-id, .model-badge {
 /* User turn — medium notch, heat-sensitive */
 .timeline-rail .tick-user {
   width: calc(5px + var(--heat, 0) * 4px);
-  background: var(--accent-session, #8b5cf6);
+  background: var(--event-prompt);
   opacity: calc(0.65 + var(--heat, 0) * 0.35);
 }
 .timeline-rail:hover .tick-user {
@@ -4091,7 +4203,7 @@ code, pre, .session-id, .model-badge {
 /* Slash command — medium notch, distinct color */
 .timeline-rail .tick-command {
   width: calc(5px + var(--heat, 0) * 4px);
-  background: var(--accent-conversation, #06b6d4);
+  background: var(--event-command);
   opacity: calc(0.65 + var(--heat, 0) * 0.35);
 }
 .timeline-rail:hover .tick-command {
@@ -4103,7 +4215,7 @@ code, pre, .session-id, .model-badge {
 .timeline-rail .tick-compact {
   width: 10px;
   height: 2px;
-  background: var(--accent-project, #3b82f6);
+  background: var(--event-compact);
   opacity: 0.75;
 }
 .timeline-rail:hover .tick-compact {
@@ -4112,31 +4224,43 @@ code, pre, .session-id, .model-badge {
   opacity: 1;
 }
 
-/* Sub-agent (Task dispatch) — short minor notch */
-.timeline-rail .tick-agent {
+/* Satellite markers — decorations on the primary exchange notch.
+ * Rendered as tiny colored dots fanning LEFT from the parent tick so
+ * they don't fight for the same pixel column. One dot per sub-agent,
+ * skill, compact, or tool call, capped by render budget. Only visible
+ * on hover — otherwise the rail stays a clean Exchange ruler. */
+.timeline-rail .timeline-tick .sat {
+  position: absolute;
+  right: calc(100%% + 3px);
+  top: 50%%;
   width: 3px;
-  height: 1px;
-  background: var(--primary, #da7756);
-  opacity: 0.55;
+  height: 3px;
+  border-radius: 50%%;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%%);
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
-.timeline-rail:hover .tick-agent {
-  width: 5px;
-  height: 2px;
-  opacity: 0.9;
-}
-
-/* Skill invocation — short minor notch, muted color */
-.timeline-rail .tick-skill {
-  width: 3px;
-  height: 1px;
-  background: var(--text-muted, #888);
-  opacity: 0.5;
-}
-.timeline-rail:hover .tick-skill {
-  width: 5px;
-  height: 2px;
+.timeline-rail:hover .timeline-tick .sat {
   opacity: 0.85;
 }
+/* Fan satellites horizontally so they don't all overlap on a single pixel. */
+.timeline-rail .timeline-tick .sat:nth-of-type(1) { margin-right: 0px;  }
+.timeline-rail .timeline-tick .sat:nth-of-type(2) { margin-right: 5px;  }
+.timeline-rail .timeline-tick .sat:nth-of-type(3) { margin-right: 10px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(4) { margin-right: 15px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(5) { margin-right: 20px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(6) { margin-right: 25px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(7) { margin-right: 30px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(8) { margin-right: 35px; }
+
+.timeline-rail .timeline-tick .sat-subagent { background: var(--event-subagent); }
+.timeline-rail .timeline-tick .sat-skill    { background: var(--event-skill); }
+.timeline-rail .timeline-tick .sat-compact  { background: var(--event-compact); }
+.timeline-rail .timeline-tick .sat-tool     { background: var(--event-tool); opacity: 0; }
+/* Tool satellites are only revealed when the rail expands — they're
+ * the most common step kind and would clutter the collapsed view. */
+.timeline-rail:hover .timeline-tick .sat-tool { opacity: 0.6; }
 
 /* The locked-nearest tick gets a primary-color halo */
 .timeline-rail .tick-nearest {
@@ -4203,20 +4327,50 @@ code, pre, .session-id, .model-badge {
 .timeline-tooltip.show {
   opacity: 1;
 }
+/* Tooltip layout
+ *   [clock]  exchange N  +offset · duration        ← head
+ *   first line of the prompt                       ← snippet
+ *   $cost  so far $cumulative  ⧫ tokens            ← meta
+ *   ⎇ 2 subagents · ✦ 1 skill · ◈ 3 tools          ← badges (only if any)
+ *
+ * The head row is clock-led because the user's first question is
+ * almost always "what time was this?". Exchange N is the stable
+ * identity; offset/duration are secondary context. */
 .timeline-tooltip .tt-head {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: baseline;
+  gap: 8px;
   margin-bottom: 4px;
-}
-.timeline-tooltip .tt-offset {
-  color: var(--primary);
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  font-size: 10px;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
 }
+.timeline-tooltip .tt-clock {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.2px;
+}
+.timeline-tooltip .tt-clock:empty { display: none; }
+.timeline-tooltip .tt-index {
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+.timeline-tooltip .tt-index:empty { display: none; }
+.timeline-tooltip .tt-offset {
+  color: var(--text-muted);
+  font-size: 9px;
+  opacity: 0.8;
+}
+.timeline-tooltip .tt-offset:empty { display: none; }
+.timeline-tooltip .tt-offset::before { content: '+'; opacity: 0.6; }
+.timeline-tooltip .tt-duration {
+  color: var(--text-muted);
+  font-size: 9px;
+  opacity: 0.7;
+}
+.timeline-tooltip .tt-duration:empty { display: none; }
+.timeline-tooltip .tt-duration::before { content: '· '; opacity: 0.5; }
 .timeline-tooltip .tt-snippet {
   display: block;
   color: var(--text);
@@ -4225,28 +4379,6 @@ code, pre, .session-id, .model-badge {
   white-space: nowrap;
   margin-bottom: 4px;
 }
-.timeline-tooltip .tt-kind {
-  display: inline-block;
-  padding: 1px 5px;
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--text) 10%, transparent);
-  color: var(--text-muted);
-}
-.timeline-tooltip.kind-user .tt-kind { background: color-mix(in srgb, var(--accent-session, #8b5cf6) 18%, transparent); color: var(--accent-session, #8b5cf6); }
-.timeline-tooltip.kind-command .tt-kind { background: color-mix(in srgb, var(--accent-conversation, #06b6d4) 18%, transparent); color: var(--accent-conversation, #06b6d4); }
-.timeline-tooltip.kind-compact .tt-kind { background: color-mix(in srgb, var(--accent-project, #3b82f6) 18%, transparent); color: var(--accent-project, #3b82f6); }
-.timeline-tooltip.kind-agent .tt-kind { background: color-mix(in srgb, var(--primary, #da7756) 18%, transparent); color: var(--primary, #da7756); }
-.timeline-tooltip.kind-skill .tt-kind { background: color-mix(in srgb, var(--text-muted, #888) 14%, transparent); color: var(--text-muted, #888); }
-.timeline-tooltip .tt-index {
-  color: var(--text-muted);
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-}
-.timeline-tooltip .tt-index:empty { display: none; }
-
 .timeline-tooltip .tt-meta {
   display: flex;
   gap: 10px;
@@ -4256,7 +4388,7 @@ code, pre, .session-id, .model-badge {
   padding-top: 4px;
   border-top: 1px dashed var(--border);
 }
-.timeline-tooltip .tt-meta:empty { display: none; }
+.timeline-tooltip .tt-meta:empty { display: none; padding: 0; border: 0; }
 .timeline-tooltip .tt-cost:empty, .timeline-tooltip .tt-tokens:empty, .timeline-tooltip .tt-cum:empty { display: none; }
 .timeline-tooltip .tt-cost {
   color: var(--primary);
@@ -4268,6 +4400,23 @@ code, pre, .session-id, .model-badge {
 }
 .timeline-tooltip .tt-cum::before { content: '∑ '; opacity: 0.5; }
 .timeline-tooltip .tt-tokens::before { content: '⧫ '; opacity: 0.6; }
+
+.timeline-tooltip .tt-badges {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  padding-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.timeline-tooltip .tt-badges:empty { display: none; padding: 0; }
+.timeline-tooltip .tt-badges .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.timeline-tooltip .tt-badges .badge-subagent { color: var(--event-subagent); }
+.timeline-tooltip .tt-badges .badge-skill    { color: var(--event-skill); }
+.timeline-tooltip .tt-badges .badge-tool     { color: var(--event-tool); }
 
 .timeline-rail .timeline-empty {
   display: flex;
@@ -4370,7 +4519,9 @@ code, pre, .session-id, .model-badge {
 }
 .thread-responses::before { display: none; }
 
-/* Thread folding - collapse middle responses (direct children only) */
+/* Thread folding — collapse middle responses. One stable button acts
+ * as both the fold and unfold handle; clicking the user header does
+ * not toggle anything. */
 .thread.folded > .thread-responses > .turn:not(:last-child) {
   max-height: 0;
   overflow: hidden;
@@ -4384,49 +4535,41 @@ code, pre, .session-id, .model-badge {
   opacity: 1;
   transition: opacity 0.2s;
 }
-/* Fold indicator in header */
-.fold-indicator {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-  margin-left: 8px;
-  padding: 2px 6px;
-  background: var(--bg-secondary);
-  border-radius: 3px;
-  cursor: pointer;
-}
-.thread.folded .fold-indicator { background: var(--primary); color: white; }
-.thread.folded .fold-indicator::after { content: '+' attr(data-hidden); }
-.thread:not(.folded) .fold-indicator::after { content: '−'; }
 
-/* Fold separator line in middle - clickable */
-.fold-separator {
-  display: none;
+/* One stable fold button per thread. Lives at the top of the responses
+ * column, never moves, works identically for fold and unfold. */
+.fold-toggle {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  margin: 8px 0;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: background 0.15s;
-}
-.fold-separator:hover { background: var(--bg-secondary); }
-.thread.folded .fold-separator { display: flex; }
-.fold-sep-line {
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-.fold-sep-text {
-  font-size: 11px;
+  gap: 6px;
+  margin: 4px 0 8px;
+  padding: 3px 10px;
   font-family: var(--font-mono);
-  color: white;
-  white-space: nowrap;
-  padding: 4px 10px;
-  background: var(--primary);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: 12px;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
 }
-.fold-separator:hover .fold-sep-text { background: var(--primary-hover); }
+.fold-toggle:hover {
+  color: var(--text);
+  background: var(--bg-tertiary);
+  border-color: var(--primary);
+}
+.fold-toggle .fold-chevron {
+  display: inline-block;
+  font-size: 10px;
+  line-height: 1;
+}
+.fold-toggle .fold-label { letter-spacing: 0.2px; }
+.fold-toggle .fold-summary::before {
+  content: attr(data-count);
+  opacity: 0.7;
+  font-size: 10px;
+  margin-left: 2px;
+}
 
 /* Level indentation */
 .level-1 { margin-left: 0; }
@@ -5534,31 +5677,78 @@ function copyTurn(e, btn) {
   setTimeout(() => btn.textContent = 'copy', 1500);
 }
 
+// jumpToAnchor is the single entry point for "scroll this message into
+// view with smooth behavior, open any closed ancestors, flash it to
+// orient the eye." Used by outline clicks, rail ticks, load-earlier
+// restore, hash navigation, and search result jumps. Any caller that
+// wants "take me there" goes through here — one code path, one set of
+// edge cases.
+//
+// opts.preserveFold (default false) — if true, do NOT auto-unfold a
+// closed thread that contains the target. Used by the fold keybinding
+// which wants to toggle without moving.
+function jumpToAnchor(msgId, opts) {
+  opts = opts || {};
+  if (!msgId) return false;
+  const msgEl = document.getElementById('msg-' + msgId);
+  if (!msgEl) return false;
+
+  if (!opts.preserveFold) {
+    let node = msgEl;
+    while (node) {
+      if (node.tagName === 'DETAILS') {
+        node.open = true;
+        node.setAttribute('open', '');
+      }
+      if (node.classList && node.classList.contains('thread') && node.classList.contains('folded')) {
+        node.classList.remove('folded');
+      }
+      node = node.parentElement;
+    }
+    msgEl.querySelectorAll('details').forEach(d => { d.open = true; d.setAttribute('open', ''); });
+  }
+
+  // Mark the matching nav item as active so the sidebar mirrors focus.
+  document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
+  const navItem = document.querySelector('.nav-item[data-msg="' + msgId + '"]');
+  if (navItem) {
+    navItem.classList.add('active');
+    // Also expand the owning group so the active child is visible.
+    const group = navItem.closest('.nav-group');
+    if (group && group.dataset.expanded === 'false') {
+      group.dataset.expanded = 'true';
+      const btn = group.querySelector('.nav-expand');
+      if (btn) btn.setAttribute('aria-expanded', 'true');
+    }
+  }
+
+  msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  msgEl.style.animation = 'flash 0.8s';
+  // Clear the animation so re-clicking the same target re-flashes.
+  setTimeout(() => { msgEl.style.animation = ''; }, 900);
+  return true;
+}
+
+// Outline title clicks jump; expand buttons toggle. Two targets, two
+// actions, no overlap. The nav row intercepts neither — events reach
+// the individual child elements.
+document.querySelectorAll('.nav-expand').forEach(btn => {
+  btn.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const group = this.closest('.nav-group');
+    if (!group) return;
+    const expanded = group.dataset.expanded === 'true';
+    group.dataset.expanded = expanded ? 'false' : 'true';
+    this.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+  });
+});
+
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', function(e) {
-    // Summary elements: just toggle group (native behavior), no jump
-    const isSummary = this.tagName === 'SUMMARY' || this.closest('summary');
-    if (isSummary) {
-      // Update active state only, let native toggle handle open/close
-      document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
-      this.classList.add('active');
-      return;
-    }
-
-    // Regular nav items: prevent default anchor and scroll to message
     e.preventDefault();
-    document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
-    this.classList.add('active');
     const msgId = this.dataset.msg;
-    if (msgId) {
-      const msgEl = document.getElementById('msg-' + msgId);
-      if (msgEl) {
-        const details = msgEl.querySelector('details');
-        if (details) details.setAttribute('open', '');
-        msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        msgEl.style.animation = 'flash 0.4s';
-      }
-    }
+    jumpToAnchor(msgId);
   });
 });
 
@@ -6105,9 +6295,7 @@ function updateNavForMessage(uuid, kind, content, time) {
   item.innerHTML = '<span class="nav-icon">' + icon + '</span><span class="nav-text">' + escapeHtml(text || kind) + '</span>';
   item.addEventListener('click', function(e) {
     e.preventDefault();
-    document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
-    this.classList.add('active');
-    document.getElementById('msg-' + safeId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    jumpToAnchor(safeId);
   });
   liveSection.appendChild(item);
 }
@@ -6141,44 +6329,82 @@ function toggleWatch() {
 if (btnWatch) btnWatch.addEventListener('click', toggleWatch);
 if (tbWatch) tbWatch.addEventListener('click', toggleWatch);
 
-// Thread folding - click user block to fold/unfold middle responses
+// Thread folding — one stable button per thread.
+//
+// The old model had three problems:
+//   1. Fold affordance lived in the thread header (+/-)
+//   2. Unfold affordance lived in a pill in the middle of the thread
+//   3. Clicking the user header also tried to hijack the details toggle
+//
+// The new model has ONE button in a fixed position: between the user
+// turn and its responses. It always says either "collapse N steps" or
+// "expand N steps · $cost · 41k tok", never moves, and both directions
+// read from the same target. The button is the ONLY fold affordance —
+// clicking the user header no longer does anything folding-related.
 document.querySelectorAll('.thread').forEach(thread => {
-  const userHeader = thread.querySelector('.turn-user .turn-header');
   const responses = thread.querySelector('.thread-responses');
-  if (!userHeader || !responses) return;
-
+  if (!responses) return;
   const turns = responses.querySelectorAll('.turn');
-  if (turns.length <= 1) return; // no folding needed for single response
+  if (turns.length <= 1) return;
 
-  // Add fold indicator in header
-  const indicator = document.createElement('span');
-  indicator.className = 'fold-indicator';
-  indicator.dataset.hidden = turns.length - 1;
-  userHeader.appendChild(indicator);
-
-  // Add fold separator line between user and final response (clickable)
-  const separator = document.createElement('div');
-  separator.className = 'fold-separator';
-  separator.innerHTML = '<span class="fold-sep-line"></span><span class="fold-sep-text">+' + (turns.length - 1) + ' ▶ ··· ○</span><span class="fold-sep-line"></span>';
-  separator.title = 'Click to expand';
-  separator.addEventListener('click', function() {
-    thread.classList.remove('folded');
+  const fold = document.createElement('button');
+  fold.type = 'button';
+  fold.className = 'fold-toggle';
+  fold.setAttribute('aria-expanded', 'true');
+  const stepCount = turns.length;
+  const summary = '' + (stepCount - 1) + ' hidden';
+  fold.innerHTML =
+    '<span class="fold-chevron" aria-hidden="true">▾</span>' +
+    '<span class="fold-label">collapse</span>' +
+    '<span class="fold-summary" data-count="' + summary + '"></span>';
+  fold.addEventListener('click', function(e) {
+    e.preventDefault();
+    const folded = thread.classList.toggle('folded');
+    fold.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    const label = fold.querySelector('.fold-label');
+    const chev  = fold.querySelector('.fold-chevron');
+    if (label) label.textContent = folded ? 'expand' : 'collapse';
+    if (chev)  chev.textContent  = folded ? '▸' : '▾';
   });
-  responses.insertBefore(separator, responses.firstChild);
 
-  // Start folded by default for threads with many responses
+  // Insert the button between the user turn and the responses, at a
+  // stable position that never moves whether the thread is folded or
+  // not. When folded, the button is the ONLY thing between the user
+  // prompt and the final response.
+  responses.insertBefore(fold, responses.firstChild);
+
+  // Threads with more than two responses default to folded.
   if (turns.length > 2) {
     thread.classList.add('folded');
+    fold.setAttribute('aria-expanded', 'false');
+    const label = fold.querySelector('.fold-label');
+    const chev  = fold.querySelector('.fold-chevron');
+    if (label) label.textContent = 'expand';
+    if (chev)  chev.textContent  = '▸';
   }
-
-  userHeader.addEventListener('click', function(e) {
-    // Don't interfere with raw/copy buttons
-    if (e.target.closest('.turn-actions')) return;
-    // Prevent the user details from toggling (we're hijacking the click for thread fold)
-    e.preventDefault();
-    thread.classList.toggle('folded');
-  });
 });
+
+// z keybinding toggles the thread fold under the current scroll position.
+// Finds the visible thread whose top is nearest the viewport top and
+// clicks its fold-toggle button.
+function toggleNearestThreadFold() {
+  const threads = document.querySelectorAll('.thread');
+  if (threads.length === 0) return;
+  const viewTop = window.scrollY + 80;
+  let best = null;
+  let bestDist = Infinity;
+  threads.forEach(t => {
+    const rect = t.getBoundingClientRect();
+    const top = rect.top + window.scrollY;
+    if (top <= viewTop + 200) {
+      const d = Math.abs(top - viewTop);
+      if (d < bestDist) { bestDist = d; best = t; }
+    }
+  });
+  if (!best) return;
+  const btn = best.querySelector('.fold-toggle');
+  if (btn) btn.click();
+}
 
 const btnExport = document.getElementById('btn-export');
 const exportMenu = document.getElementById('export-menu');
@@ -6192,7 +6418,9 @@ if (btnExport && exportMenu) {
   });
 }
 
-// Auto-scroll: jump to hash target, reload if hidden, or scroll to bottom
+// Auto-scroll: jump to hash target on load, reload with full history
+// if the target is hidden inside a progressive-loaded section, or
+// scroll to bottom when there's no hash.
 function jumpToHashTarget() {
   const hash = window.location.hash;
   if (!hash || !hash.startsWith('#msg-')) {
@@ -6200,40 +6428,18 @@ function jumpToHashTarget() {
     return;
   }
 
-  const msgEl = document.querySelector(hash);
-  if (!msgEl) {
-    // Target not in DOM. If progressive loading is active, reload with full history.
-    // Preserves hash via URL object; uses replace() so the broken page doesn't pollute history.
-    if (document.getElementById('load-earlier')) {
-      const url = new URL(window.location.href);
-      url.searchParams.set('all', '1');
-      window.location.replace(url.toString());
-    }
-    return;
-  }
-
-  // Walk up from the target, opening any ancestor details and unfolding any folded threads
-  let node = msgEl;
-  while (node) {
-    if (node.tagName === 'DETAILS') {
-      node.open = true;
-      node.setAttribute('open', '');
-    }
-    if (node.classList && node.classList.contains('thread') && node.classList.contains('folded')) {
-      node.classList.remove('folded');
-    }
-    node = node.parentElement;
-  }
-
-  // Expand details inside the target too, so inner content is visible
-  msgEl.querySelectorAll('details').forEach(d => { d.open = true; d.setAttribute('open', ''); });
-
-  msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  msgEl.style.animation = 'flash 0.8s';
-
   const msgId = hash.replace('#msg-', '');
-  const navItem = document.querySelector('.nav-item[data-msg="' + msgId + '"]');
-  if (navItem) navItem.classList.add('active');
+  if (jumpToAnchor(msgId)) return;
+
+  // Target not in DOM — the load-earlier escape hatch is our last
+  // resort: reload with ?all=1 so the full history renders, then the
+  // browser re-runs this handler after load and the jumpToAnchor call
+  // above will find the element.
+  if (document.getElementById('load-earlier')) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('all', '1');
+    window.location.replace(url.toString());
+  }
 }
 setTimeout(jumpToHashTarget, 150);
 
@@ -6264,6 +6470,11 @@ const timelineTicks = timelineTicksRaw.map(el => {
     cumulative: el.dataset.cumulative || '',
     tokens:     el.dataset.tokens || '',
     index:      el.dataset.index || '',
+    clock:      el.dataset.clock || '',
+    duration:   el.dataset.duration || '',
+    subagents:  parseInt(el.dataset.subagents || '0', 10) || 0,
+    skills:     parseInt(el.dataset.skills || '0', 10) || 0,
+    tools:      parseInt(el.dataset.tools || '0', 10) || 0,
     pct:        pct,
   };
 }).sort((a, b) => a.pct - b.pct);
@@ -6357,21 +6568,38 @@ function updateTimelineCurrent() {
 function showTooltip(tick, clientY) {
   if (!timelineTooltip || !tick) return;
 
-  // Content
-  const kindEl = timelineTooltip.querySelector('.tt-kind');
-  const offsetEl = timelineTooltip.querySelector('.tt-offset');
-  const indexEl = timelineTooltip.querySelector('.tt-index');
-  const snippetEl = timelineTooltip.querySelector('.tt-snippet');
-  const costEl = timelineTooltip.querySelector('.tt-cost');
-  const cumEl = timelineTooltip.querySelector('.tt-cum');
-  const tokensEl = timelineTooltip.querySelector('.tt-tokens');
-  if (kindEl) kindEl.textContent = tick.kind;
-  if (offsetEl) offsetEl.textContent = tick.offset ? '+' + tick.offset : '';
-  if (indexEl) indexEl.textContent = tick.index ? 'turn ' + tick.index : '';
-  if (snippetEl) snippetEl.textContent = tick.snippet || '(no preview)';
-  if (costEl) costEl.textContent = tick.cost || '';
-  if (cumEl) cumEl.textContent = tick.cumulative ? 'so far ' + tick.cumulative : '';
-  if (tokensEl) tokensEl.textContent = tick.tokens || '';
+  const clockEl    = timelineTooltip.querySelector('.tt-clock');
+  const offsetEl   = timelineTooltip.querySelector('.tt-offset');
+  const indexEl    = timelineTooltip.querySelector('.tt-index');
+  const durationEl = timelineTooltip.querySelector('.tt-duration');
+  const snippetEl  = timelineTooltip.querySelector('.tt-snippet');
+  const costEl     = timelineTooltip.querySelector('.tt-cost');
+  const cumEl      = timelineTooltip.querySelector('.tt-cum');
+  const tokensEl   = timelineTooltip.querySelector('.tt-tokens');
+  const badgesEl   = timelineTooltip.querySelector('.tt-badges');
+
+  if (clockEl)    clockEl.textContent    = tick.clock || '';
+  if (indexEl)    indexEl.textContent    = tick.index ? 'exchange ' + tick.index : '';
+  if (offsetEl)   offsetEl.textContent   = tick.offset || '';
+  if (durationEl) durationEl.textContent = tick.duration || '';
+  if (snippetEl)  snippetEl.textContent  = tick.snippet || '(no preview)';
+  if (costEl)     costEl.textContent     = tick.cost || '';
+  if (cumEl)      cumEl.textContent      = tick.cumulative ? 'so far ' + tick.cumulative : '';
+  if (tokensEl)   tokensEl.textContent   = tick.tokens || '';
+
+  if (badgesEl) {
+    const parts = [];
+    if (tick.subagents > 0) {
+      parts.push('<span class="badge badge-subagent">⎇ ' + tick.subagents + ' ' + (tick.subagents === 1 ? 'subagent' : 'subagents') + '</span>');
+    }
+    if (tick.skills > 0) {
+      parts.push('<span class="badge badge-skill">✦ ' + tick.skills + ' ' + (tick.skills === 1 ? 'skill' : 'skills') + '</span>');
+    }
+    if (tick.tools > 0) {
+      parts.push('<span class="badge badge-tool">◈ ' + tick.tools + ' ' + (tick.tools === 1 ? 'tool' : 'tools') + '</span>');
+    }
+    badgesEl.innerHTML = parts.join('<span class="badge-sep"> · </span>');
+  }
 
   timelineTooltip.className = 'timeline-tooltip kind-' + tick.kind + ' show';
 
@@ -6450,7 +6678,14 @@ function handleRailEnter() {
 function handleRailClick(e) {
   if (!currentNearest) return;
   e.preventDefault();
-  window.location.hash = '#msg-' + currentNearest.uuid;
+  // Update hash so the URL is shareable, but route the actual scroll
+  // through jumpToAnchor so ancestor unfold + flash + sidebar active
+  // state all happen consistently with outline clicks.
+  const uuid = currentNearest.uuid;
+  if (uuid) {
+    history.replaceState(null, '', '#msg-' + uuid);
+    jumpToAnchor(uuid);
+  }
 }
 
 if (timelineRail) {
@@ -6487,7 +6722,8 @@ function jumpTickRelative(delta) {
   }
   const target = timelineTicks[idx];
   if (target && target.uuid) {
-    window.location.hash = '#msg-' + target.uuid;
+    history.replaceState(null, '', '#msg-' + target.uuid);
+    jumpToAnchor(target.uuid);
   }
 }
 
@@ -6504,6 +6740,7 @@ document.addEventListener('keydown', function(e) {
     case 'r': document.getElementById('tb-refresh')?.click(); break;
     case '[': jumpTickRelative(-1); e.preventDefault(); break;
     case ']': jumpTickRelative(1); e.preventDefault(); break;
+    case 'z': toggleNearestThreadFold(); e.preventDefault(); break;
   }
 });
 
