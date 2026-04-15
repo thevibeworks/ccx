@@ -71,6 +71,88 @@ func TestHandleIndex_NotFoundForOtherPaths(t *testing.T) {
 	}
 }
 
+// TestHandleIndex_NotFoundRendersReportBugPage — when the handler
+// returns a 404 to a human-facing route, the body should be the
+// styled "report a bug" page, not net/http's plain text default.
+// The page must include the failing URL AND a pre-filled GitHub
+// issue link so users can report breakage in one click.
+func TestHandleIndex_NotFoundRendersReportBugPage(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/totally-not-a-route", nil)
+	w := httptest.NewRecorder()
+	handleIndex(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	body := w.Body.String()
+
+	// Must be the styled page, not net/http's default "404 page not found\n".
+	if !strings.Contains(body, "nf-box") {
+		t.Error("response missing styled .nf-box container")
+	}
+	if !strings.Contains(body, "Report this bug") {
+		t.Error("response missing 'Report this bug' CTA")
+	}
+	// The pre-filled issue URL must point at the ccx repo.
+	if !strings.Contains(body, "github.com/thevibeworks/ccx/issues/new") {
+		t.Error("response missing github issue link")
+	}
+	// The failing URL must be visible so the user (and the maintainer
+	// reading the bug report) can see what was attempted.
+	if !strings.Contains(body, "/totally-not-a-route") {
+		t.Error("response missing the failing URL in the body")
+	}
+	// The issue title/body parameters must include the failing URL
+	// URL-encoded. %2F = "/" means the path shows up in the query
+	// string.
+	if !strings.Contains(body, "totally-not-a-route") {
+		t.Error("issue body missing failing path")
+	}
+}
+
+// TestHandleSession_NotFoundRendersReportBugPageWithSessionDetail —
+// when a session lookup fails, the 404 page's detail line should
+// mention the session and project so users (and maintainers reading
+// a bug report) know what was being looked for.
+func TestHandleSession_NotFoundRendersReportBugPageWithSessionDetail(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-no-such-project/019d8f43-8d53-7263-8e70-7729495e2b95", nil)
+	w := httptest.NewRecorder()
+	handleSession(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Can't find this session") {
+		t.Errorf("missing session headline, got: %s", truncateForLog(body))
+	}
+	if !strings.Contains(body, "019d8f43-8d5") {
+		t.Errorf("detail line should include truncated session id, got: %s", truncateForLog(body))
+	}
+	if !strings.Contains(body, "-no-such-project") {
+		t.Errorf("detail line should include project name, got: %s", truncateForLog(body))
+	}
+	if !strings.Contains(body, "github.com/thevibeworks/ccx/issues/new") {
+		t.Error("response missing github issue link")
+	}
+}
+
+func truncateForLog(s string) string {
+	if len(s) > 400 {
+		return s[:400] + "…"
+	}
+	return s
+}
+
 func TestHandleAPIProjects(t *testing.T) {
 	dir := setupTestDir(t)
 	setTestBackend(dir)

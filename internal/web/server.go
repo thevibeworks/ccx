@@ -137,7 +137,7 @@ func logRequest(next http.Handler) http.Handler {
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+		renderNotFoundPage(w, r, "page", "no ccx route matches "+r.URL.Path)
 		return
 	}
 
@@ -215,7 +215,7 @@ func handleProject(w http.ResponseWriter, r *http.Request) {
 
 	project, err := sessionProvider.FindProject(encodedName)
 	if err != nil || project == nil {
-		http.NotFound(w, r)
+		renderNotFoundPage(w, r, "project", "no project matches "+encodedName)
 		return
 	}
 
@@ -269,14 +269,19 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/session/")
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) != 2 {
-		http.NotFound(w, r)
+		renderNotFoundPage(w, r, "session", "URL should be /session/<project>/<session-id>")
 		return
 	}
 
 	projectName, sessionID := parts[0], parts[1]
 	session, err := sessionProvider.FindSession(projectName, sessionID)
 	if err != nil || session == nil {
-		http.NotFound(w, r)
+		short := sessionID
+		if len(short) > 12 {
+			short = short[:12] + "…"
+		}
+		detail := fmt.Sprintf("couldn't resolve session %s in project %s", short, projectName)
+		renderNotFoundPage(w, r, "session", detail)
 		return
 	}
 
