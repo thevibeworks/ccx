@@ -66,6 +66,17 @@ func (m *Multi) Homes() []string {
 	return homes
 }
 
+// DiscoverProjects returns the agent-level projects across all
+// backends, merged by CANONICAL workspace path. Two backends that
+// both know about the same real cwd produce one merged Project —
+// even if the encoded-name differs or case/symlinks drift.
+//
+// The merge key used to be Project.EncodedName, which silently split
+// the same real directory into multiple rows whenever macOS case
+// drift, a trailing slash, or a symlink snuck in between two agents.
+// Now the key is parser.CanonicalizeWorkspacePath of the cwd, which
+// is what a user actually means when they think "the project I'm
+// working in".
 func (m *Multi) DiscoverProjects() ([]*parser.Project, error) {
 	merged := make(map[string]*parser.Project)
 
@@ -76,11 +87,19 @@ func (m *Multi) DiscoverProjects() ([]*parser.Project, error) {
 		}
 
 		for _, p := range projects {
-			key := p.EncodedName
+			// Pick the best cwd source for this provider-level project
+			// before computing a canonical merge key. Fall back to the
+			// old encoded-name key when the project truly has no cwd
+			// (shouldn't happen but defends against corrupt metadata).
+			cp := *p
+			cp.Path = projectLookupPath(&cp)
+			key := parser.CanonicalizeWorkspacePath(cp.Path)
+			if key == "" {
+				key = cp.EncodedName
+			}
+
 			existing := merged[key]
 			if existing == nil {
-				cp := *p
-				cp.Path = projectLookupPath(&cp)
 				merged[key] = &cp
 				continue
 			}
@@ -89,6 +108,7 @@ func (m *Multi) DiscoverProjects() ([]*parser.Project, error) {
 			if p.LastModified.After(existing.LastModified) {
 				existing.LastModified = p.LastModified
 			}
+			// Merged row is no longer provider-specific
 			existing.Provider = ""
 			existing.Path = projectLookupPath(existing)
 		}
@@ -107,6 +127,19 @@ func (m *Multi) DiscoverProjects() ([]*parser.Project, error) {
 	})
 
 	return projects, nil
+}
+
+// DiscoverWorkspaces returns the canonicalized top-level Workspace
+// objects. Each Workspace groups one or more agent-level Projects
+// that share the same real directory. Use this for sidebar-style
+// navigation that wants to show "one row per place you've been
+// working" rather than "one row per backend encoding."
+func (m *Multi) DiscoverWorkspaces() ([]*parser.Workspace, error) {
+	projects, err := m.DiscoverProjects()
+	if err != nil {
+		return nil, err
+	}
+	return parser.GroupProjectsByWorkspace(projects), nil
 }
 
 func (m *Multi) FindProject(name string) (*parser.Project, error) {
