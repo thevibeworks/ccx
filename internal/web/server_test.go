@@ -155,6 +155,34 @@ func truncateForLog(s string) string {
 	return s
 }
 
+// TestFoldToggle_FloatsOnThreadLine asserts the fold-toggle CSS
+// positions the button as a sticky, sliding pill on the thread's
+// vertical line — not as a static chip at the top of the responses
+// column. Guards against the CSS regressing back to the old
+// inline-flex chip that sat in the content flow.
+func TestFoldToggle_FloatsOnThreadLine(t *testing.T) {
+	css := cssStyles()
+	if !strings.Contains(css, ".fold-toggle {\n  position: sticky;") {
+		t.Error("fold-toggle must be position:sticky so it floats on the thread's vertical line")
+	}
+	if !strings.Contains(css, "margin: 0 0 8px -20px;") {
+		t.Error("fold-toggle negative left margin must pull the button over the vertical line")
+	}
+	// Must have the slide-out max-width transition so the button
+	// reveals its label on hover.
+	if !strings.Contains(css, "transition: max-width") {
+		t.Error("fold-toggle should animate max-width for the slide-out reveal")
+	}
+	if !strings.Contains(css, ".fold-toggle:hover") || !strings.Contains(css, "max-width: 220px;") {
+		t.Error("fold-toggle:hover must expand max-width to reveal the full label")
+	}
+	// Folded-thread class should brighten the vertical line so the
+	// thread reads as "something collapsed here".
+	if !strings.Contains(css, ".thread.folded > .thread-responses") || !strings.Contains(css, "border-left-color: var(--primary);") {
+		t.Error("folded thread should tint the vertical line with --primary")
+	}
+}
+
 // TestCliSpinnerLayout_FixedWidth asserts the spinner CSS pins the
 // icon to a stable screen position — icon absolute-positioned at
 // left, block with a fixed width — so rotating the verb doesn't make

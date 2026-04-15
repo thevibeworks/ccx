@@ -1056,6 +1056,27 @@ func isActiveTool(name string) bool {
 
 // renderToolInput renders tool input in a formatted way
 func renderToolInput(b *strings.Builder, toolName string, input any) {
+	// ApplyPatch handles a RAW STRING input (the patch body itself)
+	// before the map-type check, because unlike every other tool its
+	// input isn't a JSON object — it's the patch text directly.
+	if toolName == "ApplyPatch" || toolName == "apply_patch" {
+		if s, ok := input.(string); ok && s != "" {
+			b.WriteString(`<pre class="tool-input apply-patch">`)
+			b.WriteString(html.EscapeString(s))
+			b.WriteString(`</pre>`)
+			return
+		}
+		if m, ok := input.(map[string]any); ok {
+			if changes, ok := m["changes"]; ok {
+				inputJSON, _ := json.MarshalIndent(changes, "", "  ")
+				b.WriteString(`<pre class="tool-input apply-patch">`)
+				b.WriteString(html.EscapeString(string(inputJSON)))
+				b.WriteString(`</pre>`)
+				return
+			}
+		}
+	}
+
 	m, ok := input.(map[string]any)
 	if !ok {
 		inputJSON, _ := json.MarshalIndent(input, "", "  ")
@@ -1064,6 +1085,89 @@ func renderToolInput(b *strings.Builder, toolName string, input any) {
 	}
 
 	switch toolName {
+	case "Bash":
+		// Two supported shapes: Claude Code uses {command, description,
+		// timeout}; Codex's exec_command (normalized → Bash) uses
+		// {cmd, workdir, max_output_tokens}. Pick whichever is present.
+		b.WriteString(`<div class="bash-call">`)
+		cmd := ""
+		if v, ok := m["command"].(string); ok && v != "" {
+			cmd = v
+		} else if v, ok := m["cmd"].(string); ok && v != "" {
+			cmd = v
+		} else if argv, ok := m["argv"].([]any); ok {
+			parts := make([]string, 0, len(argv))
+			for _, a := range argv {
+				if s, ok := a.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+			cmd = strings.Join(parts, " ")
+		}
+		if cmd != "" {
+			b.WriteString(`<pre class="bash-cmd">$ `)
+			b.WriteString(html.EscapeString(cmd))
+			b.WriteString(`</pre>`)
+		}
+		if wd, ok := m["workdir"].(string); ok && wd != "" {
+			b.WriteString(fmt.Sprintf(`<div class="bash-meta">cwd: <code>%s</code></div>`, html.EscapeString(wd)))
+		} else if wd, ok := m["cwd"].(string); ok && wd != "" {
+			b.WriteString(fmt.Sprintf(`<div class="bash-meta">cwd: <code>%s</code></div>`, html.EscapeString(wd)))
+		}
+		if desc, ok := m["description"].(string); ok && desc != "" {
+			b.WriteString(fmt.Sprintf(`<div class="bash-desc">%s</div>`, html.EscapeString(desc)))
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "UpdatePlan", "update_plan":
+		// Codex's plan tool. Input shape:
+		//   {explanation: "...", plan: [{step: "...", status: "pending|in_progress|completed"}]}
+		b.WriteString(`<div class="update-plan">`)
+		if exp, ok := m["explanation"].(string); ok && exp != "" {
+			b.WriteString(fmt.Sprintf(`<div class="plan-exp">%s</div>`, html.EscapeString(exp)))
+		}
+		if plan, ok := m["plan"].([]any); ok {
+			b.WriteString(`<ul class="plan-steps">`)
+			for _, item := range plan {
+				pm, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				step, _ := pm["step"].(string)
+				status, _ := pm["status"].(string)
+				icon := "○"
+				cls := "plan-pending"
+				if status == "completed" {
+					icon = "✓"
+					cls = "plan-done"
+				} else if status == "in_progress" {
+					icon = "◐"
+					cls = "plan-active"
+				}
+				b.WriteString(fmt.Sprintf(`<li class="%s"><span class="plan-icon">%s</span><span class="plan-text">%s</span></li>`,
+					cls, icon, html.EscapeString(step)))
+			}
+			b.WriteString(`</ul>`)
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "WriteStdin", "write_stdin":
+		b.WriteString(`<div class="stdin-call">`)
+		if sid, ok := m["session_id"]; ok {
+			b.WriteString(fmt.Sprintf(`<span class="stdin-sid">session %v</span>`, sid))
+		}
+		if chars, ok := m["chars"].(string); ok {
+			if chars == "" {
+				b.WriteString(`<span class="stdin-empty">(empty — poll)</span>`)
+			} else {
+				b.WriteString(fmt.Sprintf(`<pre class="stdin-chars">%s</pre>`, html.EscapeString(chars)))
+			}
+		}
+		b.WriteString(`</div>`)
+		return
+
 	case "Edit":
 		// Show diff-style view for Edit tool
 		b.WriteString(`<div class="edit-diff">`)
@@ -4728,9 +4832,9 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 }
 .thread-responses::before { display: none; }
 
-/* Thread folding — collapse middle responses. One stable button acts
- * as both the fold and unfold handle; clicking the user header does
- * not toggle anything. */
+/* Thread folding — collapse middle responses. The one fold button
+ * FLOATS on the thread's vertical line (the left border of
+ * .thread-responses). Clicking the user header does not toggle. */
 .thread.folded > .thread-responses > .turn:not(:last-child) {
   max-height: 0;
   overflow: hidden;
@@ -4744,40 +4848,99 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   opacity: 1;
   transition: opacity 0.2s;
 }
+/* When folded, brighten the vertical line so the thread reads as
+ * "something is here, collapsed" rather than "this section is
+ * empty". */
+.thread.folded > .thread-responses {
+  border-left-color: var(--primary);
+  border-left-style: solid;
+  min-height: 28px;
+}
 
-/* One stable fold button per thread. Lives at the top of the responses
- * column, never moves, works identically for fold and unfold. */
+/* Floating fold toggle
+ *
+ * Lives absolute-positioned on the thread-responses' left edge, so it
+ * straddles the vertical line the user already associates with "this
+ * thread's body". Default state is a tiny pill with just a chevron +
+ * step count — low profile, doesn't distract from the conversation.
+ * On hover it slides out to the right and reveals the full label
+ * ("collapse" / "expand N steps"). Clicking toggles.
+ *
+ * The button is sticky-positioned INSIDE .thread-responses so long
+ * threads keep it in view as the user scrolls through the responses
+ * column. At the top of the thread it sits at the top of the vertical
+ * line; as the user scrolls down, the button follows down to the top
+ * of the viewport but never leaves its own thread's bounds. */
+.thread-responses { /* make room for the floating button without
+                      displacing content — the button overlaps the
+                      border, not the padding */ }
 .fold-toggle {
+  position: sticky;
+  top: 64px; /* clear the top-nav */
+  left: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin: 4px 0 8px;
-  padding: 3px 10px;
+  margin: 0 0 8px -20px; /* -20px pulls the button left over the
+                             vertical line; padding-left of responses
+                             is 12px + margin 8px = 20px */
+  padding: 3px 8px 3px 6px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 1;
   color: var(--text-muted);
-  background: var(--bg-secondary);
+  background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 999px;
   cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+  z-index: 5;
+  max-width: 24px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 0.2s ease, color 0.12s ease,
+              background 0.12s ease, border-color 0.12s ease,
+              box-shadow 0.12s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
-.fold-toggle:hover {
+.fold-toggle:hover,
+.fold-toggle:focus-visible {
   color: var(--text);
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   border-color: var(--primary);
+  max-width: 220px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
 }
+.fold-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .fold-toggle .fold-chevron {
   display: inline-block;
   font-size: 10px;
   line-height: 1;
+  width: 10px;
+  text-align: center;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
 }
-.fold-toggle .fold-label { letter-spacing: 0.2px; }
-.fold-toggle .fold-summary::before {
-  content: attr(data-count);
+.fold-toggle[aria-expanded="false"] .fold-chevron {
+  color: var(--primary);
+}
+.fold-toggle .fold-label {
+  letter-spacing: 0.2px;
+  padding-left: 6px;
+}
+.fold-toggle .fold-summary {
+  font-size: 9px;
   opacity: 0.7;
-  font-size: 10px;
-  margin-left: 2px;
+  padding-left: 6px;
+}
+/* When folded, a subtle pulse draws attention to the floating
+ * button so users discover the affordance on long sessions. Runs
+ * only until first hover. */
+@keyframes fold-hint {
+  0%, 100% { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 18%, transparent); }
+}
+.thread.folded > .thread-responses > .fold-toggle[aria-expanded="false"]:not(:hover):not(:focus-visible) {
+  animation: fold-hint 2.4s ease-in-out 1;
 }
 
 /* Level indentation */
@@ -6538,59 +6701,53 @@ function toggleWatch() {
 if (btnWatch) btnWatch.addEventListener('click', toggleWatch);
 if (tbWatch) tbWatch.addEventListener('click', toggleWatch);
 
-// Thread folding — one stable button per thread.
+// Thread folding — one floating button per thread.
 //
-// The old model had three problems:
-//   1. Fold affordance lived in the thread header (+/-)
-//   2. Unfold affordance lived in a pill in the middle of the thread
-//   3. Clicking the user header also tried to hijack the details toggle
-//
-// The new model has ONE button in a fixed position: between the user
-// turn and its responses. It always says either "collapse N steps" or
-// "expand N steps · $cost · 41k tok", never moves, and both directions
-// read from the same target. The button is the ONLY fold affordance —
-// clicking the user header no longer does anything folding-related.
+// The button is sticky-positioned over the thread's vertical line
+// (see .fold-toggle CSS). Default state collapses threads that have
+// ANY intermediate response (2+ turns in the responses column), so
+// long sessions don't greet users with a wall of tool calls. The
+// button reveals its full label on hover/focus; a one-shot pulse
+// animation on first render draws the eye to it.
 document.querySelectorAll('.thread').forEach(thread => {
   const responses = thread.querySelector('.thread-responses');
   if (!responses) return;
   const turns = responses.querySelectorAll('.turn');
   if (turns.length <= 1) return;
 
+  const hiddenWhenFolded = turns.length - 1;
+
   const fold = document.createElement('button');
   fold.type = 'button';
   fold.className = 'fold-toggle';
-  fold.setAttribute('aria-expanded', 'true');
-  const stepCount = turns.length;
-  const summary = '' + (stepCount - 1) + ' hidden';
+  fold.title = 'Toggle thread (z)';
   fold.innerHTML =
-    '<span class="fold-chevron" aria-hidden="true">▾</span>' +
-    '<span class="fold-label">collapse</span>' +
-    '<span class="fold-summary" data-count="' + summary + '"></span>';
-  fold.addEventListener('click', function(e) {
-    e.preventDefault();
-    const folded = thread.classList.toggle('folded');
+    '<span class="fold-chevron" aria-hidden="true">▸</span>' +
+    '<span class="fold-label">expand</span>' +
+    '<span class="fold-summary">' + hiddenWhenFolded + ' steps</span>';
+
+  const applyState = function(folded) {
+    thread.classList.toggle('folded', folded);
     fold.setAttribute('aria-expanded', folded ? 'false' : 'true');
     const label = fold.querySelector('.fold-label');
     const chev  = fold.querySelector('.fold-chevron');
     if (label) label.textContent = folded ? 'expand' : 'collapse';
     if (chev)  chev.textContent  = folded ? '▸' : '▾';
+  };
+
+  fold.addEventListener('click', function(e) {
+    e.preventDefault();
+    applyState(!thread.classList.contains('folded'));
   });
 
-  // Insert the button between the user turn and the responses, at a
-  // stable position that never moves whether the thread is folded or
-  // not. When folded, the button is the ONLY thing between the user
-  // prompt and the final response.
+  // Insert as the first child of .thread-responses so the button
+  // sits at the TOP of the vertical line, overlapping its left edge.
   responses.insertBefore(fold, responses.firstChild);
 
-  // Threads with more than two responses default to folded.
-  if (turns.length > 2) {
-    thread.classList.add('folded');
-    fold.setAttribute('aria-expanded', 'false');
-    const label = fold.querySelector('.fold-label');
-    const chev  = fold.querySelector('.fold-chevron');
-    if (label) label.textContent = 'expand';
-    if (chev)  chev.textContent  = '▸';
-  }
+  // Default: fold any thread with intermediate responses. A single
+  // user→one-reply thread (turns.length === 1) doesn't even get a
+  // fold button (handled by the early return above).
+  applyState(turns.length >= 2);
 });
 
 // z keybinding toggles the thread fold under the current scroll position.
