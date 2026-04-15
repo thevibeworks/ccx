@@ -101,3 +101,34 @@ func TestRenderConversationNav_HiddenCountExcludesSummary(t *testing.T) {
 		t.Errorf("expected '+6 more' marker (summary preserved separately), got: %s", out)
 	}
 }
+
+func TestRenderConversationNav_SplitsTitleAndExpand(t *testing.T) {
+	// The new DOM: each Exchange group has a .nav-title anchor and a
+	// .nav-expand button. No <summary>, no <details>. Clicking the
+	// title jumps; clicking the button toggles. Two distinct targets
+	// mean no more conflicting click handlers.
+	roots := buildToolHeavyTurn(3)
+	var b strings.Builder
+	renderConversationNav(&b, roots)
+	out := b.String()
+
+	if !strings.Contains(out, `class="nav-group"`) {
+		t.Error("expected .nav-group container")
+	}
+	if !strings.Contains(out, `data-expanded="true"`) {
+		t.Error("expected data-expanded attribute on nav-group")
+	}
+	if !strings.Contains(out, `class="nav-expand"`) {
+		t.Error("expected separate nav-expand button")
+	}
+	if !strings.Contains(out, `aria-expanded="true"`) {
+		t.Error("expected aria-expanded on nav-expand button")
+	}
+	if !strings.Contains(out, `nav-item nav-title`) {
+		t.Error("expected separate nav-title anchor")
+	}
+	// Crucially: no <summary> or <details>.
+	if strings.Contains(out, `<summary`) || strings.Contains(out, `<details`) {
+		t.Error("new nav should not use <details>/<summary> (conflicts with click handler)")
+	}
+}
