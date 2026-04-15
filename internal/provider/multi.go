@@ -152,16 +152,59 @@ func (m *Multi) FindProject(name string) (*parser.Project, error) {
 	}
 
 	query := strings.ToLower(strings.TrimSpace(name))
+	if query == "" {
+		return nil, nil
+	}
+
+	// Pass 1: exact match against the merged row's display name or
+	// the winner-take-all EncodedName.
 	for _, p := range projects {
 		if strings.ToLower(p.Name) == query || strings.ToLower(p.EncodedName) == query {
 			return p, nil
 		}
+	}
+
+	// Pass 2: match by canonical-path equivalence. A URL built from
+	// Claude Code's encoded name (e.g. "-Users-eric-foo") needs to
+	// find the same row when the row merged sessions from Codex
+	// (whose backend uses a different encoding). We canonicalise the
+	// incoming query and compare to the merged row's canonical form.
+	queryCanonical := parser.CanonicalizeWorkspacePath(decodeEncodedProjectName(name))
+	if queryCanonical != "" {
+		for _, p := range projects {
+			if parser.CanonicalizeWorkspacePath(p.Path) == queryCanonical {
+				return p, nil
+			}
+		}
+	}
+
+	// Pass 3: substring match — preserves the old fuzzy-find behaviour
+	// for `ccx view` interactive pickers.
+	for _, p := range projects {
 		if strings.Contains(strings.ToLower(p.Name), query) || strings.Contains(strings.ToLower(p.Path), query) {
 			return p, nil
 		}
 	}
 
 	return nil, nil
+}
+
+// decodeEncodedProjectName reverses the agent-side cwd encoding as
+// best we can. Both Claude Code and Codex replace "/" with "-", but
+// Claude Code also replaces "_" and "." with "-" (non-reversible)
+// while Codex uses parser.EncodePath (reversible only for "/"). We
+// accept whichever form comes in on the URL and produce a path that
+// canonicalises the same as the stored cwd, so URL matching works
+// regardless of which backend's encoding the caller used.
+func decodeEncodedProjectName(encoded string) string {
+	if encoded == "" {
+		return ""
+	}
+	s := strings.ReplaceAll(encoded, "-", "/")
+	if !strings.HasPrefix(s, "/") {
+		s = "/" + s
+	}
+	return s
 }
 
 func projectLookupPath(project *parser.Project) string {
@@ -176,7 +219,30 @@ func projectLookupPath(project *parser.Project) string {
 	return filepath.Clean(project.Path)
 }
 
+// FindSession resolves (projectName, sessionID) → *Session across
+// both the direct per-backend path AND the merged-discovery path.
+//
+// Why two paths:
+//
+// Each backend (Claude Code, Codex) encodes the cwd differently.
+// Claude Code uses the real on-disk folder name from ~/.claude/
+// projects/ (leading dash, "_"/"." replaced with "-"). Codex uses
+// parser.EncodePath (no leading dash, "_" preserved). For the same
+// real directory, the two encodings are not equal strings.
+//
+// Multi.DiscoverProjects merges the two into one row keyed on
+// CanonicalizeWorkspacePath — correct. But the merged row can only
+// carry ONE EncodedName (whichever backend lands first), so URLs
+// built from that merged row use just one backend's encoding. When
+// the URL targets a session from the OTHER backend, per-backend
+// FindSession lookups miss it because its encoding doesn't match.
+//
+// Fix: try each backend directly first (fast path, preserves old
+// behaviour for non-merged cases), then fall back to the merged
+// project list and find the session by ID within any Sessions slice
+// whose merged project matches `projectName` via FindProject.
 func (m *Multi) FindSession(projectName, sessionID string) (*parser.Session, error) {
+	// Fast path: each backend's direct lookup.
 	for _, b := range m.backends {
 		session, err := b.FindSession(projectName, sessionID)
 		if err != nil {
@@ -186,7 +252,49 @@ func (m *Multi) FindSession(projectName, sessionID string) (*parser.Session, err
 			return session, nil
 		}
 	}
+
+	// Fallback: search the merged discovery list. This is what makes
+	// cross-agent Workspace URLs resolvable.
+	if sessionID == "" {
+		return nil, nil
+	}
+	project, err := m.FindProject(projectName)
+	if err != nil {
+		return nil, err
+	}
+	if project != nil {
+		if s := findSessionInProject(project, sessionID); s != nil {
+			return s, nil
+		}
+	}
+
+	// Last resort: session ID might be unique across the whole index
+	// even when the project lookup drifted. Scan everything.
+	projects, err := m.DiscoverProjects()
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range projects {
+		if s := findSessionInProject(p, sessionID); s != nil {
+			return s, nil
+		}
+	}
 	return nil, nil
+}
+
+func findSessionInProject(p *parser.Project, sessionID string) *parser.Session {
+	if p == nil {
+		return nil
+	}
+	for _, s := range p.Sessions {
+		if s == nil {
+			continue
+		}
+		if s.ID == sessionID || strings.HasPrefix(s.ID, sessionID) {
+			return s
+		}
+	}
+	return nil
 }
 
 func (m *Multi) ParseSession(filePath string) (*parser.Session, error) {
