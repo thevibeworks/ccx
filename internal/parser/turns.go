@@ -24,6 +24,7 @@ type TurnStats struct {
 	OutputTokens      int
 	CacheReadTokens   int
 	CacheCreateTokens int
+	ReasoningTokens   int
 	CostUSD           float64 // Sum of per-message cost across the turn
 
 	MessageCount  int // Total messages in the turn (anchor + assistants + tools + sidechains)
@@ -31,12 +32,12 @@ type TurnStats struct {
 	HasSidechain  bool
 }
 
-// TotalTokens returns the sum of all four token categories for the turn.
+// TotalTokens returns the sum of all token categories for the turn.
 func (t *TurnStats) TotalTokens() int {
 	if t == nil {
 		return 0
 	}
-	return t.InputTokens + t.OutputTokens + t.CacheReadTokens + t.CacheCreateTokens
+	return t.InputTokens + t.OutputTokens + t.CacheReadTokens + t.CacheCreateTokens + t.ReasoningTokens
 }
 
 // ComputeTurnStats walks a flat, session-ordered slice of messages and
@@ -105,6 +106,7 @@ func ComputeTurnStats(messages []*Message) []*TurnStats {
 			current.OutputTokens += msg.Usage.OutputTokens
 			current.CacheReadTokens += msg.Usage.CacheReadTokens
 			current.CacheCreateTokens += msg.Usage.CacheCreateTokens
+			current.ReasoningTokens += msg.Usage.ReasoningTokens
 			current.CostUSD += msg.Usage.CostUSD
 		}
 	}
@@ -118,6 +120,9 @@ func ComputeTurnStats(messages []*Message) []*TurnStats {
 // and slash commands are anchors. Tool results, compact summaries, and
 // meta messages are not — they belong to the surrounding turn.
 func isTurnAnchor(msg *Message) bool {
+	if msg == nil || msg.IsSidechain {
+		return false
+	}
 	switch msg.Kind {
 	case KindUserPrompt, KindCommand:
 		return true

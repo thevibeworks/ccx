@@ -126,6 +126,9 @@ func TestParseSessionBuildsUsableTranscript(t *testing.T) {
 	if session.Stats.InputTokens != 10 || session.Stats.CacheReadTokens != 2 || session.Stats.OutputTokens != 5 {
 		t.Fatalf("unexpected token stats: %+v", session.Stats)
 	}
+	if session.Stats.CostUSD <= 0 {
+		t.Fatalf("session.Stats.CostUSD = %v, want > 0", session.Stats.CostUSD)
+	}
 	if len(session.RootMessages) != 1 {
 		t.Fatalf("len(session.RootMessages) = %d, want 1", len(session.RootMessages))
 	}
@@ -148,6 +151,21 @@ func TestParseSessionBuildsUsableTranscript(t *testing.T) {
 	}
 	if root.Children[3].Content[0].Text != "done" {
 		t.Fatalf("root.Children[3].Content[0].Text = %q, want %q", root.Children[3].Content[0].Text, "done")
+	}
+	if root.Children[3].Usage == nil {
+		t.Fatal("assistant message missing Usage after trailing token_count")
+	}
+	if root.Children[3].Usage.CostUSD <= 0 {
+		t.Fatalf("assistant message CostUSD = %v, want > 0", root.Children[3].Usage.CostUSD)
+	}
+	var sumCost float64
+	for _, child := range root.Children {
+		if child.Usage != nil {
+			sumCost += child.Usage.CostUSD
+		}
+	}
+	if session.Stats.CostUSD != sumCost {
+		t.Fatalf("session.Stats.CostUSD = %v, want %v", session.Stats.CostUSD, sumCost)
 	}
 }
 

@@ -278,6 +278,54 @@ func TestExecMarkdown_EmitsPerTurnCostWhenPriced(t *testing.T) {
 	}
 }
 
+func TestExecMarkdown_KeepsSidechainPromptsInsideParentTurn(t *testing.T) {
+	start := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+	session := &parser.Session{
+		ID:        "sidechain-exec",
+		StartTime: start,
+		EndTime:   start.Add(3 * time.Second),
+		RootMessages: []*parser.Message{
+			{
+				UUID:      "u1",
+				Kind:      parser.KindUserPrompt,
+				Timestamp: start,
+				Content:   []parser.ContentBlock{{Type: "text", Text: "dispatch an agent"}},
+				Children: []*parser.Message{
+					{
+						UUID:      "a1",
+						Kind:      parser.KindAssistant,
+						Timestamp: start.Add(time.Second),
+						Content:   []parser.ContentBlock{{Type: "text", Text: "launching"}},
+					},
+					{
+						UUID:        "s1",
+						Kind:        parser.KindUserPrompt,
+						IsSidechain: true,
+						Timestamp:   start.Add(2 * time.Second),
+						Content:     []parser.ContentBlock{{Type: "text", Text: "subagent task"}},
+						Children: []*parser.Message{
+							{
+								UUID:        "s2",
+								Kind:        parser.KindAssistant,
+								IsSidechain: true,
+								Model:       "claude-sonnet-4-5",
+								Timestamp:   start.Add(3 * time.Second),
+								Content:     []parser.ContentBlock{{Type: "text", Text: "subagent done"}},
+								Usage:       &parser.MessageUsage{InputTokens: 200, OutputTokens: 100, CostUSD: 0.01},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	out := ExecMarkdown(session)
+	if strings.Count(out, "## Turn ") != 1 {
+		t.Fatalf("expected exactly 1 turn in exec output, got:\n%s", out)
+	}
+}
+
 func TestExport_FormatExecDispatchesToExecMarkdown(t *testing.T) {
 	start := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
 	session := &parser.Session{
