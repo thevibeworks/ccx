@@ -289,6 +289,12 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	}
 	title := fmt.Sprintf("Session %s - ccx", idPrefix)
 	b.WriteString(pageHeader(title, theme))
+	// Hint the current session's provider to the CSS layer so the
+	// loading spinner can pick up a provider-specific accent (e.g.
+	// green for Codex). Non-session pages never set this attribute.
+	if provider := strings.TrimSpace(session.Provider); provider != "" {
+		b.WriteString(fmt.Sprintf(`<script>document.body.dataset.ccxProvider=%q;</script>`, provider))
+	}
 	b.WriteString(renderTopNav(projectName, session.ID))
 	b.WriteString(`<div class="layout session-layout">`)
 
@@ -3657,21 +3663,49 @@ code, pre, .session-id, .model-badge {
 }
 @keyframes spin { to { transform: translateY(-50%) rotate(360deg); } }
 
-/* CLI-style loading spinner */
+/* CLI-style loading spinner.
+ *
+ * Layout invariant: the spinner icon must NOT move horizontally as
+ * the verb changes length. Flex + center + gap lets the whole block
+ * grow/shrink with the verb, which the overlay then re-centers,
+ * which causes the icon to visibly jitter across ~40px as the label
+ * rotates ("Ccxing" → "Flibbertigibbeting" → "Pondering"...).
+ *
+ * Fix: the spinner block is a FIXED-width container with the icon
+ * absolute-positioned at the left edge and the verb text anchored
+ * to a fixed padding-left. Short verbs leave trailing empty space;
+ * long verbs are capped by overflow. The overlay still centers the
+ * whole block, but because the block size is stable, the icon sits
+ * at the same screen coordinate every frame. */
 .cli-spinner {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  position: relative;
+  display: inline-block;
+  width: 220px;
+  padding-left: 26px;
   color: var(--primary);
   font-family: var(--font-mono);
   font-size: 14px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cli-spinner-char {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-block;
-  width: 16px;
+  width: 18px;
   text-align: center;
   animation: cli-spin 0.72s steps(6) infinite;
 }
+/* Codex sessions swap the spinner color to the Codex accent so the
+ * provenance of the session you're viewing is visible even during
+ * a page-load flash. Claude Code sessions (and all non-session
+ * pages) stay on the primary terracotta. */
+body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 @keyframes cli-spin {
   0% { content: '·'; }
   16% { content: '✢'; }

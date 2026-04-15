@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thevibeworks/ccx/internal/db"
+	"github.com/thevibeworks/ccx/internal/parser"
 	"github.com/thevibeworks/ccx/internal/provider/claude"
 )
 
@@ -151,6 +153,59 @@ func truncateForLog(s string) string {
 		return s[:400] + "…"
 	}
 	return s
+}
+
+// TestCliSpinnerLayout_FixedWidth asserts the spinner CSS pins the
+// icon to a stable screen position — icon absolute-positioned at
+// left, block with a fixed width — so rotating the verb doesn't make
+// the icon jitter horizontally.
+func TestCliSpinnerLayout_FixedWidth(t *testing.T) {
+	css := cssStyles()
+	if !strings.Contains(css, ".cli-spinner-char {\n  position: absolute;") {
+		t.Error("cli-spinner-char must be position:absolute (otherwise icon jitters as verb changes)")
+	}
+	if !strings.Contains(css, ".cli-spinner {") || !strings.Contains(css, "width: 220px;") {
+		t.Error("cli-spinner must have a fixed width so the centered overlay doesn't re-center with each verb")
+	}
+	if !strings.Contains(css, `body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }`) {
+		t.Error("codex sessions should swap the spinner color to the Codex accent")
+	}
+}
+
+// TestRenderSessionPage_EmitsProviderDataAttribute verifies that a
+// Codex session page sets body.dataset.ccxProvider = "codex" so the
+// CSS rule above actually fires. Claude Code sessions should set it
+// to "claude-code", and anything with an empty provider should
+// simply omit the hint.
+func TestRenderSessionPage_EmitsProviderDataAttribute(t *testing.T) {
+	session := &parser.Session{
+		ID:        "019d8f43-8d53",
+		Provider:  "codex",
+		StartTime: time.Now(),
+	}
+	html := renderSessionPage(session, "test-project", nil, 0, false, false, false, "light")
+	if !strings.Contains(html, `document.body.dataset.ccxProvider="codex"`) {
+		t.Error("expected codex provider hint in body dataset, got: ", truncateForLog(html))
+	}
+
+	sessionCC := &parser.Session{
+		ID:        "abcdef",
+		Provider:  "claude-code",
+		StartTime: time.Now(),
+	}
+	htmlCC := renderSessionPage(sessionCC, "test-project", nil, 0, false, false, false, "light")
+	if !strings.Contains(htmlCC, `document.body.dataset.ccxProvider="claude-code"`) {
+		t.Error("expected claude-code provider hint in body dataset")
+	}
+
+	sessionNoProvider := &parser.Session{
+		ID:        "abcdef",
+		StartTime: time.Now(),
+	}
+	htmlNone := renderSessionPage(sessionNoProvider, "test-project", nil, 0, false, false, false, "light")
+	if strings.Contains(htmlNone, "dataset.ccxProvider") {
+		t.Error("empty provider should NOT emit the hint")
+	}
 }
 
 func TestHandleAPIProjects(t *testing.T) {
