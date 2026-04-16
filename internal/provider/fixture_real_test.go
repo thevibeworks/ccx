@@ -80,8 +80,10 @@ func TestRealFixture_ClaudeCode_MessageCounts(t *testing.T) {
 	// parser starts discovering additional line types (attachments,
 	// queue-operations, etc.), this number will rise and the test
 	// will force an intentional update.
-	if got, want := len(flat), 104; got != want {
-		t.Errorf("flat message count = %d, want %d (see testdata/test-session/README.md for non-transcript line types currently filtered)", got, want)
+	// 104 main-session + 49 sidechain = 153 after the Bug #2 fix
+	// that loads sub-agent files from <uuid>/subagents/.
+	if got, want := len(flat), 153; got != want {
+		t.Errorf("flat message count = %d, want %d (104 main + 49 sidechain)", got, want)
 	}
 
 	// Kind distribution — one user prompt, many assistants, many
@@ -91,9 +93,11 @@ func TestRealFixture_ClaudeCode_MessageCounts(t *testing.T) {
 	for _, m := range flat {
 		kinds[m.Kind]++
 	}
-	assertCount(t, "KindUserPrompt", kinds[parser.KindUserPrompt], 1)
-	assertCount(t, "KindAssistant", kinds[parser.KindAssistant], 63)
-	assertCount(t, "KindToolResult", kinds[parser.KindToolResult], 39)
+	// main: 1 user, 63 assistant, 39 tool_result, 1 meta
+	// sidechain: 1 user (the dispatched prompt), 26 assistant, 22 tool_result
+	assertCount(t, "KindUserPrompt", kinds[parser.KindUserPrompt], 2)  // 1+1
+	assertCount(t, "KindAssistant", kinds[parser.KindAssistant], 89)   // 63+26
+	assertCount(t, "KindToolResult", kinds[parser.KindToolResult], 61) // 39+22
 	assertCount(t, "KindMeta", kinds[parser.KindMeta], 1)
 }
 
@@ -107,12 +111,12 @@ func TestRealFixture_ClaudeCode_ContentBlockCounts(t *testing.T) {
 			blocks[c.Type]++
 		}
 	}
-	// Note: the CC fixture's 39 tool_use blocks did not change with
-	// the web_search fix (that only affects the Codex parser).
-	assertCount(t, "text blocks", blocks["text"], 19)
+	// main (19 text, 7 thinking, 39 tool_use, 39 tool_result) +
+	// sidechain (5 text, 0 thinking, 22 tool_use, 22 tool_result)
+	assertCount(t, "text blocks", blocks["text"], 24)
 	assertCount(t, "thinking blocks", blocks["thinking"], 7)
-	assertCount(t, "tool_use blocks", blocks["tool_use"], 39)
-	assertCount(t, "tool_result blocks", blocks["tool_result"], 39)
+	assertCount(t, "tool_use blocks", blocks["tool_use"], 61)
+	assertCount(t, "tool_result blocks", blocks["tool_result"], 61)
 }
 
 func TestRealFixture_ClaudeCode_ToolDistribution(t *testing.T) {
@@ -131,19 +135,20 @@ func TestRealFixture_ClaudeCode_ToolDistribution(t *testing.T) {
 	// Lock in the 16-tool distribution from the real capture. Any
 	// change here flags either a parser regression or a fixture
 	// regen.
+	// main session tools + sidechain tools (Grep +20, Read +2)
 	wantTools := map[string]int{
 		"TaskUpdate":      8,
 		"Write":           4,
 		"ToolSearch":      4,
 		"TaskCreate":      4,
 		"Bash":            4,
+		"Read":            4, // 2 main + 2 sidechain
 		"Skill":           2,
-		"Read":            2,
 		"Edit":            2,
 		"AskUserQuestion": 2,
+		"Grep":            21, // 1 main + 20 sidechain
 		"WebFetch":        1,
 		"Monitor":         1, // first Monitor tool_use ever captured — 2.1.104
-		"Grep":            1,
 		"Glob":            1,
 		"ExitPlanMode":    1,
 		"EnterPlanMode":   1,
@@ -205,16 +210,16 @@ func TestRealFixture_ClaudeCode_MonitorToolInputShape(t *testing.T) {
 	}
 }
 
-// TestRealFixture_ClaudeCode_SidechainNotDiscovered is a CHARACTERIZATION
-// test: the sub-agent sidechain file at
+// TestRealFixture_ClaudeCode_SidechainDiscovered verifies the Bug #2
+// fix. The sub-agent sidechain at
 // claude/projects/test-session/de4b5d69-.../subagents/agent-*.jsonl
-// exists and contains 49 real messages, but ccx's backend does NOT
-// discover it today. This test locks in the CURRENT (broken) behaviour
-// of zero sidechain messages. When the sidechain-discovery bug is
-// fixed, this test MUST be updated with the new expected count.
+// (49 messages, 26 assistant + 23 user/tool_result) is now discovered
+// by parser.ParseSession's loadSidechainFiles helper and grafted into
+// the session tree as additional root messages with IsSidechain=true.
 //
-// Bug: testdata/test-session/README.md § Bug #2
-func TestRealFixture_ClaudeCode_SidechainNotDiscovered(t *testing.T) {
+// Before the fix: sidechain count = 0.
+// After the fix:  sidechain count = 49.
+func TestRealFixture_ClaudeCode_SidechainDiscovered(t *testing.T) {
 	session := parseClaudeFixture(t)
 	flat := parser.FlattenSessionMessages(session)
 
@@ -224,13 +229,11 @@ func TestRealFixture_ClaudeCode_SidechainNotDiscovered(t *testing.T) {
 			sidechain++
 		}
 	}
-	if sidechain != 0 {
-		t.Errorf("sidechain count = %d, want 0 (current broken behaviour). If you fixed the subagents/ discovery bug, update this test to the new expected count — the sidechain file has 49 messages (26 assistant + 23 user).", sidechain)
+	if sidechain != 49 {
+		t.Errorf("sidechain count = %d, want 49 (26 assistant + 23 user/tool_result from the sub-agent transcript)", sidechain)
 	}
-
-	// Session stats mirror the zero-sidechain observation
-	if session.Stats.AgentSidechains != 0 {
-		t.Errorf("Stats.AgentSidechains = %d, want 0 (current broken behaviour)", session.Stats.AgentSidechains)
+	if session.Stats.AgentSidechains != 49 {
+		t.Errorf("Stats.AgentSidechains = %d, want 49", session.Stats.AgentSidechains)
 	}
 }
 
