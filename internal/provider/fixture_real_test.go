@@ -107,6 +107,8 @@ func TestRealFixture_ClaudeCode_ContentBlockCounts(t *testing.T) {
 			blocks[c.Type]++
 		}
 	}
+	// Note: the CC fixture's 39 tool_use blocks did not change with
+	// the web_search fix (that only affects the Codex parser).
 	assertCount(t, "text blocks", blocks["text"], 19)
 	assertCount(t, "thinking blocks", blocks["thinking"], 7)
 	assertCount(t, "tool_use blocks", blocks["tool_use"], 39)
@@ -301,9 +303,12 @@ func TestRealFixture_Codex_MessageCounts(t *testing.T) {
 	session := parseCodexFixture(t)
 	flat := parser.FlattenSessionMessages(session)
 
-	// Lock in the current parser output. 46 flat messages from 96
-	// rollout lines (non-message events don't become Messages).
-	if got, want := len(flat), 46; got != want {
+	// 43 flat messages from 96 rollout lines. Was 46 before the
+	// web_search dedupe fix (Bug #1) — 3 orphan WebSearch tool_use
+	// messages that were emitted by response_item/web_search_call
+	// are now correctly suppressed as duplicates of the earlier
+	// event_msg/web_search_end emissions.
+	if got, want := len(flat), 43; got != want {
 		t.Errorf("flat message count = %d, want %d", got, want)
 	}
 
@@ -312,19 +317,21 @@ func TestRealFixture_Codex_MessageCounts(t *testing.T) {
 		kinds[m.Kind]++
 	}
 	assertCount(t, "KindUserPrompt", kinds[parser.KindUserPrompt], 1)
-	assertCount(t, "KindAssistant", kinds[parser.KindAssistant], 29)
+	assertCount(t, "KindAssistant", kinds[parser.KindAssistant], 26) // was 29, -3 orphan tool_use
 	assertCount(t, "KindToolResult", kinds[parser.KindToolResult], 16)
 }
 
-// TestRealFixture_Codex_ToolDistributionLocksInBug captures the
-// CURRENT (buggy) web_search double-count. The real session has 3
-// web_search calls but ccx produces 6 WebSearch tool_use blocks
-// because response_item/web_search_call.id doesn't match
-// event_msg/web_search_end.call_id. See README.md § Bug #1.
+// TestRealFixture_Codex_ToolDistribution verifies the Codex tool
+// histogram matches the real session after Bug #1 is fixed:
+// WebSearch drops from 6 (double-counted) to 3 (one per real call).
 //
-// When the bug is fixed, the expected WebSearch count MUST drop
-// from 6 to 3 and the total unique tools number stays the same.
-func TestRealFixture_Codex_ToolDistributionLocksInBug(t *testing.T) {
+// Root cause of the old bug: Codex 0.120.0+ emits
+// response_item/web_search_call with an empty call_id (payload is
+// just {action, status, type}). ccx's parser was emitting a
+// tool_use on that line AND another on event_msg/web_search_end.
+// The fix skips the response_item emission when call_id is empty;
+// the end event is the sole authoritative source.
+func TestRealFixture_Codex_ToolDistribution(t *testing.T) {
 	session := parseCodexFixture(t)
 	flat := parser.FlattenSessionMessages(session)
 
@@ -338,7 +345,7 @@ func TestRealFixture_Codex_ToolDistributionLocksInBug(t *testing.T) {
 	}
 	wantTools := map[string]int{
 		"Bash":       7, // exec_command × 7
-		"WebSearch":  6, // BUG: should be 3 — locks in current double-count
+		"WebSearch":  3, // fixed — was 6 before Bug #1
 		"ApplyPatch": 3, // custom_tool_call × 3
 		"UpdatePlan": 2, // update_plan × 2
 		"mcp__codex_apps__github_search_repositories": 1,
