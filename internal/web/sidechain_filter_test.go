@@ -29,7 +29,21 @@ func buildSessionWithSidechains() *parser.Session {
 			}},
 		},
 	}
-	mainUser.Children = []*parser.Message{mainAssistant}
+	mainToolResult := &parser.Message{
+		UUID:      "tr1",
+		Kind:      parser.KindToolResult,
+		Timestamp: t0.Add(5 * time.Second),
+		Content:   []parser.ContentBlock{{Type: "tool_result", ToolID: "t1", ToolResult: "done"}},
+		SubAgentResult: &parser.SubAgentResultData{
+			AgentID:           "agent-abc",
+			AgentType:         "Explore",
+			TotalTokens:       22351,
+			TotalToolUseCount: 12,
+			TotalDurationMs:   144629,
+			ToolStats:         &parser.ToolStats{BashCount: 8, EditFileCount: 4, LinesAdded: 484},
+		},
+	}
+	mainUser.Children = []*parser.Message{mainAssistant, mainToolResult}
 
 	scUser := &parser.Message{
 		UUID:        "sc-u1",
@@ -203,6 +217,107 @@ func TestRenderMessages_SidechainStatsPreserved(t *testing.T) {
 	}
 	if sidechainCount != 3 {
 		t.Errorf("flattenMessages should still include %d sidechain messages (filter is applied separately), got %d", 3, sidechainCount)
+	}
+}
+
+func TestRenderMessages_SidechainShowsAgentTypeAndStats(t *testing.T) {
+	session := buildSessionWithSidechains()
+	var b strings.Builder
+	renderMessages(&b, session.RootMessages, 0, false, false, true)
+	html := b.String()
+
+	if !strings.Contains(html, "Explore") {
+		t.Error("sidechain header should show agent type name 'Explore'")
+	}
+	if !strings.Contains(html, "find auth callers") {
+		t.Error("sidechain header should show description")
+	}
+	if !strings.Contains(html, "22.4k tokens") || !strings.Contains(html, "12 tools") {
+		t.Errorf("sidechain header should show stats from toolUseResult, got html containing sidechain-meta")
+	}
+	if !strings.Contains(html, "+484 lines") {
+		t.Error("sidechain header should show lines added from toolStats")
+	}
+}
+
+func TestGroupSidechainsByAgent(t *testing.T) {
+	msgs := []*parser.Message{
+		{UUID: "m1"},
+		{UUID: "sc1", IsSidechain: true, AgentID: "a1"},
+		{UUID: "sc2", IsSidechain: true, AgentID: "a1"},
+		{UUID: "sc3", IsSidechain: true, AgentID: "a2"},
+		{UUID: "m2"},
+		{UUID: "sc4", IsSidechain: true, AgentID: "a2"},
+		{UUID: "sc5", IsSidechain: true, AgentID: ""}, // no agentId — skip
+	}
+	groups := groupSidechainsByAgent(msgs)
+	if len(groups) != 2 {
+		t.Fatalf("want 2 groups, got %d", len(groups))
+	}
+	if groups[0].AgentID != "a1" || len(groups[0].Messages) != 2 {
+		t.Errorf("group 0: agentID=%q msgs=%d, want a1/2", groups[0].AgentID, len(groups[0].Messages))
+	}
+	if groups[1].AgentID != "a2" || len(groups[1].Messages) != 2 {
+		t.Errorf("group 1: agentID=%q msgs=%d, want a2/2", groups[1].AgentID, len(groups[1].Messages))
+	}
+}
+
+func TestMatchSidechainsToToolUse(t *testing.T) {
+	mainMsgs := []*parser.Message{
+		{UUID: "u1", Kind: parser.KindUserPrompt},
+		{UUID: "a1", Kind: parser.KindAssistant, Content: []parser.ContentBlock{
+			{Type: "tool_use", ToolName: "Agent", ToolID: "t1", ToolInput: map[string]any{
+				"subagent_type": "Explore",
+				"description":   "search codebase",
+			}},
+			{Type: "tool_use", ToolName: "Agent", ToolID: "t2", ToolInput: map[string]any{
+				"subagent_type": "linus-rants",
+				"description":   "review naming",
+			}},
+		}},
+	}
+	groups := []sidechainGroup{
+		{AgentID: "agent-1", Messages: []*parser.Message{{UUID: "sc1"}}},
+		{AgentID: "agent-2", Messages: []*parser.Message{{UUID: "sc2"}}},
+	}
+	scMap := matchSidechainsToToolUse(mainMsgs, groups)
+	if len(scMap) != 2 {
+		t.Fatalf("want 2 matched groups, got %d", len(scMap))
+	}
+	g1 := scMap["t1"]
+	if g1.AgentType != "Explore" {
+		t.Errorf("t1 AgentType = %q, want Explore", g1.AgentType)
+	}
+	if g1.Description != "search codebase" {
+		t.Errorf("t1 Description = %q, want 'search codebase'", g1.Description)
+	}
+	g2 := scMap["t2"]
+	if g2.AgentType != "linus-rants" {
+		t.Errorf("t2 AgentType = %q, want linus-rants", g2.AgentType)
+	}
+}
+
+func TestMatchSidechainsToToolUse_NoGroups(t *testing.T) {
+	scMap := matchSidechainsToToolUse(nil, nil)
+	if scMap != nil {
+		t.Error("nil groups should return nil map")
+	}
+}
+
+func TestMatchSidechainsToToolUse_MoreDispatchesThanGroups(t *testing.T) {
+	mainMsgs := []*parser.Message{
+		{UUID: "a1", Kind: parser.KindAssistant, Content: []parser.ContentBlock{
+			{Type: "tool_use", ToolName: "Agent", ToolID: "t1"},
+			{Type: "tool_use", ToolName: "Agent", ToolID: "t2"},
+			{Type: "tool_use", ToolName: "Agent", ToolID: "t3"},
+		}},
+	}
+	groups := []sidechainGroup{
+		{AgentID: "a1", Messages: []*parser.Message{{UUID: "sc1"}}},
+	}
+	scMap := matchSidechainsToToolUse(mainMsgs, groups)
+	if len(scMap) != 1 {
+		t.Errorf("should match only 1 group (not panic), got %d", len(scMap))
 	}
 }
 
