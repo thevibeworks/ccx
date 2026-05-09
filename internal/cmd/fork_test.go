@@ -62,7 +62,7 @@ func TestForkRewritesSessionIDAndCWD(t *testing.T) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		var record map[string]any
-		json.Unmarshal([]byte(scanner.Text()), &record)
+		_ = json.Unmarshal([]byte(scanner.Text()), &record)
 
 		if sid, ok := record["sessionId"].(string); ok {
 			if sid != "new-session-id" {
@@ -92,7 +92,7 @@ func TestForkDropsFileHistorySnapshot(t *testing.T) {
 		`{"type":"user","sessionId":"old","cwd":"/old","uuid":"u1","message":{"role":"user","content":"hi"}}`,
 		`{"type":"file-history-snapshot","messageId":"m2","snapshot":{},"isSnapshotUpdate":true}`,
 	}
-	os.WriteFile(srcPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+	_ = os.WriteFile(srcPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 
 	result, err := forkSession(srcPath, dstPath, "new-id", "/new")
 	if err != nil {
@@ -117,7 +117,7 @@ func TestForkNullsWorktreeState(t *testing.T) {
 		`{"type":"user","sessionId":"old","cwd":"/old","uuid":"u1","message":{"role":"user","content":"hi"}}`,
 		`{"type":"worktree-state","worktreeSession":{"worktreePath":"/old/worktree"},"worktreePath":"/old/worktree"}`,
 	}
-	os.WriteFile(srcPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+	_ = os.WriteFile(srcPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 
 	_, err := forkSession(srcPath, dstPath, "new-id", "/new")
 	if err != nil {
@@ -129,7 +129,7 @@ func TestForkNullsWorktreeState(t *testing.T) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		var record map[string]any
-		json.Unmarshal([]byte(scanner.Text()), &record)
+		_ = json.Unmarshal([]byte(scanner.Text()), &record)
 		if record["type"] == "worktree-state" {
 			if record["worktreeSession"] != nil {
 				t.Error("worktreeSession should be null in forked output")
@@ -151,9 +151,9 @@ func TestForkPreservesParentUUIDChain(t *testing.T) {
 		`{"type":"assistant","sessionId":"old","cwd":"/old","uuid":"a1","parentUuid":"u1","message":{"role":"assistant","content":"a"}}`,
 		`{"type":"user","sessionId":"old","cwd":"/old","uuid":"u2","parentUuid":"a1","message":{"role":"user","content":"q2"}}`,
 	}
-	os.WriteFile(srcPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+	_ = os.WriteFile(srcPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 
-	forkSession(srcPath, dstPath, "new-id", "/new")
+	_, _ = forkSession(srcPath, dstPath, "new-id", "/new")
 
 	f, _ := os.Open(dstPath)
 	defer f.Close()
