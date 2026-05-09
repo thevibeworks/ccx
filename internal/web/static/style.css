@@ -1207,11 +1207,18 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 .nav-compact .nav-icon { color: #fa0; }
 
 .nav-sidechain {
-  border-left: 3px solid #86c;
+  background: color-mix(in srgb, var(--event-subagent) 8%, transparent);
   margin: 4px 0;
-  opacity: 0.85;
+  padding-left: 10px;
+  font-size: 0.85em;
 }
-.nav-sidechain .nav-icon { color: #86c; }
+.nav-sidechain .nav-icon { color: var(--event-subagent); }
+.nav-sidechain .nav-count {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
 
 .nav-user { padding-left: 8px; font-weight: 500; }
 .nav-user .nav-icon { color: var(--user-border); }
@@ -1356,17 +1363,23 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
  *   - 120ms grace period on mouseleave forgives slight drift. */
 .timeline-rail {
   position: fixed;
-  right: 14px; /* gutter for browser scrollbar + visual breathing room */
+  right: 14px;
   top: 56px;
   bottom: 24px;
-  width: 24px; /* invisible hit target; visual notch strip is centered */
-  padding: 14px 8px 14px 14px; /* extra left-side hit zone for forgiving entry */
+  width: 24px;
+  padding: 14px 8px 14px 14px;
   box-sizing: content-box;
   z-index: 150;
   background: transparent;
   border: none;
   transition: width 0.18s ease, padding 0.18s ease;
   cursor: crosshair;
+}
+/* Height-adaptive: short sessions get a compact rail instead of
+   stretching 5 ticks across the full viewport. JS sets --tick-count
+   on the spine; the rail clamps to a natural height. */
+.timeline-rail .timeline-spine[data-tick-count] {
+  max-height: calc(var(--tick-count, 100) * 12px);
 }
 .timeline-rail:hover {
   width: 52px;
@@ -1506,8 +1519,8 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   position: absolute;
   right: calc(100% + 3px);
   top: 50%;
-  width: 3px;
-  height: 3px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   opacity: 0;
   pointer-events: none;
@@ -2069,36 +2082,39 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 .turn-agent {
   margin-left: 16px;
   padding-left: 12px;
-  border-left: 2px solid #86c;
+  padding-left: 12px;
+  border-left: 2px solid var(--event-subagent);
   opacity: 0.9;
 }
 .turn-agent .turn-header { background: transparent; }
-.turn-agent .turn-icon { color: #86c; }
-.turn-agent .turn-role { display: inline; color: #86c; }
+.turn-agent .turn-icon { color: var(--event-subagent); }
+.turn-agent .turn-role { display: inline; color: var(--event-subagent); }
 
-/* Sub-agent transcript sections */
-.sidechain-sections { margin-top: 32px; }
+/* Sub-agent transcript sections — inline after dispatching tool_use */
 .sidechain-group {
-  margin: 12px 0;
-  border: 1px solid var(--border, #e5e7eb);
-  border-left: 3px solid #86c;
-  border-radius: 6px;
+  margin: 8px 0 12px;
+  background: color-mix(in srgb, var(--event-subagent) 5%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--event-subagent) 20%, var(--border));
+  border-radius: var(--radius);
 }
 .sidechain-header {
-  padding: 10px 14px;
+  padding: 8px 12px;
   cursor: pointer;
-  font-weight: 500;
-  color: var(--text-secondary, #6b7280);
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
-.sidechain-header:hover { background: var(--bg-hover, #f9fafb); }
-.sidechain-icon { color: #86c; margin-right: 6px; }
+.sidechain-header:hover { background: color-mix(in srgb, var(--event-subagent) 10%, var(--bg)); }
+.sidechain-icon { color: var(--event-subagent); flex-shrink: 0; }
 .sidechain-meta {
-  font-size: 0.85em;
-  font-weight: 400;
-  color: var(--text-tertiary, #9ca3af);
-  margin-left: 8px;
+  font-size: 0.8em;
+  color: var(--text-muted);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
-.sidechain-body { padding: 0 14px 14px; }
+.sidechain-body { padding: 4px 12px 12px; }
 
 /* Compacted context - minimal separator */
 .turn-compacted {
