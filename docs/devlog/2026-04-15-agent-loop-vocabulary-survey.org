@@ -1,0 +1,1198 @@
+* [2026-04-15] Dev Log: Agent-Loop Vocabulary Survey             :ARCH:REFERENCE:
+
+** Context
+
+Systematic survey of the full agent-loop vocabularies emitted by Claude Code
+(v2.1.88 source + v2.1.109 bundle) and OpenAI Codex (Rust protocol crate,
+v2 rollout format). Goal: enumerate every element =ccx='s session viewer must
+render, identify coverage gaps, and seed a real-tools test fixture that locks
+the surface down so future tool additions are caught mechanically rather than
+via user reports.
+
+Codebase: =github.com/thevibeworks/ccx=, branch =v0.next-plus-1= (PR #8).
+Reference sources consumed:
+- =reference/claude-code-2188/src/= — decompiled TypeScript, full readability
+- =/tmp/cc-2.1.109/package/cli.js= — minified bundle; =sdk-tools.d.ts= readable
+- =reference/openai-codex/codex-rs/protocol/src/protocol.rs= and =models.rs=
+
+** Why
+
+A real Codex session from 2026-04-14 (thread id =019d8f43-…=) exposed four
+distinct rendering bugs that should have been caught by test fixtures: a
+dropped =TurnContext= type, a missing =GuardianAssessment= display, silent
+discard of =CollabAgentSpawnBegin= events, and incorrect handling of a
+=ReasoningDelta= without a preceding =AgentReasoning=. None of these would
+have survived a fixture integrity test. We have no real-tools fixture today.
+
+Every time a new tool type lands upstream — =Monitor= appeared in v2.1.109 with
+zero warning — we discover it via a user report, not a CI failure. This survey
+closes that loop.
+
+** What
+
+*** Survey scope
+- =FEAT= Full Claude Code tool inventory: 45+ tools, fields, ccx renderer status
+- =FEAT= Claude Code session JSONL type taxonomy: all system subtypes, metadata
+  entries, content block types, slash-command encoding
+- =FEAT= Codex top-level rollout variants, all 54 =EventMsg= variants grouped by
+  category, all =ResponseItem= variants, internal =function_call.name= registry
+- =FEAT= =SessionMeta= vs =TurnContext= relationship documented
+- =FEAT= =Monitor= tool verbatim description + input/output shape (v2.1.109 only)
+- =FEAT= Streaming delta preservation in Codex rollouts (they are kept verbatim)
+- =FEAT= =Collab*= multi-agent sub-thread protocol
+- Coverage gap tables for ccx: CC renderer gaps, Codex =EventMsg= gaps, Codex
+  =ResponseItem= gaps
+
+** How
+
+*** Claude Code Tool Inventory
+
+45+ tools in v2.1.88. v2.1.109 adds =Monitor= as a real implementation
+(stub in 2.1.88), adds =staleReadFileStateHint= to =Bash= output, adds =toolStats=
+to =TaskCreate= output, adds ="auto"= to =TaskCreate.mode=, and adds =path= field to
+=EnterWorktree=.
+
+Column key — Source: CC=Claude Code sdk-tools.d.ts / TS source; ccx: Y=renderer
+exists in =internal/web/templates.go:renderToolInput=, N=falls through to raw
+JSON dump.
+
+**** File operations
+
+| Tool        | Key input fields                                         | Key output fields                           | ccx | Source     |
+|-------------+----------------------------------------------------------+---------------------------------------------+-----+------------|
+| Read        | file_path, offset?, limit?                               | text content                                | N   | CC src     |
+| Write       | file_path, content                                       | success                                     | Y   | CC src     |
+| Edit        | file_path, old_string, new_string, replace_all?          | success                                     | Y   | CC src     |
+| Glob        | pattern, path?                                           | file list                                   | N   | CC src     |
+| Grep        | pattern, path?, glob?, type?, output_mode?, context?...  | matches                                     | N   | CC src     |
+| NotebookEdit| file_path, notebook_edit_operation, cell_number?...      | success                                     | N   | CC src     |
+
+Note: =Read=, =Glob=, =Grep= are the highest-frequency tools in typical sessions
+yet have no specialised renderer. They fall through to raw JSON, which is
+ugly and wastes screen space.
+
+**** Shell and execution
+
+| Tool           | Key input fields                                                                    | Key output fields                                                         | ccx | Source          |
+|----------------+-------------------------------------------------------------------------------------+---------------------------------------------------------------------------+-----+-----------------|
+| Bash           | command, description?, timeout?, run_in_background?, dangerouslyDisableSandbox?    | stdout, stderr, interrupted, backgroundTaskId?, staleReadFileStateHint?   | Y   | CC src + 2.1.109|
+| PowerShell     | command, description?, timeout?                                                     | stdout, stderr, interrupted                                               | N   | CC src          |
+| TaskCreate     | prompt, description, subagent_type?, run_in_background?, mode?, isolation?          | task_id, toolStats?                                                       | N   | CC src + 2.1.109|
+| TaskStop       | task_id                                                                             | status                                                                    | N   | CC src          |
+| TaskGet        | task_id                                                                             | task object                                                               | N   | CC src          |
+| TaskList       | (none)                                                                              | task list                                                                 | N   | CC src          |
+| TaskUpdate     | task_id, ...fields                                                                  | task object                                                               | N   | CC src          |
+| TaskOutput     | task_id, block?                                                                     | output text                                                               | Y   | CC src          |
+| Monitor        | description, command, timeout_ms?, persistent?                                      | stream of text events (one per stdout line)                               | N   | 2.1.109 bundle  |
+| Sleep          | seconds                                                                             | (none)                                                                    | N   | CC src          |
+
+=Monitor= is the most semantically novel tool: it is a streaming tool that
+produces a series of discrete events over time rather than a single result.
+See verbatim description below.
+
+**** Web and network
+
+| Tool       | Key input fields                                | Key output fields | ccx | Source |
+|------------+-------------------------------------------------+-------------------+-----+--------|
+| WebSearch  | query, blocked_domains?, allowed_domains?       | results           | Y   | CC src |
+| WebFetch   | url, prompt                                     | content           | Y   | CC src |
+| WebBrowser | (automation spec)                               | dom/screenshots   | N   | CC src |
+
+**** Agent and workflow
+
+| Tool             | Key input fields                                             | Key output fields    | ccx | Source          |
+|------------------+--------------------------------------------------------------+----------------------+-----+-----------------|
+| Agent            | prompt, system?, ...                                         | result               | N   | CC src (older)  |
+| Task             | prompt, description, subagent_type?, mode?, isolation?       | task_id, toolStats?  | Y   | CC src          |
+| Skill            | skill, args?                                                 | result               | Y   | CC src          |
+| Workflow         | (stub in 2.1.88)                                             | —                    | N   | CC src          |
+| TeamCreate       | ...                                                          | team_id              | N   | CC src          |
+| TeamDelete       | team_id                                                      | success              | N   | CC src          |
+| CronCreate       | cron, prompt, recurring?, durable?                           | cron_id              | N   | CC src          |
+| CronDelete       | cron_id                                                      | success              | N   | CC src          |
+| CronList         | (none)                                                       | cron list            | N   | CC src          |
+
+Note: =Task= renderer exists (targets the sub-agent spawn case); =TaskCreate= is
+the newer name for the same concept and has NO renderer.
+
+**** System and MCP
+
+| Tool             | Key input fields                                      | ccx | Source |
+|------------------+-------------------------------------------------------+-----+--------|
+| Config           | operation, key?, value?                               | N   | CC src |
+| LSP              | method, params?, uri?                                 | Y   | CC src |
+| RemoteTrigger    | action, trigger_id?, body?                            | N   | CC src |
+| MCP              | (generic invoke)                                      | N   | CC src |
+| ListMcpResources | server?                                               | N   | CC src |
+| ReadMcpResource  | server, uri                                           | N   | CC src |
+| McpAuth          | server                                                | N   | CC src |
+
+**** Communication
+
+| Tool             | Key input fields                    | ccx | Source |
+|------------------+-------------------------------------+-----+--------|
+| SendMessage      | to, message                         | N   | CC src |
+| AskUserQuestion  | question, options: [{label,desc}[]] | Y   | CC src |
+| SendUserFile     | file_path                           | N   | CC src |
+| Brief            | (none or topic?)                    | N   | CC src |
+| PushNotification | title, message                      | N   | CC src |
+| TerminalCapture  | ...                                 | N   | CC src |
+
+**** Worktree and planning
+
+| Tool          | Key input fields (v2.1.88 → v2.1.109)                  | ccx | Source      |
+|---------------+---------------------------------------------------------+-----+-------------|
+| EnterWorktree | name? (2.1.88) → + path? (2.1.109)                     | N   | CC src+diff |
+| ExitWorktree  | action: keep|remove, discard_changes?                  | N   | CC src      |
+| EnterPlanMode | (none)                                                  | N   | CC src      |
+| ExitPlanMode  | (none, v2 in 2.1.88)                                   | N   | CC src      |
+
+**** Utility
+
+| Tool                 | ccx | Notes                                     |
+|----------------------+-----+-------------------------------------------|
+| TodoWrite            | Y   | todos:[{content,status,id,priority}]      |
+| ToolSearch           | N   | deferred tool schema loader               |
+| DiscoverSkills       | N   | skill enumeration                         |
+| CtxInspect           | N   | context window inspection                 |
+| ListPeers            | N   | active peer agent listing                 |
+| REPL                 | N   | deprecated                                |
+| Snip                 | N   | clipboard / snippet                       |
+| SyntheticOutput      | N   | internal synthetic result injection       |
+| OverflowTest         | N   | context overflow probe                    |
+| VerifyPlanExecution  | N   | plan vs actual audit                      |
+| ReviewArtifact       | N   | artifact quality review                   |
+| SubscribePR          | N   | PR event subscription                     |
+| SuggestBackgroundPR  | N   | background PR suggestion                  |
+| Tungsten             | N   | internal telemetry (never surface to user)|
+| ApplyPatch           | Y   | raw string OR {changes:...} input         |
+| UpdatePlan           | Y   | {explanation, plan:[{step,status}]}       |
+| WriteStdin           | Y   | {session_id, chars}                       |
+| KillShell            | Y   | {shell_id}                                |
+
+**** Monitor tool — verbatim description (v2.1.109)
+
+The following is extracted from =cli.js= string literals and =sdk-tools.d.ts=:
+
+#+BEGIN_SRC text
+Start a background monitor that streams events from a long-running script.
+Each stdout line is an event — you keep working and notifications arrive in
+the chat. Events arrive on their own schedule and are not replies from the
+user, even if one lands while you're waiting for the user to answer a
+question. Monitor is for the streaming case: "tell me every time X happens."
+For one-shot "wait until X is done," use Bash with run_in_background instead.
+#+END_SRC
+
+Input shape:
+#+BEGIN_SRC typescript
+{
+  description: string,        // human-readable label
+  command:     string,        // shell command to run
+  timeout_ms?: number,        // optional total timeout
+  persistent?: boolean,       // keep running after turn end
+}
+#+END_SRC
+
+Output: a =tool_result= whose =content= is a stream of text events, one per
+matching stdout line. The tool_result block does NOT conform to the standard
+single-result assumption that every other tool holds. This will break ccx's
+current tool_result rendering path.
+
+**** ccx renderer coverage summary
+
+| Category          | Total tools | ccx has renderer | ccx falls through |
+|-------------------+-------------+------------------+-------------------|
+| File ops          |           6 |                2 |                 4 |
+| Shell/execution   |          10 |                3 |                 7 |
+| Web/network       |           3 |                2 |                 1 |
+| Agent/workflow    |           9 |                2 |                 7 |
+| System/MCP        |           7 |                1 |                 6 |
+| Communication     |           6 |                1 |                 5 |
+| Worktree/planning |           4 |                0 |                 4 |
+| Utility           |          15 |                5 |                10 |
+| *Total*           |          60 |               16 |                44 |
+
+The 16 specialised renderers live in =internal/web/templates.go= starting at
+line 1058 (=renderToolInput=).
+
+*** Claude Code Session JSONL Type Taxonomy
+
+**** Top-level =type= field values
+
+| type      | Role                                              |
+|-----------+---------------------------------------------------|
+| user      | User turn (human text, tool_result blocks, images)|
+| assistant | Assistant turn (text, thinking, tool_use blocks)  |
+| system    | Non-transcript system record (see subtypes below) |
+
+**** =system= message subtypes
+
+| subtype                | Purpose                                                        |
+|------------------------+----------------------------------------------------------------|
+| init                   | Session start: model, cwd, version, gitBranch, slug, tools     |
+| compact_boundary       | Context compaction boundary; parent UUID reset point           |
+| microcompact_boundary  | Lightweight sub-compaction; preserves more context than full   |
+| local_command          | Slash command execution record                                 |
+| hook_progress          | Progress event from a tool hook                                |
+| progress               | Generic progress notification                                  |
+| error                  | Terminal error in session                                      |
+| hook_result            | Hook execution result                                          |
+| awaySummary            | Summary generated during away / idle period                    |
+| bridgeStatus           | MCP bridge connection status change                            |
+| apiMetrics             | Aggregate API call metrics                                     |
+| scheduledTaskFire      | CronCreate / scheduled task fire event                         |
+| stopHookSummary        | Summary emitted by a stop hook                                 |
+| thinking               | Model thinking trace (extended thinking)                       |
+| turnDuration           | Wall-clock turn duration record                                |
+| agentsKilled           | Background agent forceful termination record                   |
+| permissionRetry        | Permission prompt retry                                        |
+
+**** Metadata-only lines (non-transcript JSONL entries)
+
+These lines appear in the =.jsonl= alongside message records but carry no
+=message= payload. Defined in =src/types/logs.ts:297-312=:
+
+#+BEGIN_SRC text
+summary                 session summary with leafUuid
+custom-title            user-set session title
+ai-title                model-generated session title
+last-prompt             last user prompt text
+task-summary            sub-agent task summary
+tag                     user-applied tag
+agent-name              sub-agent name
+agent-color             sub-agent colour assignment
+agent-setting           sub-agent capability setting
+pr-link                 linked pull request URL
+mode                    current operating mode
+worktree-state          active worktree metadata snapshot
+content-replacement     content block replacement (compaction artefact)
+file-history-snapshot   file state snapshot before edit
+attribution-snapshot    tool attribution snapshot
+speculation-accept      speculation/plan accept record
+marble-origami-commit   internal VM commit record
+marble-origami-snapshot internal VM state snapshot
+#+END_SRC
+
+These lines must be parsed without error but most carry no user-visible
+content. =summary=, =custom-title=, =ai-title=, =pr-link=, =tag=, and =worktree-state=
+are worth surfacing in the session header UI.
+
+**** Content block types (inside =message.content= arrays)
+
+| type        | Fields                                     | Notes                                    |
+|-------------+--------------------------------------------+------------------------------------------|
+| text        | text                                       | Markdown body; may contain XML wrappers  |
+| thinking    | thinking, signature                        | Extended thinking trace                  |
+| tool_use    | id, name, input, caller?                   | Tool invocation                          |
+| tool_result | tool_use_id, content, is_error             | Tool response (may be array of blocks)   |
+| image       | source.media_type, source.data             | Base64 inline image                      |
+
+**** Slash command encoding
+
+Slash commands are NOT a distinct =type= in the JSONL. They appear as XML
+wrapped inside =text= blocks of =user= messages:
+
+#+BEGIN_SRC text
+<command-name>foo</command-name>
+#+END_SRC
+
+Extracted by =COMMAND_NAME_RE= at =src/utils/sessionStoragePortable.ts:126=.
+Other XML wrappers that appear inside text blocks: =<bash-input>=, =<ide-context>=,
+=<git-status>=. These are domain-specific annotations Claude Code embeds in
+user messages; they are NOT message subtypes.
+
+**** Key message-level flags
+
+| Flag                     | Type    | Meaning                                      |
+|--------------------------+---------+----------------------------------------------|
+| isMeta                   | bool    | System instruction carrier (CLAUDE.md, etc.) |
+| isCompactSummary         | bool    | Compacted context carrier; one per boundary  |
+| isSidechain              | bool    | Agent task branch message                    |
+| agentId                  | string  | Populated on sidechain messages              |
+| toolUseResult            | object  | Structured result with agentId for Agent     |
+| sourceToolAssistantUUID  | string  | Links tool_result to requesting assistant    |
+| promptId                 | string  | Groups messages in same user turn            |
+
+*** Codex Protocol Taxonomy
+
+**** Top-level =RolloutItem= variants
+
+Defined at =protocol.rs:2783=:
+
+| Variant      | Description                                                         | ccx handled |
+|--------------+---------------------------------------------------------------------+-------------|
+| SessionMeta  | Immutable session header; emitted once at thread start              | Y           |
+| EventMsg     | Event within a turn; 54 variants (see below)                        | partial     |
+| ResponseItem | Model response item (message, tool call, reasoning, etc.)           | partial     |
+| Compacted    | Context compaction record: {message, replacement_history?}          | Y           |
+| TurnContext  | Mutable per-turn execution context; NEW in v2 rollout format        | Y (partial) |
+
+Rollout format version detection: rollouts containing =TurnContext= lines are
+v2. Rollouts with only =SessionMeta= + =EventMsg= + =ResponseItem= are v1. ccx
+handles =turn_context= deserialization today but does not record a version
+discriminant or expose the version to the UI.
+
+**** =SessionMeta= vs =TurnContext= relationship
+
+=SessionMeta= is emitted once per rollout file, as the first line. It is
+immutable for the lifetime of a thread.
+
+=TurnContext= is emitted after each real user turn AND after mid-turn
+compaction. It carries the execution baseline that a resume would need to
+reconstruct the runtime state.
+
+| Field             | SessionMeta | TurnContext |
+|-------------------+-------------+-------------|
+| id                | Y           | —           |
+| timestamp         | Y           | —           |
+| cwd               | Y           | Y (may differ after cd) |
+| originator        | Y           | —           |
+| cli_version       | Y           | —           |
+| source            | Y           | —           |
+| model_provider    | Y           | —           |
+| base_instructions | Y           | —           |
+| forked_from_id    | Y (NEW v2)  | —           |
+| agent_nickname    | Y (NEW v2)  | —           |
+| agent_role        | Y (NEW v2)  | —           |
+| agent_path        | Y (NEW v2)  | —           |
+| dynamic_tools     | Y (NEW v2)  | —           |
+| memory_mode       | Y (NEW v2)  | —           |
+| git               | Y           | —           |
+| model             | —           | Y           |
+| approval_policy   | —           | Y           |
+| sandbox_policy    | —           | Y           |
+| reasoning_effort  | —           | Y           |
+| user_instructions | —           | Y           |
+| developer_instructions | —      | Y           |
+| final_output_json_schema | —   | Y           |
+| truncation_policy | —           | Y           |
+| timezone          | —           | Y           |
+| collaboration_mode| —           | Y           |
+
+=forked_from_id= in =SessionMeta= is a pointer to the parent thread's session id.
+Sub-agent threads (spawned by =Collab*= events) carry =agent_nickname=,
+=agent_role=, and =agent_path=. These three fields together with =forked_from_id=
+form the sub-thread tree required for a fork/sub-agent timeline view. ccx
+currently ignores all four.
+
+**** =EventMsg= variants — all 54
+
+Defined at =protocol.rs:1396=. Grouped by functional category.
+
+***** Lifecycle (2)
+
+| Variant       | ccx | Notes                      |
+|---------------+-----+----------------------------|
+| TurnStarted   | Y   | also known as task_started |
+| TurnComplete  | Y   | also known as task_complete|
+
+***** Message and reasoning (8)
+
+| Variant                         | ccx | Notes                                           |
+|---------------------------------+-----+-------------------------------------------------|
+| UserMessage                     | Y   | {message, images?, local_images?}               |
+| AgentMessage                    | Y   | {message}                                       |
+| AgentMessageDelta               | N   | NEW streaming; partial text fragment            |
+| AgentReasoning                  | Y   | {text}                                          |
+| AgentReasoningDelta             | N   | NEW streaming; partial reasoning fragment       |
+| AgentReasoningRawContent        | Y   | raw model reasoning block                       |
+| AgentReasoningRawContentDelta   | N   | NEW streaming                                   |
+| AgentReasoningSectionBreak      | N   | NEW; reasoning section boundary                 |
+
+Without =AgentReasoningSectionBreak= handling, reasoning renders as one
+undifferentiated blob instead of sectioned output.
+
+***** Tool calls (15)
+
+| Variant                  | ccx | Notes                                                      |
+|--------------------------+-----+------------------------------------------------------------|
+| ExecCommandBegin         | N   | command start; useful for latency display                  |
+| ExecCommandOutputDelta   | N   | NEW streaming; one delta per stdout line chunk             |
+| ExecCommandEnd           | Y   | {call_id, command[], cwd, stdout, stderr, exit_code, ...}  |
+| PatchApplyBegin          | N   | patch application start                                    |
+| PatchApplyEnd            | Y   | {call_id, stdout, stderr, success, changes}                |
+| WebSearchBegin           | N   | web search start                                           |
+| WebSearchEnd             | Y   | {call_id, query, action}                                   |
+| ImageGenerationBegin     | N   | image generation start                                     |
+| ImageGenerationEnd       | N   | image generation end + result                              |
+| McpToolCallBegin         | N   | MCP tool call start                                        |
+| McpToolCallEnd           | Y   | {call_id, invocation, result, duration}                    |
+| ViewImageToolCall        | Y   | {call_id, path}                                            |
+| DynamicToolCallRequest   | N   | dynamic/user-registered tool request                       |
+| DynamicToolCallResponse  | Y   | {call_id, tool, arguments, content_items, success, error}  |
+| RequestUserInput         | N   | prompt for user input mid-turn                             |
+| RequestPermissions       | N   | permission check event                                     |
+| ElicitationRequest       | N   | structured elicitation from model                          |
+
+***** Approval flows (3)
+
+| Variant                  | ccx | Notes                                                |
+|--------------------------+-----+------------------------------------------------------|
+| ExecApprovalRequest      | N   | approval required before exec                        |
+| ApplyPatchApprovalRequest| N   | approval required before patch                       |
+| GuardianAssessment       | N   | NEW v2; risk assessment result for action gating     |
+
+=GuardianAssessment= is the Codex equivalent of a policy / safety gate. Fields
+include: =assessment= (allow/deny/warn), =reasoning=, =risk_level=. Silently
+dropping this means approval decisions are invisible in the viewer.
+
+***** Metadata and status (8)
+
+| Variant              | ccx | Notes                                              |
+|----------------------+-----+----------------------------------------------------|
+| ContextCompacted     | N   | in-turn compaction notice                          |
+| ThreadRolledBack     | N   | undo applied to thread state                       |
+| TokenCount           | Y   | {info.total_token_usage}                           |
+| ThreadNameUpdated    | Y   | {thread_name}                                      |
+| ModelReroute         | N   | NEW; mid-turn model switch; {old_model, new_model} |
+| SessionConfigured    | N   | runtime session config change                      |
+| SkillsUpdateAvailable| N   | skill registry update notice                       |
+| PlanUpdate           | N   | plan state change                                  |
+
+=ModelReroute= signals that the model changed mid-turn — important for audit
+trails and token cost attribution. Dropped today.
+
+***** Session management (6)
+
+| Variant        | ccx | Notes                                    |
+|----------------+-----+------------------------------------------|
+| UndoStarted    | N   | undo operation began                     |
+| UndoCompleted  | N   | undo finished; new state                 |
+| TurnAborted    | N   | turn was cancelled                       |
+| ShutdownComplete | N | session shutdown confirmation            |
+| StreamError    | N   | protocol-level stream error              |
+| Error          | N   | generic error event                      |
+
+***** Review mode (2 + payload type)
+
+| Variant           | ccx | Notes                                                   |
+|-------------------+-----+---------------------------------------------------------|
+| EnteredReviewMode | Y   | review mode started                                     |
+| ExitedReviewMode  | Y   | review finished; carries =ReviewOutputEvent=             |
+
+=ReviewOutputEvent= fields: =findings=, =correctness=, =confidence=. ccx handles
+the entry/exit but does not render the =ReviewOutputEvent= payload contents.
+
+***** Collaboration — multi-agent sub-thread orchestration (10) :BREAKING:
+
+NEW in v2 rollout format. These events are NOT tool calls; they represent
+first-class sub-thread lifecycle events. The sub-thread has its own
+=SessionMeta= (with =forked_from_id= pointing to parent) and its own rollout file.
+
+| Variant                    | ccx | Fields                                                 |
+|----------------------------+-----+--------------------------------------------------------|
+| CollabAgentSpawnBegin      | N   | new_thread_id, agent_nickname, agent_role, status      |
+| CollabAgentSpawnEnd        | N   | new_thread_id, agent_nickname, agent_role, status      |
+| CollabAgentInteractionBegin| N   | thread_id, interaction_type                            |
+| CollabAgentInteractionEnd  | N   | thread_id, result_summary?                             |
+| CollabWaitingBegin         | N   | thread_id, reason                                      |
+| CollabWaitingEnd           | N   | thread_id                                              |
+| CollabCloseBegin           | N   | thread_id                                              |
+| CollabCloseEnd             | N   | thread_id, exit_status                                 |
+| CollabResumeBegin          | N   | thread_id                                              |
+| CollabResumeEnd            | N   | thread_id                                              |
+
+All 10 are silently dropped by ccx today. For sessions that use multi-agent
+orchestration, the viewer shows no indication that sub-agents ran. The
+=new_thread_id= in =CollabAgentSpawnBegin= is the link to the sub-thread rollout
+file that should be loaded and rendered as an indented timeline branch.
+
+***** New structured item events (8) — v2 turn-item model
+
+| Variant                   | ccx | Notes                                                |
+|---------------------------+-----+------------------------------------------------------|
+| RawResponseItem           | N   | raw model response item passthrough                  |
+| ItemStarted               | N   | response item start boundary                         |
+| ItemCompleted             | N   | response item completion boundary                    |
+| HookStarted               | N   | hook execution start                                 |
+| HookCompleted             | N   | hook execution end                                   |
+| AgentMessageContentDelta  | N   | streaming agent message content chunk                |
+| PlanDelta                 | N   | incremental plan update                              |
+| ReasoningContentDelta     | N   | streaming reasoning content chunk                    |
+
+These form the v2 streaming model. ccx can safely drop all of them for now
+because the final state always surfaces through the non-delta events, but
+failing to parse them means any rollout with only delta events (no final
+=AgentMessage=) will appear empty.
+
+***** Realtime / audio (4)
+
+| Variant                        | ccx | Notes                              |
+|--------------------------------+-----+------------------------------------|
+| RealtimeConversationStarted    | N   | voice/audio session start          |
+| RealtimeConversation           | N   | audio turn event                   |
+| RealtimeConversationClosed     | N   | audio session end                  |
+| RealtimeConversationSdp        | N   | WebRTC SDP exchange                |
+
+Out of scope for v0 — log and skip.
+
+***** Miscellaneous (5)
+
+| Variant                  | ccx | Notes                                              |
+|--------------------------+-----+----------------------------------------------------|
+| Warning                  | N   | non-fatal warning                                  |
+| DeprecationNotice        | N   | deprecated feature usage notice                    |
+| TurnDiff                 | N   | diff of turn state changes                         |
+| GetHistoryEntryResponse  | N   | response to a history lookup request               |
+| McpListToolsResponse     | N   | MCP server tool list response                      |
+| ListSkillsResponse       | N   | registered skill list                              |
+| BackgroundEvent          | N   | background process event                           |
+
+**** =EventMsg= coverage summary
+
+| Category                | Total | ccx handles | Gap |
+|-------------------------+-------+-------------+-----|
+| Lifecycle               |     2 |           2 |   0 |
+| Message + reasoning     |     8 |           4 |   4 |
+| Tool calls              |    15 |           6 |   9 |
+| Approval flows          |     3 |           0 |   3 |
+| Metadata + status       |     8 |           2 |   6 |
+| Session management      |     6 |           0 |   6 |
+| Review mode             |     2 |           2 |   0 |
+| Collaboration           |    10 |           0 |  10 |
+| Structured item (v2)    |     8 |           0 |   8 |
+| Realtime/audio          |     4 |           0 |   4 |
+| Miscellaneous           |     7 |           0 |   7 |
+| *Total*                 |    73 |          16 |  57 |
+
+(Note: 73 includes the structured item events, realtime, and misc that were
+listed separately in the raw count; the 54-variant figure in =protocol.rs= is
+the core enum, with additional variants added in point releases.)
+
+**** =ResponseItem= variants
+
+Defined at =models.rs:188=:
+
+| Variant              | ccx | Notes                                            |
+|----------------------+-----+--------------------------------------------------|
+| Message              | N   | Intentionally dropped — surfaced via EventMsg    |
+| Reasoning            | Y   | model reasoning block                            |
+| FunctionCall         | Y   | {name, arguments, call_id}                       |
+| FunctionCallOutput   | Y   | {call_id, output}                                |
+| CustomToolCall       | Y   | {name, input, call_id}                           |
+| CustomToolCallOutput | Y   | {call_id, output}                                |
+| LocalShellCall       | N   | deprecated; superseded by ExecCommand events     |
+| WebSearchCall        | Y   | {call_id, status, action}                        |
+| ImageGenerationCall  | N   | image generation request                         |
+| ToolSearchCall       | N   | tool search/discovery request                    |
+| ToolSearchOutput     | N   | tool search result                               |
+| Compaction           | N   | in-response compaction marker                    |
+| GhostSnapshot        | N   | git state snapshot embedded in response          |
+
+=Message= being dropped is CORRECT: it duplicates =AgentMessage= EventMsg and
+rendering it would produce double output. Document this explicitly to avoid
+re-adding it as a "fix."
+
+=GhostSnapshot= carries git state at a point in time. Useful for audit but
+out of scope for v0.
+
+**** Internal =function_call.name= registry
+
+These are the names that appear in =FunctionCall.name= and =CustomToolCall.name=
+in Codex rollouts. =ccx='s tool renderer dispatch uses these as keys.
+
+#+BEGIN_SRC text
+exec_command          — shell command execution (maps to Bash renderer)
+apply_patch           — patch application (maps to ApplyPatch renderer)
+update_plan           — plan update (maps to UpdatePlan renderer)
+view_image            — image viewer
+request_permissions   — permission check
+write_stdin           — stdin injection (maps to WriteStdin renderer)
+web_search            — web search
+image_generation      — image generation (no renderer in ccx)
+mcp__<server>__<tool> — MCP tool invocation, namespace-prefixed
+<user-defined>        — dynamic tools registered in SessionMeta.dynamic_tools
+#+END_SRC
+
+Namespace convention: =mcp__*= always indicates an MCP-proxied tool. Names with
+exactly two underscores between segments (=mcp__server__toolname=) follow the
+Codex MCP naming scheme. This is distinct from Claude Code's =McpAuth= /
+=ListMcpResources= built-ins which use CamelCase.
+
+**** Streaming deltas
+
+Codex rollouts preserve every =AgentMessageDelta=, =AgentReasoningDelta=,
+=ExecCommandOutputDelta=, =AgentMessageContentDelta=, =ReasoningContentDelta=, and
+=ReasoningRawContentDelta= event verbatim. A full-fidelity replay viewer could
+play back a session word-by-word from these deltas.
+
+ccx does NOT exploit this today — deltas are dropped on the floor and final
+text arrives via the non-delta counterpart events. The tradeoff is documented
+in Decisions below.
+
+**** =TokenCountEvent= → =TokenUsageInfo= field set
+
+#+BEGIN_SRC text
+total_token_usage:
+  input_tokens:             int
+  cached_input_tokens:      int
+  output_tokens:            int
+  reasoning_output_tokens:  int
+  total_tokens:             int
+
+last_token_usage:           same shape as above
+model_context_window:       int
+rate_limits:                [{limit_id, limit_name, windows, credits}]
+#+END_SRC
+
+Absent fields: =image_tokens=, =audio_tokens=, =reasoning_effort=. Do not display
+placeholder zeros for absent fields.
+
+*** ccx Current State Summary
+
+**** Files providing the behaviour described above
+
+| File                                         | Role                                      |
+|----------------------------------------------+-------------------------------------------|
+| =internal/provider/codex/backend.go=          | Codex rollout parser, all Go structs      |
+| =internal/web/templates.go= (line 1058+)      | CC tool renderer dispatch (renderToolInput)|
+| =internal/web/templates.go= (line 1040-1055)  | isActiveTool predicate                    |
+| =internal/parser/types.go=                    | Session/message model                     |
+| =internal/parser/session.go=                  | CC JSONL tree builder                     |
+
+**** isActiveTool — current set
+
+The =isActiveTool= predicate at =templates.go:1040= currently returns true for:
+=Write=, =Edit=, =Bash=, =Task=, =TodoWrite=, =Skill=, =NotebookEdit=, =KillShell=,
+=AskUserQuestion=. This controls whether a tool call gets an "active" CSS class
+in the timeline. =NotebookEdit= is in the active set but has no renderer — an
+inconsistency to fix.
+
+*** Forward Plan
+
+**** Generic unknown-tool renderer
+
+Add a thin adapter between =renderToolInput='s dispatch switch and the raw JSON
+fallback:
+
+#+BEGIN_SRC go
+// UnknownToolRenderer is the structured fallback for tools with no
+// specialised renderer. It renders a labelled key-value list rather than
+// a raw JSON blob. The caller should use renderKnownTool first and fall
+// through here only on no-match.
+func renderUnknownTool(b *strings.Builder, name string, input map[string]any) {
+    b.WriteString(`<details class="tool-unknown">`)
+    b.WriteString(fmt.Sprintf(`<summary class="tool-unknown-name">%s</summary>`, html.EscapeString(name)))
+    b.WriteString(`<dl class="tool-unknown-fields">`)
+    keys := sortedKeys(input)
+    for _, k := range keys {
+        v := input[k]
+        b.WriteString(fmt.Sprintf(`<dt>%s</dt>`, html.EscapeString(k)))
+        vStr := renderFieldValue(v)
+        b.WriteString(fmt.Sprintf(`<dd><pre>%s</pre></dd>`, html.EscapeString(vStr)))
+    }
+    b.WriteString(`</dl></details>`)
+}
+#+END_SRC
+
+Key properties of this pattern:
+- Never silent drop: every tool call produces visible output.
+- Structured, not raw JSON: field names are labelled; values are pre-formatted.
+- Collapsible: =<details>= hides verbose input by default.
+- Namespace awareness: renderer peeks at =name= to annotate MCP tools
+  (=mcp__*=), dynamic tools (from =SessionMeta.dynamic_tools= registry), and
+  deprecated tools (=LocalShellCall=, =REPL=) with appropriate badges.
+
+The existing switch in =renderToolInput= becomes the first dispatch tier; the
+generic renderer becomes the second tier. The raw JSON fallback at line 1368
+is removed entirely.
+
+**** Real-tools test fixture approach
+
+Two fixture files, one per provider, parked under
+=internal/provider/testdata/=. Each is a hand-crafted JSONL (not a scrubbed
+real session) to avoid licensing and PII concerns.
+
+=fixture_claude_full_tools.jsonl= minimum content:
+- One =system/init= record
+- At least one of each system subtype: =compact_boundary=, =local_command=,
+  =hook_progress=, =error=
+- All metadata-only line types: =summary=, =custom-title=, =ai-title=, =tag=,
+  =pr-link=, =worktree-state=
+- User messages with: plain text, thinking block, tool_result, image block
+- Assistant messages with: one of each tool from the full tool inventory
+  above (using minimally valid inputs). Priority order: Read, Glob, Grep,
+  Monitor, TaskCreate, EnterWorktree, CronCreate, CronList, MCP,
+  ListMcpResources, SendMessage, Brief, EnterPlanMode, ExitPlanMode, then
+  all utility tools.
+- At least one sidechain branch (=isSidechain: true=, =agentId= populated)
+- One compaction boundary pair (=isCompactSummary: true=)
+- Token usage in message.usage
+
+=fixture_codex_full_tools.jsonl= minimum content:
+- =session_meta= line with all NEW v2 fields: =forked_from_id=, =agent_nickname=,
+  =agent_role=, =agent_path=, =dynamic_tools=, =memory_mode=
+- =turn_context= line with all fields
+- One of each =EventMsg= variant that ccx should handle (handled + gap targets)
+- One of each =ResponseItem= variant
+- All =function_call.name= registry entries
+- A =Collab*= spawn-interaction-close sequence pointing at a child thread id
+- A =ModelReroute= event
+- A =GuardianAssessment= event
+- A delta sequence: =AgentMessageDelta= → =AgentMessage= (final)
+- A token_count event with all TokenUsageInfo fields populated
+- A =compacted= rollout item
+
+Minimum fixture size: 200-400 lines per file. The fixture is NOT meant to be
+a realistic session; it is a coverage artefact.
+
+**** Session integrity contract test
+
+=internal/web/fixture_integrity_test.go= — a Go test that:
+1. Parses each fixture through the full provider parser pipeline.
+2. Renders the resulting session to HTML using the web template stack.
+3. For each element kind (tool name, event type, JSONL subtype), asserts that
+   the rendered HTML contains a known sentinel string.
+
+#+BEGIN_SRC go
+// Example sentinel assertions
+assertContains(t, html, `class="bash-cmd"`)           // Bash renderer fired
+assertContains(t, html, `class="tool-unknown-name"`)  // fallback renderer fired
+assertContains(t, html, `class="collab-spawn"`)       // Collab* renderer fired
+assertContains(t, html, `class="token-count"`)        // token display present
+assertContains(t, html, `class="guardian-assessment"`)// GuardianAssessment rendered
+#+END_SRC
+
+No DOM parsing — just =strings.Contains= on the full HTML output. Cost: ~50
+lines of test code. Maintenance cost: add one =assertContains= line when a new
+tool renderer is added. The test catches regressions (renderer removed) and
+gaps (new fixture line added without a matching renderer).
+
+**** Drift-detection CI job
+
+=scripts/check-provider-drift.sh= — runs in CI on a weekly schedule:
+
+#+BEGIN_SRC bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 1. Fetch latest Claude Code bundle
+npm pack @anthropic-ai/claude-code@latest --dry-run 2>&1 \
+  | grep -E 'TOOL_NAMES|MonitorTool|TaskCreate' \
+  > /tmp/cc-latest-tools.txt
+
+# 2. Extract tool name literals from cli.js
+node -e "
+  const s = require('fs').readFileSync('/tmp/cc-latest/package/cli.js','utf8');
+  const m = s.match(/\"name\":\"([A-Z][a-zA-Z]+)\"/g);
+  console.log([...new Set(m)].sort().join('\n'));
+" > /tmp/cc-tools-found.txt
+
+# 3. Compare against fixture tool list
+comm -23 \
+  <(sort /tmp/cc-tools-found.txt) \
+  <(sort internal/provider/testdata/known_tool_names.txt) \
+  > /tmp/cc-new-tools.txt
+
+if [ -s /tmp/cc-new-tools.txt ]; then
+  echo "NEW TOOL NAMES DETECTED:"
+  cat /tmp/cc-new-tools.txt
+  # Open a GitHub issue via gh cli
+  gh issue create \
+    --title "Provider drift: new Claude Code tools detected" \
+    --body "$(cat /tmp/cc-new-tools.txt)" \
+    --label "provider-drift"
+  exit 1
+fi
+
+# 4. Check Codex protocol.rs for new EventMsg variants
+# (pinned commit hash updated by maintainer after each review)
+CODEX_PIN="$(cat reference/openai-codex/.pinned-commit)"
+git -C reference/openai-codex diff "$CODEX_PIN" HEAD \
+  -- codex-rs/protocol/src/protocol.rs \
+  | grep '^+.*EventMsg' \
+  > /tmp/codex-new-events.txt
+
+if [ -s /tmp/codex-new-events.txt ]; then
+  gh issue create \
+    --title "Provider drift: new Codex EventMsg variants" \
+    --body "$(cat /tmp/codex-new-events.txt)" \
+    --label "provider-drift"
+  exit 1
+fi
+#+END_SRC
+
+This script is intentionally simple (grep-level, not AST-level). False
+positive rate is acceptable because the consequence is opening an issue,
+not blocking a deploy.
+
+**** Namespace convention document
+
+Create =docs/PROVIDER_VOCABULARY.md= with:
+- CamelCase names = Claude Code built-in tools
+- =exec_command=, =apply_patch=, =update_plan=, etc. = Codex internal function names
+- =mcp__<server>__<tool>= = MCP-proxied tool (two double-underscore segments)
+- User-defined dynamic tool names = registered in =SessionMeta.dynamic_tools=;
+  unknown at parse time but known at render time via session context
+- Unknown tool name = route to structured fallback renderer; NEVER silent drop
+
+*** Specific renderers to implement
+
+Priority order based on frequency in real sessions:
+
+1. =Read= — show =file_path= + optional =offset= / =limit= range label; no content
+   (it is an input, not a write)
+2. =Glob= — show =pattern= + =path=; results count from tool_result
+3. =Grep= — show =pattern= + =path= / =glob=; results count from tool_result
+4. =Monitor= — show =description= + =command=; render =tool_result= as a scrollable
+   event log with one line per event (NOT a single pre block); add =persistent=
+   badge if set
+5. =TaskCreate= — same as existing =Task= renderer; rename and handle =toolStats=
+6. =EnterWorktree= / =ExitWorktree= — show =name= / =path= and =action=
+7. =EnterPlanMode= / =ExitPlanMode= — simple status badge
+8. =CronCreate= — show =cron= expression + =prompt= + =recurring= / =durable= flags
+9. =Collab*= events — first-class sub-thread boundary card in timeline
+
+** Decisions
+
+| Decision                                                      | Alternatives                               | Rationale                                                                              | DRI   | Timestamp (UTC)         |
+|---------------------------------------------------------------+--------------------------------------------+----------------------------------------------------------------------------------------+-------+-------------------------|
+| Hand-craft fixture sessions; do NOT scrub real user sessions  | Anonymise a real session                   | Licensing ambiguity + PII surface area; synthetic fixture is deterministic and complete | @eric | 2026-04-15T00:00:00Z    |
+| Continue using reference/claude-code-2188 for source-level inspection; also track 2.1.109 bundle diffs | Use only latest minified bundle | Source gives field names, types, intent; bundle gives reality | @eric | 2026-04-15T00:00:00Z |
+| Monitor: render as streaming event log card with collapsible event list | Render same as Bash (single pre block) | Monitor's defining trait is multiple events over time; conflating with Bash loses that signal | @eric | 2026-04-15T00:00:00Z |
+| Collab* events: render as first-class sub-thread boundary, not tool call | Render as generic unknown tool | Collab* is a protocol-level concept (separate rollout files); tool call metaphor is wrong | @eric | 2026-04-15T00:00:00Z |
+| Streaming deltas: collapse to final text; do NOT replay at full fidelity | Replay delta stream in viewer | Viewer is a static browser-rendered document; delta replay needs JS playback engine; out of scope for v0 | @eric | 2026-04-15T00:00:00Z |
+| Codex ResponseItem::Message: silently drop (correct, not a bug) | Render as message block | Message duplicates AgentMessage EventMsg; rendering both produces double output | @eric | 2026-04-15T00:00:00Z |
+| Generic unknown-tool renderer: structured key-value, not raw JSON | Keep raw JSON fallback | Raw JSON is unreadable for non-technical users; structured KV is scannable at a glance | @eric | 2026-04-15T00:00:00Z |
+| Drift detection: grep-level script, not AST parse | Full AST extraction from TypeScript source | AST tooling is fragile against minified bundles; grep catches name additions which is what matters | @eric | 2026-04-15T00:00:00Z |
+
+** Risks
+
+| Risk                                                             | Mitigation                                                          | Owner | Status  |
+|------------------------------------------------------------------+---------------------------------------------------------------------+-------+---------|
+| Monitor tool_result is multi-event; breaks single-result assumption | Design Monitor renderer before implementing; do not reuse Bash path | @eric | OPEN    |
+| Collab* sub-thread files may not be co-located with parent rollout | Add sub-thread discovery to backend; follow forked_from_id pointer  | @eric | OPEN    |
+| Codex v2 rollout format TurnContext missing version discriminant  | Add rollout_format_version field to ccx's parsed session struct     | @eric | OPEN    |
+| Monitor is a stub in 2.1.88; implementation only in 2.1.109 bundle | Cannot source-inspect Monitor impl; rely on sdk-tools.d.ts + observation | @eric | NOTED |
+| fixture_codex_full_tools.jsonl: Collab* events require child rollout | Either embed child rollout inline or accept partial Collab* coverage | @eric | OPEN   |
+
+** Notes
+
+*** Gotchas
+
+- =NotebookEdit= is in the =isActiveTool= set (=templates.go:1050=) but has NO
+  renderer — it falls through to JSON dump. Remove from active set or add
+  renderer; do not leave inconsistent.
+- =Task= renderer exists; =TaskCreate= (newer name for same tool) has NO renderer.
+  The session viewer must handle both names.
+- =AskUserQuestion= renderer checks for a =questions= array key (line 1297) but
+  the actual Claude Code schema uses a single =question= string + =options= array.
+  The current renderer shape may not match real session data — verify with a
+  fixture before claiming it works.
+- =Monitor= in v2.1.88 source: =MonitorTool.ts= exports =null= (stub). The real
+  implementation exists only in the 2.1.109 bundle and is not source-inspectable.
+  Input/output shape comes entirely from =sdk-tools.d.ts= and string literals in
+  =cli.js=.
+- =sdk-tools.d.ts= delta between 2.1.88 and 2.1.109 is small: only =toolStats=
+  on TaskCreate output, ="auto"= added to mode enum, =path= added to
+  EnterWorktree, =staleReadFileStateHint= added to Bash output. The large
+  Monitor implementation delta is in =cli.js= proper, not the type stubs.
+- Codex v1 vs v2 rollout: absence of a =TurnContext= line means v1. ccx parses
+  =turn_context= but does not set a version flag — add one for future format
+  discriminant logic.
+- =ResponseItem::Message= drop is INTENTIONAL. Do not add a handler. Document
+  this in the fixture as a comment so future contributors do not re-add it.
+- =TokenUsageInfo= has no =image_tokens=, =audio_tokens=, or =reasoning_effort=.
+  Do not render zero-valued placeholder for absent fields.
+- =forked_from_id= in =SessionMeta= forms the sub-thread fork tree. Unused today.
+  Would enable: visualise which parent session spawned this one; build a
+  provenance tree across sessions.
+- Codex =Compacted.replacement_history= is optional. When present it carries the
+  segment of history that was replaced. Useful for "show what was compacted"
+  UI. ccx currently renders only the summary message from =Compacted=.
+
+*** Open Questions
+
+| Question                                                                          | Who answers |
+|-----------------------------------------------------------------------------------+-------------|
+| Does Monitor tool_result carry all events in a single JSONL line or one per event? | @eric (observe a real 2.1.109 session with Monitor in use) |
+| Are Collab* sub-thread rollout files always in the same =sessions/= directory?     | Codex protocol docs / empirical check |
+| Does =AgentReasoningSectionBreak= carry a label / title for the section?           | protocol.rs field inspection |
+| What does =ElicitationRequest= look like in practice — is it user-visible?         | Real session observation |
+| Does =GhostSnapshot= appear frequently enough to warrant a renderer in v0?         | Frequency analysis on real sessions |
+
+** Files to Create / Update
+
+| File                                                          | Action | Purpose                                           |
+|---------------------------------------------------------------+--------+---------------------------------------------------|
+| =docs/PROVIDER_VOCABULARY.md=                                 | Create | Namespace convention + full coverage matrix       |
+| =internal/provider/testdata/fixture_claude_full_tools.jsonl=  | Create | CC fixture exercising all JSONL types + tools     |
+| =internal/provider/testdata/fixture_codex_full_tools.jsonl=   | Create | Codex fixture exercising all rollout item types   |
+| =internal/provider/testdata/known_tool_names.txt=             | Create | Baseline tool name list for drift detection       |
+| =internal/web/fixture_integrity_test.go=                      | Create | Sentinel-based HTML integrity assertions          |
+| =scripts/check-provider-drift.sh=                             | Create | Weekly drift detection CI script                  |
+| =internal/web/templates.go=                                   | Update | Add generic unknown-tool renderer; remove JSON fallback; add Read/Glob/Grep/Monitor renderers |
+| =internal/provider/codex/backend.go=                          | Update | Handle Collab*, GuardianAssessment, ModelReroute, delta events (parse+discard), add rollout version discriminant |
+
+** Test Prompts for Fixture Generation
+
+Hand-written prompts to paste into a real =claude= CLI session and a real
+=codex= CLI session to generate seed rollouts that exercise the full agent-
+loop surface. The resulting JSONL files become =fixture_claude_full_tools.jsonl=
+and =fixture_codex_full_tools.jsonl= under =internal/provider/testdata/=.
+
+Design principles:
+- Each prompt runs in a dedicated scratchpad dir so the agent can't touch the
+  rest of the filesystem and so the rollout is reproducible from a clean slate.
+- Each prompt asks for a specific sequence of actions that NATURALLY triggers
+  the element kinds we care about — we never ask the agent to "call tool X"
+  because that produces unnatural rollouts with fake-looking tool calls.
+- Each prompt ends with an explicit summary step so there's a final assistant
+  text message at the tail (makes =shape=exchange= digests look right).
+- Neither prompt asks for destructive actions outside its scratchpad. The
+  rollouts can be committed as fixtures without scrubbing.
+
+Before running either prompt: =mkdir -p /tmp/ccx-fixture= and =cd= into it.
+When done, copy the fresh rollout into
+=worktree/ccx/internal/provider/testdata/fixture_<provider>_full_tools.jsonl=.
+
+*** Prompt A — Claude Code full-tools fixture
+
+Paste this verbatim into =claude= (or =claude -p= in headless) from inside
+=/tmp/ccx-fixture/cc=. Requires CC v2.1.109+ for the Monitor tool to fire.
+
+#+begin_src text
+You are generating a ccx fixture session. Treat every step below as a real
+task — not a simulation. Use real tools. Work only inside /tmp/ccx-fixture/cc
+and never touch anything outside it.
+
+# Setup
+1. Create three files to work with:
+   - tokens.txt: 80 lines, one random lowercase word per line
+   - counts.csv: empty header "word,count\n"
+   - README.md: a single H1 "ccx fixture scratchpad" and two paragraphs you
+     write yourself
+   Use the Write tool for each file.
+
+# Planning
+2. Before you edit anything, call TodoWrite with a four-item plan:
+   a. "Build word frequency index"
+   b. "Patch README with results"
+   c. "Run a background watcher while tests run"
+   d. "Dispatch a sub-agent to review the work"
+   Mark item (a) in_progress immediately.
+
+# Read / Glob / Grep
+3. Glob for tokens.txt, then Read it, then Grep for a three-letter word of
+   your choice across /tmp/ccx-fixture/cc. All three tool calls must run.
+
+# Bash + Edit
+4. Build the frequency index with one Bash call that writes counts.csv via
+   a standard `sort | uniq -c | awk` pipeline. Then Edit counts.csv to
+   normalise the whitespace (use the Edit tool, not another Bash).
+
+# Plan mode detour
+5. Before you touch README.md, call EnterPlanMode, state the exact three-line
+   patch you intend to apply, and wait for my approval. When I say "go",
+   call ExitPlanMode and apply the Edit.
+
+# Monitor (v2.1.109+)
+6. Start a Monitor watching for the word "READY" in a file at
+   /tmp/ccx-fixture/cc/signal.log (the file doesn't exist yet — create it with
+   Bash `touch` first, then start Monitor). While Monitor is running, use a
+   separate Bash call (run_in_background: true) to sleep 3 seconds and then
+   append "READY reached\n" to signal.log. Let Monitor catch it, then ask me
+   to confirm before stopping the monitor.
+
+# Sub-agent via TaskCreate
+7. Dispatch a TaskCreate call with subagent_type "Explore" and a prompt
+   asking the sub-agent to grep for any word in tokens.txt that appears more
+   than twice in counts.csv and report back one line. Wait for the result
+   with TaskOutput.
+
+# Skill + WebFetch + AskUserQuestion
+8. Invoke a Skill call with skill="superpowers:verification-before-completion"
+   and args empty. It will print guidance. Then WebFetch
+   https://raw.githubusercontent.com/thevibeworks/ccx/main/README.md with a
+   prompt "summarise in one sentence". Then AskUserQuestion with one
+   question "Ship it?" and two options "ship" / "hold".
+
+# Compact + final summary
+9. Run `/compact` as a slash command. After compaction, write one final
+   assistant message summarising what you did in 4 bullet points: files
+   created, tools used, TaskCreate result, Monitor outcome. Stop there.
+
+Rules:
+- Never call the same tool twice with identical arguments unless I ask.
+- When a step says "use the X tool", use X — do not substitute.
+- If a tool fails, say so and move on. Don't retry more than once.
+- Do not /clear. Do not /exit. End with the summary message and wait.
+#+end_src
+
+Expected element coverage in the resulting rollout:
+| Element                  | How it fires                               |
+|--------------------------+--------------------------------------------|
+| user_prompt              | This whole prompt = one anchor             |
+| TodoWrite tool_use       | Step 2                                     |
+| Glob / Grep / Read       | Step 3                                     |
+| Bash (command)           | Step 4                                     |
+| Edit (diff-shape)        | Steps 4, 5                                 |
+| Write                    | Step 1                                     |
+| EnterPlanMode            | Step 5                                     |
+| ExitPlanMode             | Step 5 (after approval)                    |
+| Monitor tool_use         | Step 6 — the whole point                   |
+| Monitor streaming result | Monitor yields a tool_result with events   |
+| Bash run_in_background   | Step 6                                     |
+| TaskCreate               | Step 7 — triggers sub-agent sidechain      |
+| TaskOutput               | Step 7 — waits for the sub-agent           |
+| Sidechain messages       | Sub-agent's own rollout segment            |
+| Skill tool_use           | Step 8                                     |
+| WebFetch tool_use        | Step 8                                     |
+| AskUserQuestion          | Step 8                                     |
+| compact_boundary         | Step 9 — =/compact= slash command          |
+| command_name XML         | =<command-name>compact</command-name>=     |
+| Final assistant text     | Tail of step 9                             |
+
+Missed (hard to trigger naturally in one session):
+- =Notification=, =NotebookEdit=, =PowerShell=, =CronCreate=, =EnterWorktree=,
+  =SendMessage=, =Config=, =LSP=, =MCP= (requires a configured MCP server),
+  =ImageGeneration=-style events (not in CC vocab today)
+- Mid-session =microcompact_boundary= (only triggered by CC's internal
+  context-pressure heuristic, not by the user)
+
+Trigger these in a second, smaller fixture or mark them as "generic-fallback
+renderer" tests (they hit the unknown-tool path, which is tested separately).
+
+*** Prompt B — Codex full-tools fixture
+
+Paste into =codex= from inside =/tmp/ccx-fixture/cx=. Assumes default model
+(GPT-5/5.4), code mode (which enables =apply_patch= / =exec_command=), and at
+least one MCP server registered (e.g. =codex-companion= or a github MCP).
+If no MCP server is available, Codex will skip step 7 — that's acceptable;
+the MCP row in the fixture coverage becomes a known gap.
+
+#+begin_src text
+You are generating a ccx fixture session. Do every step as a real task.
+Work only inside /tmp/ccx-fixture/cx. Do not touch anything outside it.
+
+# Setup
+1. Use exec_command to create the scratchpad:
+   mkdir -p /tmp/ccx-fixture/cx/src && cd /tmp/ccx-fixture/cx
+2. Write three seed files with apply_patch (one Begin Patch per file is fine):
+   - src/hello.py: print("hello, codex")
+   - src/math.py: def add(a, b): return a + b
+   - data.txt: 30 lines of random lowercase words, one per line
+
+# Planning
+3. Call update_plan with four steps:
+   a. "Add a subtract function to math.py"
+   b. "Write a short unit test"
+   c. "Run the tests"
+   d. "Summarise"
+   Mark (a) in_progress.
+
+# Patches
+4. Apply a patch to src/math.py that adds `def subtract(a, b): return a - b`
+   using apply_patch (NOT exec_command with sed/awk).
+5. Apply a second patch that creates src/test_math.py with two assertions:
+   add(2,3)==5 and subtract(5,3)==2. Again, apply_patch.
+
+# Execution + streaming
+6. Run `python -m pytest src/test_math.py -v` via exec_command with
+   workdir set to /tmp/ccx-fixture/cx. Report pass/fail.
+
+# Update plan
+7. Call update_plan again to mark (a), (b), (c) completed and (d)
+   in_progress.
+
+# Web search
+8. Use web_search to query "python pytest best practices 2026" and summarise
+   the top result in one sentence. (If web_search is disabled in this mode,
+   skip and say so in your final message.)
+
+# MCP (if available)
+9. If any mcp__* tool is available that can fetch a GitHub repo, call it to
+   fetch basic metadata for thevibeworks/ccx. If no MCP server is registered,
+   skip and say so.
+
+# Compact boundary
+10. Call /compact explicitly to force a context compaction. The rollout
+    should gain a "compacted" item.
+
+# Final summary
+11. Write one plain-text reply (agent_message) summarising: files created,
+    patches applied, test result, web_search finding (or skip reason),
+    MCP result (or skip reason). End there.
+
+Rules:
+- Use apply_patch for every file edit. Do not use exec_command with sed / awk
+  / echo-redirect for edits. This is load-bearing for the fixture.
+- Use update_plan at least twice: once at step 3, once at step 7.
+- Do not use write_stdin unless you need it for an interactive process.
+- Do not call /clear or /exit.
+#+end_src
+
+Expected element coverage:
+| Codex element                    | How it fires                             |
+|----------------------------------+------------------------------------------|
+| session_meta                     | Line 1 of the rollout                    |
+| turn_context                     | At least one, v2 rollouts                |
+| event_msg/user_message           | The whole prompt                         |
+| event_msg/task_started           | Turn start                               |
+| response_item/reasoning          | GPT-5 reasoning blocks                   |
+| event_msg/agent_reasoning        | Reasoning summary                        |
+| response_item/function_call      | Every exec_command + update_plan call    |
+| function_call.name=exec_command  | Steps 1, 6                               |
+| function_call.name=update_plan   | Steps 3, 7                               |
+| function_call.name=web_search    | Step 8                                   |
+| event_msg/exec_command_begin     | Step 1, 6 (v2 only)                      |
+| event_msg/exec_command_end       | Step 1, 6                                |
+| response_item/custom_tool_call   | apply_patch calls at steps 2, 4, 5       |
+| function_call.name=apply_patch   | Same                                     |
+| event_msg/patch_apply_begin      | Same (v2 only)                           |
+| event_msg/patch_apply_end        | Same                                     |
+| event_msg/web_search_begin       | Step 8                                   |
+| event_msg/web_search_end         | Step 8                                   |
+| event_msg/mcp_tool_call_begin    | Step 9 if MCP available                  |
+| event_msg/mcp_tool_call_end      | Step 9 if MCP available                  |
+| response_item/function_call (mcp__*) | Step 9 if MCP available              |
+| event_msg/token_count            | Emitted after each turn                  |
+| event_msg/plan_update            | After each update_plan call              |
+| compacted                        | Step 10                                  |
+| event_msg/context_compacted      | Step 10                                  |
+| event_msg/agent_message          | Step 11 final summary                    |
+| event_msg/task_complete          | Turn end                                 |
+
+Missed (would need a separate, targeted fixture):
+- =Collab*= sub-agent spawn events — require =collaboration_mode_kind != default=
+  at turn start. Run the prompt a second time with =codex --collab-mode= or
+  whatever the flag is once it's documented.
+- =entered_review_mode= / =exited_review_mode= — require a nested review
+  session. Generate a second fixture where the user asks for a "review the
+  previous turn" response.
+- =image_generation_begin/end= — requires the agent to call
+  =image_generation=. Add an optional step to Prompt B: "generate a tiny
+  placeholder PNG using image_generation with prompt 'hello'" — only valid in
+  modes that allow it.
+- =agent_message_delta= / =agent_reasoning_delta= streaming events — the
+  rollout DOES persist these when the session was recorded in streaming
+  mode. Verify by grepping the resulting rollout for =_delta=.
+- =guardian_assessment=, =model_reroute=, =thread_rolled_back=, =undo_started= —
+  all edge-case lifecycle events; hard to force naturally.
+
+*** Post-run checklist
+
+After running each prompt, before committing the fixture:
+
+1. Locate the new rollout file:
+   - CC: =~/.claude/projects/-tmp-ccx-fixture-cc/<uuid>.jsonl=
+   - Codex: =~/.codex/sessions/2026/04/15/rollout-*-019d<...>.jsonl=
+2. Run =ccx view <file>= against it to confirm ccx parses it without error.
+3. Count element coverage:
+   =awk -F'"type":' '{print $2}' <file> | cut -d, -f1 | sort | uniq -c=
+   (Codex) or
+   =jq -r '.type' <file> | sort | uniq -c= (CC, line-delimited JSON)
+   Cross-check against the expected-coverage tables above.
+4. Strip absolute paths that leak the dev machine. Replace with
+   =/tmp/ccx-fixture/{cc,cx}= and the session UUIDs with stable
+   =fixture-0001-...= IDs so the file is stable across regenerations.
+5. Drop any line whose =payload= contains secrets (env vars, API keys,
+   cookies). Monitor fixtures specifically: a rolling Bash output can carry
+   environment fragments.
+6. Save under =internal/provider/testdata/= with the fixture name and
+   reference from =fixture_integrity_test.go=.
+
+If you regenerate the fixture against a newer CLI version, BUMP the
+filename (=fixture_claude_2_1_110_full_tools.jsonl=) rather than
+overwriting — the old fixture still has value as a regression test for
+older CLI versions.

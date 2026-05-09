@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -287,6 +289,12 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	}
 	title := fmt.Sprintf("Session %s - ccx", idPrefix)
 	b.WriteString(pageHeader(title, theme))
+	// Hint the current session's provider to the CSS layer so the
+	// loading spinner can pick up a provider-specific accent (e.g.
+	// green for Codex). Non-session pages never set this attribute.
+	if provider := strings.TrimSpace(session.Provider); provider != "" {
+		b.WriteString(fmt.Sprintf(`<script>document.body.dataset.ccxProvider=%q;</script>`, provider))
+	}
 	b.WriteString(renderTopNav(projectName, session.ID))
 	b.WriteString(`<div class="layout session-layout">`)
 
@@ -567,22 +575,21 @@ func splitByUserPrompts(messages []*parser.Message, chunkSize int) [][]*parser.M
 
 func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, showThinking, showTools, loadAll bool) {
 	allMsgs := flattenMessages(messages)
+	mainMsgs := filterMainConversation(allMsgs)
+	sidechainGroups := groupSidechainsByAgent(allMsgs)
+	scMap := matchSidechainsToToolUse(mainMsgs, sidechainGroups)
 
-	// Check if progressive loading is needed (unless loadAll is requested)
-	if !loadAll && len(allMsgs) > progressiveLoadThreshold {
-		renderMessagesProgressive(b, allMsgs, showThinking, showTools)
+	if !loadAll && len(mainMsgs) > progressiveLoadThreshold {
+		renderMessagesProgressive(b, mainMsgs, showThinking, showTools, scMap)
 		return
 	}
 
-	// Build tool results map for inline rendering
 	toolResults := buildToolResultsMap(allMsgs)
 
-	// Group messages into threads anchored by USER prompts
 	var currentThread []*parser.Message
 	inThread := false
 
-	for _, msg := range allMsgs {
-		// Skip standalone tool_result messages - they'll be rendered inline
+	for _, msg := range mainMsgs {
 		if msg.Kind == parser.KindToolResult {
 			continue
 		}
@@ -590,29 +597,25 @@ func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, s
 		isAnchor := msg.Kind == parser.KindUserPrompt || msg.Kind == parser.KindCommand
 
 		if isAnchor {
-			// Close previous thread if any
 			if inThread && len(currentThread) > 0 {
-				renderThread(b, currentThread, showThinking, showTools, toolResults)
+				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 			}
-			// Start new thread
 			currentThread = []*parser.Message{msg}
 			inThread = true
 		} else if inThread {
 			currentThread = append(currentThread, msg)
 		} else {
-			// Messages before first anchor - render directly
 			renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
 		}
 	}
 
-	// Close final thread
 	if inThread && len(currentThread) > 0 {
-		renderThread(b, currentThread, showThinking, showTools, toolResults)
+		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 	}
 }
 
 // renderMessagesProgressive renders large conversations with lazy loading
-func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, showThinking, showTools bool) {
+func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, showThinking, showTools bool, scMap map[string]sidechainGroup) {
 	sections := splitByCompactBoundaries(allMsgs)
 
 	// If no compact boundaries, fall back to splitting by user prompts
@@ -663,7 +666,7 @@ func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, sh
 
 		if isAnchor {
 			if inThread && len(currentThread) > 0 {
-				renderThread(b, currentThread, showThinking, showTools, toolResults)
+				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 			}
 			currentThread = []*parser.Message{msg}
 			inThread = true
@@ -675,7 +678,7 @@ func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, sh
 	}
 
 	if inThread && len(currentThread) > 0 {
-		renderThread(b, currentThread, showThinking, showTools, toolResults)
+		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 	}
 }
 
@@ -692,8 +695,109 @@ func buildToolResultsMap(messages []*parser.Message) map[string]parser.ContentBl
 	return results
 }
 
+type sidechainGroup struct {
+	AgentID  string
+	Messages []*parser.Message
+}
+
+func groupSidechainsByAgent(allMsgs []*parser.Message) []sidechainGroup {
+	order := make([]string, 0)
+	byAgent := make(map[string][]*parser.Message)
+	for _, m := range allMsgs {
+		if !m.IsSidechain || m.AgentID == "" {
+			continue
+		}
+		if _, seen := byAgent[m.AgentID]; !seen {
+			order = append(order, m.AgentID)
+		}
+		byAgent[m.AgentID] = append(byAgent[m.AgentID], m)
+	}
+	groups := make([]sidechainGroup, 0, len(order))
+	for _, id := range order {
+		groups = append(groups, sidechainGroup{AgentID: id, Messages: byAgent[id]})
+	}
+	return groups
+}
+
+var subagentToolSet = map[string]bool{
+	"Task": true, "TaskCreate": true, "Agent": true,
+}
+
+func matchSidechainsToToolUse(mainMsgs []*parser.Message, groups []sidechainGroup) map[string]sidechainGroup {
+	if len(groups) == 0 {
+		return nil
+	}
+	var dispatchIDs []string
+	for _, msg := range mainMsgs {
+		for _, block := range msg.Content {
+			if block.Type == "tool_use" && subagentToolSet[block.ToolName] {
+				dispatchIDs = append(dispatchIDs, block.ToolID)
+			}
+		}
+	}
+	result := make(map[string]sidechainGroup, len(groups))
+	for i, id := range dispatchIDs {
+		if i < len(groups) {
+			result[id] = groups[i]
+		}
+	}
+	return result
+}
+
+func renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, showTools bool) {
+	snippet := sidechainSnippet(g.Messages)
+	label := "Sub-agent"
+	if snippet != "" {
+		label += ": " + snippet
+	}
+	msgCount := len(g.Messages)
+	toolCount := 0
+	for _, m := range g.Messages {
+		for _, block := range m.Content {
+			if block.Type == "tool_use" {
+				toolCount++
+			}
+		}
+	}
+	b.WriteString(fmt.Sprintf(`<details class="sidechain-group" id="sidechain-%s">`, html.EscapeString(g.AgentID)))
+	b.WriteString(fmt.Sprintf(`<summary class="sidechain-header"><span class="sidechain-icon">◆</span> %s <span class="sidechain-meta">%d messages, %d tools</span></summary>`,
+		html.EscapeString(label), msgCount, toolCount))
+	b.WriteString(`<div class="sidechain-body">`)
+
+	toolResults := buildToolResultsMap(g.Messages)
+	for _, msg := range g.Messages {
+		if msg.Kind == parser.KindToolResult {
+			continue
+		}
+		renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
+	}
+
+	b.WriteString(`</div></details>`)
+}
+
+func sidechainSnippet(msgs []*parser.Message) string {
+	for _, m := range msgs {
+		if m.Kind != parser.KindUserPrompt {
+			continue
+		}
+		for _, block := range m.Content {
+			if block.Type == "text" && block.Text != "" {
+				text := strings.TrimSpace(block.Text)
+				if idx := strings.Index(text, "\n"); idx > 0 {
+					text = text[:idx]
+				}
+				if len(text) > 80 {
+					text = text[:77] + "..."
+				}
+				return text
+			}
+		}
+	}
+	return ""
+}
+
 // renderThread renders a conversation thread anchored by a USER message
-func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock) {
+func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock, scMap map[string]sidechainGroup) {
 	if len(thread) == 0 {
 		return
 	}
@@ -701,15 +805,12 @@ func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, sh
 	anchor := thread[0]
 	responses := thread[1:]
 
-	// Thread container with visual line
 	b.WriteString(`<div class="thread">`)
 
-	// Render anchor (USER prompt or Command)
 	b.WriteString(`<div class="thread-anchor">`)
 	renderTurnMessage(b, anchor, showThinking, showTools, 0, toolResults)
 	b.WriteString(`</div>`)
 
-	// Render responses with indent
 	if len(responses) > 0 {
 		b.WriteString(`<div class="thread-responses">`)
 		for _, msg := range responses {
@@ -718,6 +819,13 @@ func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, sh
 				level = 2
 			}
 			renderTurnMessage(b, msg, showThinking, showTools, level, toolResults)
+			for _, block := range msg.Content {
+				if block.Type == "tool_use" && subagentToolSet[block.ToolName] {
+					if sc, ok := scMap[block.ToolID]; ok {
+						renderInlineSidechain(b, sc, showThinking, showTools)
+					}
+				}
+			}
 		}
 		b.WriteString(`</div>`)
 	}
@@ -1048,6 +1156,27 @@ func isActiveTool(name string) bool {
 
 // renderToolInput renders tool input in a formatted way
 func renderToolInput(b *strings.Builder, toolName string, input any) {
+	// ApplyPatch handles a RAW STRING input (the patch body itself)
+	// before the map-type check, because unlike every other tool its
+	// input isn't a JSON object — it's the patch text directly.
+	if toolName == "ApplyPatch" || toolName == "apply_patch" {
+		if s, ok := input.(string); ok && s != "" {
+			b.WriteString(`<pre class="tool-input apply-patch">`)
+			b.WriteString(html.EscapeString(s))
+			b.WriteString(`</pre>`)
+			return
+		}
+		if m, ok := input.(map[string]any); ok {
+			if changes, ok := m["changes"]; ok {
+				inputJSON, _ := json.MarshalIndent(changes, "", "  ")
+				b.WriteString(`<pre class="tool-input apply-patch">`)
+				b.WriteString(html.EscapeString(string(inputJSON)))
+				b.WriteString(`</pre>`)
+				return
+			}
+		}
+	}
+
 	m, ok := input.(map[string]any)
 	if !ok {
 		inputJSON, _ := json.MarshalIndent(input, "", "  ")
@@ -1056,6 +1185,89 @@ func renderToolInput(b *strings.Builder, toolName string, input any) {
 	}
 
 	switch toolName {
+	case "Bash":
+		// Two supported shapes: Claude Code uses {command, description,
+		// timeout}; Codex's exec_command (normalized → Bash) uses
+		// {cmd, workdir, max_output_tokens}. Pick whichever is present.
+		b.WriteString(`<div class="bash-call">`)
+		cmd := ""
+		if v, ok := m["command"].(string); ok && v != "" {
+			cmd = v
+		} else if v, ok := m["cmd"].(string); ok && v != "" {
+			cmd = v
+		} else if argv, ok := m["argv"].([]any); ok {
+			parts := make([]string, 0, len(argv))
+			for _, a := range argv {
+				if s, ok := a.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+			cmd = strings.Join(parts, " ")
+		}
+		if cmd != "" {
+			b.WriteString(`<pre class="bash-cmd">$ `)
+			b.WriteString(html.EscapeString(cmd))
+			b.WriteString(`</pre>`)
+		}
+		if wd, ok := m["workdir"].(string); ok && wd != "" {
+			b.WriteString(fmt.Sprintf(`<div class="bash-meta">cwd: <code>%s</code></div>`, html.EscapeString(wd)))
+		} else if wd, ok := m["cwd"].(string); ok && wd != "" {
+			b.WriteString(fmt.Sprintf(`<div class="bash-meta">cwd: <code>%s</code></div>`, html.EscapeString(wd)))
+		}
+		if desc, ok := m["description"].(string); ok && desc != "" {
+			b.WriteString(fmt.Sprintf(`<div class="bash-desc">%s</div>`, html.EscapeString(desc)))
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "UpdatePlan", "update_plan":
+		// Codex's plan tool. Input shape:
+		//   {explanation: "...", plan: [{step: "...", status: "pending|in_progress|completed"}]}
+		b.WriteString(`<div class="update-plan">`)
+		if exp, ok := m["explanation"].(string); ok && exp != "" {
+			b.WriteString(fmt.Sprintf(`<div class="plan-exp">%s</div>`, html.EscapeString(exp)))
+		}
+		if plan, ok := m["plan"].([]any); ok {
+			b.WriteString(`<ul class="plan-steps">`)
+			for _, item := range plan {
+				pm, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				step, _ := pm["step"].(string)
+				status, _ := pm["status"].(string)
+				icon := "○"
+				cls := "plan-pending"
+				if status == "completed" {
+					icon = "✓"
+					cls = "plan-done"
+				} else if status == "in_progress" {
+					icon = "◐"
+					cls = "plan-active"
+				}
+				b.WriteString(fmt.Sprintf(`<li class="%s"><span class="plan-icon">%s</span><span class="plan-text">%s</span></li>`,
+					cls, icon, html.EscapeString(step)))
+			}
+			b.WriteString(`</ul>`)
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "WriteStdin", "write_stdin":
+		b.WriteString(`<div class="stdin-call">`)
+		if sid, ok := m["session_id"]; ok {
+			b.WriteString(fmt.Sprintf(`<span class="stdin-sid">session %v</span>`, sid))
+		}
+		if chars, ok := m["chars"].(string); ok {
+			if chars == "" {
+				b.WriteString(`<span class="stdin-empty">(empty — poll)</span>`)
+			} else {
+				b.WriteString(fmt.Sprintf(`<pre class="stdin-chars">%s</pre>`, html.EscapeString(chars)))
+			}
+		}
+		b.WriteString(`</div>`)
+		return
+
 	case "Edit":
 		// Show diff-style view for Edit tool
 		b.WriteString(`<div class="edit-diff">`)
@@ -1685,11 +1897,27 @@ func renderSpendSection(turns []*parser.TurnStats, sessionTotal float64) string 
 	return b.String()
 }
 
-// renderConversationNav renders a collapsible tree navigation
+// renderConversationNav emits the outline sidebar.
+//
+// Each Exchange group is a <div class="nav-group"> with two distinct
+// clickable targets:
+//
+//	<a  class="nav-title"  href="#msg-…">prompt preview … 14:03</a>
+//	<button class="nav-expand" aria-expanded="…">▶</button>
+//
+// Clicking the title jumps to the message. Clicking the expand button
+// (and only the expand button) toggles the group's children. There is
+// no <details>/<summary> overlap between "toggle" and "jump": one
+// element, one action.
+//
+// The last three exchanges default to expanded; earlier ones collapse.
+// Group children are rendered in a <div class="nav-children"> that the
+// JS can hide/show via the aria-expanded attribute on the group root.
 func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
-	allMsgs := flattenMessages(messages)
+	flat := flattenMessages(messages)
+	allMsgs := filterMainConversation(flat)
+	sidechains := groupSidechainsByAgent(flat)
 
-	// Group messages: each user prompt starts a new group
 	type navGroup struct {
 		user     *parser.Message
 		children []*parser.Message
@@ -1700,13 +1928,11 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 	for _, msg := range allMsgs {
 		switch msg.Kind {
 		case parser.KindUserPrompt, parser.KindCommand, parser.KindCompactSummary:
-			// Start new group
 			if currentGroup != nil {
 				groups = append(groups, *currentGroup)
 			}
 			currentGroup = &navGroup{user: msg}
 		default:
-			// Add to current group
 			if currentGroup != nil {
 				currentGroup.children = append(currentGroup.children, msg)
 			}
@@ -1716,73 +1942,106 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 		groups = append(groups, *currentGroup)
 	}
 
-	// Render groups as collapsible tree
 	for i, g := range groups {
-		isLast := i >= len(groups)-3 // Expand last 3 groups
+		isLast := i >= len(groups)-3 // default-expand last 3 exchanges
+		uuid := sanitizeID(g.user.UUID)
+		timeAttr := ""
+		if !g.user.Timestamp.IsZero() {
+			timeAttr = g.user.Timestamp.Local().Format("15:04")
+		}
 
-		// User/command/compact header
 		switch g.user.Kind {
 		case parser.KindCompactSummary:
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-compact" data-msg="%s">`,
-				sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
-			b.WriteString(`<span class="nav-icon">◇</span><span class="nav-text">COMPACT</span></a>`)
+				uuid, html.EscapeString(uuid)))
+			b.WriteString(`<span class="nav-icon" aria-hidden="true">◇</span><span class="nav-text">COMPACT</span>`)
+			if timeAttr != "" {
+				b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
+			}
+			b.WriteString(`</a>`)
 
 		case parser.KindCommand:
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-command" data-msg="%s">`,
-				sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
-			b.WriteString(fmt.Sprintf(`<span class="nav-icon">⌘</span><span class="nav-text">%s</span></a>`,
+				uuid, html.EscapeString(uuid)))
+			b.WriteString(fmt.Sprintf(`<span class="nav-icon" aria-hidden="true">⌘</span><span class="nav-text">%s</span>`,
 				html.EscapeString(g.user.CommandName)))
+			if timeAttr != "" {
+				b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
+			}
+			b.WriteString(`</a>`)
 
 		case parser.KindUserPrompt:
 			preview := getNavPreview(g.user)
 			childCount := len(g.children)
 
 			if childCount == 0 {
-				// No children - simple link
 				b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-user" data-msg="%s">`,
-					sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
-				b.WriteString(fmt.Sprintf(`<span class="nav-icon">▶</span><span class="nav-text">%s</span></a>`,
+					uuid, html.EscapeString(uuid)))
+				b.WriteString(fmt.Sprintf(`<span class="nav-icon" aria-hidden="true">▶</span><span class="nav-text">%s</span>`,
 					html.EscapeString(preview)))
-			} else {
-				// Has children - collapsible
-				openAttr := ""
-				if isLast {
-					openAttr = " open"
+				if timeAttr != "" {
+					b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
 				}
-				b.WriteString(fmt.Sprintf(`<details class="nav-group"%s>`, openAttr))
-				b.WriteString(fmt.Sprintf(`<summary class="nav-item nav-user" data-msg="%s">`, html.EscapeString(sanitizeID(g.user.UUID))))
-				b.WriteString(fmt.Sprintf(`<span class="nav-icon">▶</span><span class="nav-text">%s</span>`,
-					html.EscapeString(preview)))
-				b.WriteString(fmt.Sprintf(`<span class="nav-count">%d</span>`, childCount))
-				b.WriteString(`</summary>`)
-				b.WriteString(`<div class="nav-children">`)
+				b.WriteString(`</a>`)
+				continue
+			}
 
-				// Render children with a budget. If the turn has more
-				// than maxChildren entries we show the first (maxChildren-1),
-				// a "+N more" marker, and then the LAST child — which is
-				// usually the assistant's final summary message. Without
-				// preserving the tail, long tool-heavy turns would drop
-				// their summary from the outline entirely.
-				const maxChildren = 10
-				total := len(g.children)
-				if total <= maxChildren {
-					for _, child := range g.children {
-						renderNavChild(b, child)
-					}
-				} else {
-					head := maxChildren - 1
-					for _, child := range g.children[:head] {
-						renderNavChild(b, child)
-					}
-					hidden := total - head - 1
-					if hidden > 0 {
-						b.WriteString(fmt.Sprintf(`<span class="nav-more">+%d more</span>`, hidden))
-					}
-					renderNavChild(b, g.children[total-1])
+			expandedAttr := "false"
+			if isLast {
+				expandedAttr = "true"
+			}
+			b.WriteString(fmt.Sprintf(`<div class="nav-group" data-expanded="%s">`, expandedAttr))
+			b.WriteString(`<div class="nav-row">`)
+			b.WriteString(fmt.Sprintf(`<button type="button" class="nav-expand" aria-expanded="%s" aria-label="Toggle exchange" data-target="%s"></button>`,
+				expandedAttr, html.EscapeString(uuid)))
+			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-title nav-user" data-msg="%s">`,
+				uuid, html.EscapeString(uuid)))
+			b.WriteString(fmt.Sprintf(`<span class="nav-text">%s</span>`, html.EscapeString(preview)))
+			b.WriteString(fmt.Sprintf(`<span class="nav-count">%d</span>`, childCount))
+			if timeAttr != "" {
+				b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
+			}
+			b.WriteString(`</a>`)
+			b.WriteString(`</div>`) // .nav-row
+
+			b.WriteString(`<div class="nav-children">`)
+			const maxChildren = 10
+			total := len(g.children)
+			if total <= maxChildren {
+				for _, child := range g.children {
+					renderNavChild(b, child)
 				}
-				b.WriteString(`</div></details>`)
+			} else {
+				head := maxChildren - 1
+				for _, child := range g.children[:head] {
+					renderNavChild(b, child)
+				}
+				hidden := total - head - 1
+				if hidden > 0 {
+					b.WriteString(fmt.Sprintf(`<span class="nav-more">+%d more</span>`, hidden))
+				}
+				renderNavChild(b, g.children[total-1])
+			}
+			b.WriteString(`</div>`) // .nav-children
+			b.WriteString(`</div>`) // .nav-group
+		}
+	}
+
+	for i, g := range sidechains {
+		snippet := sidechainSnippet(g.Messages)
+		label := fmt.Sprintf("Sub-agent %d", i+1)
+		if snippet != "" {
+			label = snippet
+			if len(label) > 30 {
+				label = label[:27] + "..."
 			}
 		}
+		b.WriteString(fmt.Sprintf(`<a href="#sidechain-%s" class="nav-item nav-sidechain" data-msg="sidechain-%s">`,
+			html.EscapeString(g.AgentID), html.EscapeString(g.AgentID)))
+		b.WriteString(fmt.Sprintf(`<span class="nav-icon" aria-hidden="true">◆</span><span class="nav-text">%s</span>`,
+			html.EscapeString(label)))
+		b.WriteString(fmt.Sprintf(`<span class="nav-count">%d</span>`, len(g.Messages)))
+		b.WriteString(`</a>`)
 	}
 }
 
@@ -2764,6 +3023,84 @@ func pageHeader(title, theme string) string {
 `, theme, html.EscapeString(title), faviconLink(), cssStyles())
 }
 
+// renderNotFoundPage emits a styled 404 page with a pre-filled
+// "report this bug" link to the ccx GitHub issues page.
+//
+// kind is a one-word category ("session", "project", "page",
+// "export") used in the headline. detail is an optional one-line
+// explanation that helps the user understand what went wrong
+// (e.g. "couldn't resolve session 019d8f43... in project foo").
+//
+// The bug report link captures the failing URL, user agent, and
+// timestamp — everything a maintainer needs to reproduce without
+// asking follow-up questions. The issue body is a Markdown template
+// the user can edit before submitting.
+func renderNotFoundPage(w http.ResponseWriter, r *http.Request, kind, detail string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
+
+	failingURL := r.URL.String()
+	userAgent := r.UserAgent()
+	timestamp := time.Now().Format(time.RFC3339)
+
+	// Pre-filled issue title + body. The user can (and should) edit
+	// them before submitting; we just take the boring parts off
+	// their plate.
+	title := "404: " + kind + " not found"
+	if detail != "" {
+		title = "404: " + detail
+	}
+	bodyTemplate := "### What I tried to access\n\n" +
+		"```\n" + failingURL + "\n```\n\n" +
+		"### What I expected\n\n" +
+		"_Replace this with what you expected to see._\n\n" +
+		"### What actually happened\n\n" +
+		"ccx web returned a 404 page.\n\n"
+	if detail != "" {
+		bodyTemplate += "Detail from the 404 page: `" + detail + "`\n\n"
+	}
+	bodyTemplate += "### Environment\n\n" +
+		"- Timestamp: " + timestamp + "\n" +
+		"- User-Agent: `" + userAgent + "`\n" +
+		"- ccx version: _(paste output of `ccx --version` here)_\n"
+
+	issueURL := "https://github.com/thevibeworks/ccx/issues/new?" +
+		"labels=bug" +
+		"&title=" + url.QueryEscape(title) +
+		"&body=" + url.QueryEscape(bodyTemplate)
+
+	var b strings.Builder
+	b.WriteString(pageHeader("ccx — not found", "light"))
+	b.WriteString(renderTopNav("", ""))
+	b.WriteString(`<main class="nf-main">`)
+	b.WriteString(`<div class="nf-box">`)
+	b.WriteString(`<div class="nf-glyph" aria-hidden="true">404</div>`)
+	b.WriteString(`<h1 class="nf-title">Can't find this ` + html.EscapeString(kind) + `.</h1>`)
+	if detail != "" {
+		b.WriteString(`<p class="nf-detail">` + html.EscapeString(detail) + `</p>`)
+	}
+	b.WriteString(`<pre class="nf-url">` + html.EscapeString(failingURL) + `</pre>`)
+	b.WriteString(`<p class="nf-note">`)
+	b.WriteString(`This can happen if the session was deleted, if ccx's project index is stale, `)
+	b.WriteString(`or — more interestingly — if we broke something. If you didn't expect this, `)
+	b.WriteString(`please tell us:`)
+	b.WriteString(`</p>`)
+	b.WriteString(`<div class="nf-actions">`)
+	b.WriteString(`<a class="nf-btn nf-primary" href="` + html.EscapeString(issueURL) + `" target="_blank" rel="noopener noreferrer">`)
+	b.WriteString(`<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:middle;margin-right:6px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`)
+	b.WriteString(`Report this bug`)
+	b.WriteString(`</a>`)
+	b.WriteString(`<a class="nf-btn" href="/">← All projects</a>`)
+	b.WriteString(`<a class="nf-btn" href="/search">Search sessions</a>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`</main>`)
+	b.WriteString(renderFooter())
+	b.WriteString("</body></html>")
+
+	fmt.Fprint(w, b.String())
+}
+
 func faviconLink() string {
 	// Bold favicon: cc in white, x in coral
 	return `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23111'/%3E%3Ctext x='3' y='23' font-family='ui-monospace,monospace' font-weight='800' font-size='14'%3E%3Ctspan fill='%23fff'%3Ecc%3C/tspan%3E%3Ctspan fill='%23da7756'%3Ex%3C/tspan%3E%3C/text%3E%3C/svg%3E">`
@@ -2774,20 +3111,46 @@ func pageFooter() string {
 <div id="loading-overlay" class="loading-overlay">
   <div class="cli-spinner">
     <span class="cli-spinner-char"></span>
-    <span>Loading...</span>
+    <span id="spinner-verb">Loading</span>
   </div>
 </div>
 <script>
 // Global loading overlay control
 const loadingOverlay = document.getElementById('loading-overlay');
-window.showLoading = function() { loadingOverlay?.classList.add('active'); };
-window.hideLoading = function() { loadingOverlay?.classList.remove('active'); };
+const spinnerVerbEl = document.getElementById('spinner-verb');
+
+// ccx-flavored gerund list. Pure decoration — the label the spinner
+// shows has no correlation with what ccx is actually doing. See
+// internal/web/spinner_verbs.go for the Go-side source of truth.
+const SPINNER_VERBS = ` + spinnerVerbsJSArray() + `;
+let spinnerTimer = null;
+function pickSpinnerVerb() {
+  return SPINNER_VERBS[Math.floor(Math.random() * SPINNER_VERBS.length)] + '...';
+}
+function startSpinnerRotation() {
+  if (spinnerVerbEl) spinnerVerbEl.textContent = pickSpinnerVerb();
+  if (spinnerTimer) return;
+  spinnerTimer = setInterval(() => {
+    if (spinnerVerbEl) spinnerVerbEl.textContent = pickSpinnerVerb();
+  }, 1400);
+}
+function stopSpinnerRotation() {
+  if (spinnerTimer) { clearInterval(spinnerTimer); spinnerTimer = null; }
+}
+
+window.showLoading = function() {
+  loadingOverlay?.classList.add('active');
+  startSpinnerRotation();
+};
+window.hideLoading = function() {
+  loadingOverlay?.classList.remove('active');
+  stopSpinnerRotation();
+};
 
 // Show loading on navigation (skip downloads/API links)
 document.querySelectorAll('a[href^="/"]').forEach(a => {
   a.addEventListener('click', function(e) {
     const href = this.getAttribute('href') || '';
-    // Skip: modifier keys, API/export links, anchor links
     if (e.metaKey || e.ctrlKey || e.shiftKey) return;
     if (href.startsWith('/api/')) return;
     if (href.startsWith('#')) return;
@@ -2817,6 +3180,17 @@ func cssStyles() string {
   /* Provider accent colors */
   --accent-cc: #da7756;
   --accent-cx: #10b981;
+  /* Semantic event tokens — one color per event kind, used by the
+   * rail, outline, info panel, badges, and any future surface. If
+   * you want to rebrand an event kind, change it HERE, not in a
+   * dozen component rules. */
+  --event-prompt:   var(--accent-session, #8b5cf6);
+  --event-command:  var(--accent-conversation, #06b6d4);
+  --event-compact:  #fa0;
+  --event-tool:     var(--text-muted);
+  --event-subagent: var(--accent-project, #3b82f6);
+  --event-skill:    var(--accent-session, #8b5cf6);
+  --event-plugin:   var(--accent-conversation, #06b6d4);
   --user-bg: #fff8f5;
   --user-border: #da7756;
   --assistant-bg: #f5faf5;
@@ -3030,6 +3404,96 @@ code, pre, .session-id, .model-badge {
 .footer-sep { opacity: 0.5; }
 .footer-text { font-size: 12px; color: inherit; text-decoration: none; }
 .footer-text:hover { opacity: 0.8; }
+
+/* 404 not-found page — renderNotFoundPage */
+.nf-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 64px 24px 120px;
+  min-height: calc(100vh - 200px);
+}
+.nf-box {
+  max-width: 560px;
+  width: 100%;
+  text-align: left;
+}
+.nf-glyph {
+  font-family: var(--font-mono);
+  font-size: 72px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -2px;
+  color: var(--primary);
+  opacity: 0.85;
+  margin-bottom: 12px;
+}
+.nf-title {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 8px;
+  letter-spacing: -0.2px;
+}
+.nf-detail {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 14px;
+  font-family: var(--font-mono);
+}
+.nf-url {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0 0 18px;
+  word-break: break-all;
+}
+.nf-note {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0 0 20px;
+}
+.nf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.nf-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-decoration: none;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.nf-btn:hover {
+  color: var(--text);
+  background: var(--bg-tertiary);
+  border-color: var(--text-muted);
+}
+.nf-btn.nf-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.nf-btn.nf-primary:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+  color: #fff;
+}
 
 /* Two-panel navigation */
 .panel-nav {
@@ -3422,21 +3886,49 @@ code, pre, .session-id, .model-badge {
 }
 @keyframes spin { to { transform: translateY(-50%) rotate(360deg); } }
 
-/* CLI-style loading spinner */
+/* CLI-style loading spinner.
+ *
+ * Layout invariant: the spinner icon must NOT move horizontally as
+ * the verb changes length. Flex + center + gap lets the whole block
+ * grow/shrink with the verb, which the overlay then re-centers,
+ * which causes the icon to visibly jitter across ~40px as the label
+ * rotates ("Ccxing" → "Flibbertigibbeting" → "Pondering"...).
+ *
+ * Fix: the spinner block is a FIXED-width container with the icon
+ * absolute-positioned at the left edge and the verb text anchored
+ * to a fixed padding-left. Short verbs leave trailing empty space;
+ * long verbs are capped by overflow. The overlay still centers the
+ * whole block, but because the block size is stable, the icon sits
+ * at the same screen coordinate every frame. */
 .cli-spinner {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  position: relative;
+  display: inline-block;
+  width: 220px;
+  padding-left: 26px;
   color: var(--primary);
   font-family: var(--font-mono);
   font-size: 14px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cli-spinner-char {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-block;
-  width: 16px;
+  width: 18px;
   text-align: center;
   animation: cli-spin 0.72s steps(6) infinite;
 }
+/* Codex sessions swap the spinner color to the Codex accent so the
+ * provenance of the session you're viewing is visible even during
+ * a page-load flash. Claude Code sessions (and all non-session
+ * pages) stay on the primary terracotta. */
+body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 @keyframes cli-spin {
   0% { content: '·'; }
   16% { content: '✢'; }
@@ -3880,6 +4372,13 @@ code, pre, .session-id, .model-badge {
 }
 .nav-compact .nav-icon { color: #fa0; }
 
+.nav-sidechain {
+  border-left: 3px solid #86c;
+  margin: 4px 0;
+  opacity: 0.85;
+}
+.nav-sidechain .nav-icon { color: #86c; }
+
 .nav-user { padding-left: 8px; font-weight: 500; }
 .nav-user .nav-icon { color: var(--user-border); }
 
@@ -3898,25 +4397,79 @@ code, pre, .session-id, .model-badge {
 .nav-meta { padding-left: 20px; opacity: 0.4; font-style: italic; }
 .nav-meta .nav-icon { color: #999; }
 
-/* Collapsible nav groups */
+/* Exchange outline groups: title + expand button + children.
+   Two distinct click targets — clicking the title jumps to the message,
+   clicking the expand button toggles children. No overlap. */
 .nav-group { margin: 2px 0; }
-.nav-group > summary { list-style: none; cursor: pointer; }
-.nav-group > summary::-webkit-details-marker { display: none; }
-.nav-group > summary .nav-icon { transition: transform 0.15s; }
-.nav-group[open] > summary .nav-icon { transform: rotate(90deg); }
+.nav-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+.nav-expand {
+  flex-shrink: 0;
+  width: 16px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.nav-expand::before {
+  content: '▸';
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+.nav-expand:hover { background: var(--bg-tertiary); color: var(--text); }
+.nav-expand:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  color: var(--text);
+}
+.nav-expand[aria-expanded="true"]::before { transform: rotate(90deg); }
+.nav-group > .nav-row > .nav-title { flex: 1; min-width: 0; }
+.nav-time {
+  margin-left: 6px;
+  font-size: 9px;
+  color: var(--text-muted);
+  opacity: 0.65;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
 .nav-count {
-  margin-left: auto;
+  margin-left: 6px;
   font-size: 9px;
   background: var(--bg-tertiary);
   padding: 1px 5px;
   border-radius: 8px;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 .nav-children {
   padding-left: 12px;
   border-left: 1px solid var(--border);
   margin-left: 10px;
   margin-top: 2px;
+  overflow: hidden;
+  transition: max-height 0.18s ease, opacity 0.18s ease;
+}
+.nav-group[data-expanded="false"] > .nav-children {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  pointer-events: none;
+}
+.nav-group[data-expanded="true"] > .nav-children {
+  max-height: 2000px;
+  opacity: 1;
 }
 .nav-children .nav-item { font-size: 9px; padding: 2px 6px; }
 .nav-more {
@@ -3978,14 +4531,12 @@ code, pre, .session-id, .model-badge {
   z-index: 150;
   background: transparent;
   border: none;
-  border-left: 1px solid transparent;
-  transition: width 0.18s ease, padding 0.18s ease, border-left-color 0.18s ease;
+  transition: width 0.18s ease, padding 0.18s ease;
   cursor: crosshair;
 }
 .timeline-rail:hover {
   width: 52px;
   padding-left: 28px;
-  border-left-color: color-mix(in srgb, var(--border) 60%, transparent);
 }
 .timeline-rail.has-no-ticks { pointer-events: none; }
 
@@ -4080,7 +4631,7 @@ code, pre, .session-id, .model-badge {
 /* User turn — medium notch, heat-sensitive */
 .timeline-rail .tick-user {
   width: calc(5px + var(--heat, 0) * 4px);
-  background: var(--accent-session, #8b5cf6);
+  background: var(--event-prompt);
   opacity: calc(0.65 + var(--heat, 0) * 0.35);
 }
 .timeline-rail:hover .tick-user {
@@ -4091,7 +4642,7 @@ code, pre, .session-id, .model-badge {
 /* Slash command — medium notch, distinct color */
 .timeline-rail .tick-command {
   width: calc(5px + var(--heat, 0) * 4px);
-  background: var(--accent-conversation, #06b6d4);
+  background: var(--event-command);
   opacity: calc(0.65 + var(--heat, 0) * 0.35);
 }
 .timeline-rail:hover .tick-command {
@@ -4103,7 +4654,7 @@ code, pre, .session-id, .model-badge {
 .timeline-rail .tick-compact {
   width: 10px;
   height: 2px;
-  background: var(--accent-project, #3b82f6);
+  background: var(--event-compact);
   opacity: 0.75;
 }
 .timeline-rail:hover .tick-compact {
@@ -4112,31 +4663,43 @@ code, pre, .session-id, .model-badge {
   opacity: 1;
 }
 
-/* Sub-agent (Task dispatch) — short minor notch */
-.timeline-rail .tick-agent {
+/* Satellite markers — decorations on the primary exchange notch.
+ * Rendered as tiny colored dots fanning LEFT from the parent tick so
+ * they don't fight for the same pixel column. One dot per sub-agent,
+ * skill, compact, or tool call, capped by render budget. Only visible
+ * on hover — otherwise the rail stays a clean Exchange ruler. */
+.timeline-rail .timeline-tick .sat {
+  position: absolute;
+  right: calc(100%% + 3px);
+  top: 50%%;
   width: 3px;
-  height: 1px;
-  background: var(--primary, #da7756);
-  opacity: 0.55;
+  height: 3px;
+  border-radius: 50%%;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%%);
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
-.timeline-rail:hover .tick-agent {
-  width: 5px;
-  height: 2px;
-  opacity: 0.9;
-}
-
-/* Skill invocation — short minor notch, muted color */
-.timeline-rail .tick-skill {
-  width: 3px;
-  height: 1px;
-  background: var(--text-muted, #888);
-  opacity: 0.5;
-}
-.timeline-rail:hover .tick-skill {
-  width: 5px;
-  height: 2px;
+.timeline-rail:hover .timeline-tick .sat {
   opacity: 0.85;
 }
+/* Fan satellites horizontally so they don't all overlap on a single pixel. */
+.timeline-rail .timeline-tick .sat:nth-of-type(1) { margin-right: 0px;  }
+.timeline-rail .timeline-tick .sat:nth-of-type(2) { margin-right: 5px;  }
+.timeline-rail .timeline-tick .sat:nth-of-type(3) { margin-right: 10px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(4) { margin-right: 15px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(5) { margin-right: 20px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(6) { margin-right: 25px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(7) { margin-right: 30px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(8) { margin-right: 35px; }
+
+.timeline-rail .timeline-tick .sat-subagent { background: var(--event-subagent); }
+.timeline-rail .timeline-tick .sat-skill    { background: var(--event-skill); }
+.timeline-rail .timeline-tick .sat-compact  { background: var(--event-compact); }
+.timeline-rail .timeline-tick .sat-tool     { background: var(--event-tool); opacity: 0; }
+/* Tool satellites are only revealed when the rail expands — they're
+ * the most common step kind and would clutter the collapsed view. */
+.timeline-rail:hover .timeline-tick .sat-tool { opacity: 0.6; }
 
 /* The locked-nearest tick gets a primary-color halo */
 .timeline-rail .tick-nearest {
@@ -4203,20 +4766,50 @@ code, pre, .session-id, .model-badge {
 .timeline-tooltip.show {
   opacity: 1;
 }
+/* Tooltip layout
+ *   [clock]  exchange N  +offset · duration        ← head
+ *   first line of the prompt                       ← snippet
+ *   $cost  so far $cumulative  ⧫ tokens            ← meta
+ *   ⎇ 2 subagents · ✦ 1 skill · ◈ 3 tools          ← badges (only if any)
+ *
+ * The head row is clock-led because the user's first question is
+ * almost always "what time was this?". Exchange N is the stable
+ * identity; offset/duration are secondary context. */
 .timeline-tooltip .tt-head {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: baseline;
+  gap: 8px;
   margin-bottom: 4px;
-}
-.timeline-tooltip .tt-offset {
-  color: var(--primary);
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  font-size: 10px;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
 }
+.timeline-tooltip .tt-clock {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.2px;
+}
+.timeline-tooltip .tt-clock:empty { display: none; }
+.timeline-tooltip .tt-index {
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+.timeline-tooltip .tt-index:empty { display: none; }
+.timeline-tooltip .tt-offset {
+  color: var(--text-muted);
+  font-size: 9px;
+  opacity: 0.8;
+}
+.timeline-tooltip .tt-offset:empty { display: none; }
+.timeline-tooltip .tt-offset::before { content: '+'; opacity: 0.6; }
+.timeline-tooltip .tt-duration {
+  color: var(--text-muted);
+  font-size: 9px;
+  opacity: 0.7;
+}
+.timeline-tooltip .tt-duration:empty { display: none; }
+.timeline-tooltip .tt-duration::before { content: '· '; opacity: 0.5; }
 .timeline-tooltip .tt-snippet {
   display: block;
   color: var(--text);
@@ -4225,28 +4818,6 @@ code, pre, .session-id, .model-badge {
   white-space: nowrap;
   margin-bottom: 4px;
 }
-.timeline-tooltip .tt-kind {
-  display: inline-block;
-  padding: 1px 5px;
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--text) 10%, transparent);
-  color: var(--text-muted);
-}
-.timeline-tooltip.kind-user .tt-kind { background: color-mix(in srgb, var(--accent-session, #8b5cf6) 18%, transparent); color: var(--accent-session, #8b5cf6); }
-.timeline-tooltip.kind-command .tt-kind { background: color-mix(in srgb, var(--accent-conversation, #06b6d4) 18%, transparent); color: var(--accent-conversation, #06b6d4); }
-.timeline-tooltip.kind-compact .tt-kind { background: color-mix(in srgb, var(--accent-project, #3b82f6) 18%, transparent); color: var(--accent-project, #3b82f6); }
-.timeline-tooltip.kind-agent .tt-kind { background: color-mix(in srgb, var(--primary, #da7756) 18%, transparent); color: var(--primary, #da7756); }
-.timeline-tooltip.kind-skill .tt-kind { background: color-mix(in srgb, var(--text-muted, #888) 14%, transparent); color: var(--text-muted, #888); }
-.timeline-tooltip .tt-index {
-  color: var(--text-muted);
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-}
-.timeline-tooltip .tt-index:empty { display: none; }
-
 .timeline-tooltip .tt-meta {
   display: flex;
   gap: 10px;
@@ -4256,7 +4827,7 @@ code, pre, .session-id, .model-badge {
   padding-top: 4px;
   border-top: 1px dashed var(--border);
 }
-.timeline-tooltip .tt-meta:empty { display: none; }
+.timeline-tooltip .tt-meta:empty { display: none; padding: 0; border: 0; }
 .timeline-tooltip .tt-cost:empty, .timeline-tooltip .tt-tokens:empty, .timeline-tooltip .tt-cum:empty { display: none; }
 .timeline-tooltip .tt-cost {
   color: var(--primary);
@@ -4268,6 +4839,23 @@ code, pre, .session-id, .model-badge {
 }
 .timeline-tooltip .tt-cum::before { content: '∑ '; opacity: 0.5; }
 .timeline-tooltip .tt-tokens::before { content: '⧫ '; opacity: 0.6; }
+
+.timeline-tooltip .tt-badges {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  padding-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.timeline-tooltip .tt-badges:empty { display: none; padding: 0; }
+.timeline-tooltip .tt-badges .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.timeline-tooltip .tt-badges .badge-subagent { color: var(--event-subagent); }
+.timeline-tooltip .tt-badges .badge-skill    { color: var(--event-skill); }
+.timeline-tooltip .tt-badges .badge-tool     { color: var(--event-tool); }
 
 .timeline-rail .timeline-empty {
   display: flex;
@@ -4370,7 +4958,9 @@ code, pre, .session-id, .model-badge {
 }
 .thread-responses::before { display: none; }
 
-/* Thread folding - collapse middle responses (direct children only) */
+/* Thread folding — collapse middle responses. The one fold button
+ * FLOATS on the thread's vertical line (the left border of
+ * .thread-responses). Clicking the user header does not toggle. */
 .thread.folded > .thread-responses > .turn:not(:last-child) {
   max-height: 0;
   overflow: hidden;
@@ -4384,49 +4974,100 @@ code, pre, .session-id, .model-badge {
   opacity: 1;
   transition: opacity 0.2s;
 }
-/* Fold indicator in header */
-.fold-indicator {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-  margin-left: 8px;
-  padding: 2px 6px;
-  background: var(--bg-secondary);
-  border-radius: 3px;
-  cursor: pointer;
+/* When folded, brighten the vertical line so the thread reads as
+ * "something is here, collapsed" rather than "this section is
+ * empty". */
+.thread.folded > .thread-responses {
+  border-left-color: var(--primary);
+  border-left-style: solid;
+  min-height: 28px;
 }
-.thread.folded .fold-indicator { background: var(--primary); color: white; }
-.thread.folded .fold-indicator::after { content: '+' attr(data-hidden); }
-.thread:not(.folded) .fold-indicator::after { content: '−'; }
 
-/* Fold separator line in middle - clickable */
-.fold-separator {
-  display: none;
+/* Floating fold toggle
+ *
+ * Lives absolute-positioned on the thread-responses' left edge, so it
+ * straddles the vertical line the user already associates with "this
+ * thread's body". Default state is a tiny pill with just a chevron +
+ * step count — low profile, doesn't distract from the conversation.
+ * On hover it slides out to the right and reveals the full label
+ * ("collapse" / "expand N steps"). Clicking toggles.
+ *
+ * The button is sticky-positioned INSIDE .thread-responses so long
+ * threads keep it in view as the user scrolls through the responses
+ * column. At the top of the thread it sits at the top of the vertical
+ * line; as the user scrolls down, the button follows down to the top
+ * of the viewport but never leaves its own thread's bounds. */
+.thread-responses { /* make room for the floating button without
+                      displacing content — the button overlaps the
+                      border, not the padding */ }
+.fold-toggle {
+  position: sticky;
+  top: 64px; /* clear the top-nav */
+  left: 0;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  margin: 8px 0;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: background 0.15s;
-}
-.fold-separator:hover { background: var(--bg-secondary); }
-.thread.folded .fold-separator { display: flex; }
-.fold-sep-line {
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-.fold-sep-text {
-  font-size: 11px;
+  gap: 6px;
+  margin: 0 0 8px -20px; /* -20px pulls the button left over the
+                             vertical line; padding-left of responses
+                             is 12px + margin 8px = 20px */
+  padding: 3px 8px 3px 6px;
   font-family: var(--font-mono);
-  color: white;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  z-index: 5;
+  max-width: 24px;
+  overflow: hidden;
   white-space: nowrap;
-  padding: 4px 10px;
-  background: var(--primary);
-  border-radius: 12px;
+  transition: max-width 0.2s ease, color 0.12s ease,
+              background 0.12s ease, border-color 0.12s ease,
+              box-shadow 0.12s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
-.fold-separator:hover .fold-sep-text { background: var(--primary-hover); }
+.fold-toggle:hover,
+.fold-toggle:focus-visible {
+  color: var(--text);
+  background: var(--bg-secondary);
+  border-color: var(--primary);
+  max-width: 220px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+.fold-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.fold-toggle .fold-chevron {
+  display: inline-block;
+  font-size: 10px;
+  line-height: 1;
+  width: 10px;
+  text-align: center;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.fold-toggle[aria-expanded="false"] .fold-chevron {
+  color: var(--primary);
+}
+.fold-toggle .fold-label {
+  letter-spacing: 0.2px;
+  padding-left: 6px;
+}
+.fold-toggle .fold-summary {
+  font-size: 9px;
+  opacity: 0.7;
+  padding-left: 6px;
+}
+/* When folded, a subtle pulse draws attention to the floating
+ * button so users discover the affordance on long sessions. Runs
+ * only until first hover. */
+@keyframes fold-hint {
+  0%, 100% { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 18%, transparent); }
+}
+.thread.folded > .thread-responses > .fold-toggle[aria-expanded="false"]:not(:hover):not(:focus-visible) {
+  animation: fold-hint 2.4s ease-in-out 1;
+}
 
 /* Level indentation */
 .level-1 { margin-left: 0; }
@@ -4600,6 +5241,30 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 .turn-agent .turn-header { background: transparent; }
 .turn-agent .turn-icon { color: #86c; }
 .turn-agent .turn-role { display: inline; color: #86c; }
+
+/* Sub-agent transcript sections */
+.sidechain-sections { margin-top: 32px; }
+.sidechain-group {
+  margin: 12px 0;
+  border: 1px solid var(--border, #e5e7eb);
+  border-left: 3px solid #86c;
+  border-radius: 6px;
+}
+.sidechain-header {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text-secondary, #6b7280);
+}
+.sidechain-header:hover { background: var(--bg-hover, #f9fafb); }
+.sidechain-icon { color: #86c; margin-right: 6px; }
+.sidechain-meta {
+  font-size: 0.85em;
+  font-weight: 400;
+  color: var(--text-tertiary, #9ca3af);
+  margin-left: 8px;
+}
+.sidechain-body { padding: 0 14px 14px; }
 
 /* Compacted context - minimal separator */
 .turn-compacted {
@@ -5534,31 +6199,78 @@ function copyTurn(e, btn) {
   setTimeout(() => btn.textContent = 'copy', 1500);
 }
 
+// jumpToAnchor is the single entry point for "scroll this message into
+// view with smooth behavior, open any closed ancestors, flash it to
+// orient the eye." Used by outline clicks, rail ticks, load-earlier
+// restore, hash navigation, and search result jumps. Any caller that
+// wants "take me there" goes through here — one code path, one set of
+// edge cases.
+//
+// opts.preserveFold (default false) — if true, do NOT auto-unfold a
+// closed thread that contains the target. Used by the fold keybinding
+// which wants to toggle without moving.
+function jumpToAnchor(msgId, opts) {
+  opts = opts || {};
+  if (!msgId) return false;
+  const msgEl = document.getElementById('msg-' + msgId);
+  if (!msgEl) return false;
+
+  if (!opts.preserveFold) {
+    let node = msgEl;
+    while (node) {
+      if (node.tagName === 'DETAILS') {
+        node.open = true;
+        node.setAttribute('open', '');
+      }
+      if (node.classList && node.classList.contains('thread') && node.classList.contains('folded')) {
+        node.classList.remove('folded');
+      }
+      node = node.parentElement;
+    }
+    msgEl.querySelectorAll('details').forEach(d => { d.open = true; d.setAttribute('open', ''); });
+  }
+
+  // Mark the matching nav item as active so the sidebar mirrors focus.
+  document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
+  const navItem = document.querySelector('.nav-item[data-msg="' + msgId + '"]');
+  if (navItem) {
+    navItem.classList.add('active');
+    // Also expand the owning group so the active child is visible.
+    const group = navItem.closest('.nav-group');
+    if (group && group.dataset.expanded === 'false') {
+      group.dataset.expanded = 'true';
+      const btn = group.querySelector('.nav-expand');
+      if (btn) btn.setAttribute('aria-expanded', 'true');
+    }
+  }
+
+  msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  msgEl.style.animation = 'flash 0.8s';
+  // Clear the animation so re-clicking the same target re-flashes.
+  setTimeout(() => { msgEl.style.animation = ''; }, 900);
+  return true;
+}
+
+// Outline title clicks jump; expand buttons toggle. Two targets, two
+// actions, no overlap. The nav row intercepts neither — events reach
+// the individual child elements.
+document.querySelectorAll('.nav-expand').forEach(btn => {
+  btn.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const group = this.closest('.nav-group');
+    if (!group) return;
+    const expanded = group.dataset.expanded === 'true';
+    group.dataset.expanded = expanded ? 'false' : 'true';
+    this.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+  });
+});
+
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', function(e) {
-    // Summary elements: just toggle group (native behavior), no jump
-    const isSummary = this.tagName === 'SUMMARY' || this.closest('summary');
-    if (isSummary) {
-      // Update active state only, let native toggle handle open/close
-      document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
-      this.classList.add('active');
-      return;
-    }
-
-    // Regular nav items: prevent default anchor and scroll to message
     e.preventDefault();
-    document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
-    this.classList.add('active');
     const msgId = this.dataset.msg;
-    if (msgId) {
-      const msgEl = document.getElementById('msg-' + msgId);
-      if (msgEl) {
-        const details = msgEl.querySelector('details');
-        if (details) details.setAttribute('open', '');
-        msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        msgEl.style.animation = 'flash 0.4s';
-      }
-    }
+    jumpToAnchor(msgId);
   });
 });
 
@@ -6105,9 +6817,7 @@ function updateNavForMessage(uuid, kind, content, time) {
   item.innerHTML = '<span class="nav-icon">' + icon + '</span><span class="nav-text">' + escapeHtml(text || kind) + '</span>';
   item.addEventListener('click', function(e) {
     e.preventDefault();
-    document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
-    this.classList.add('active');
-    document.getElementById('msg-' + safeId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    jumpToAnchor(safeId);
   });
   liveSection.appendChild(item);
 }
@@ -6141,44 +6851,76 @@ function toggleWatch() {
 if (btnWatch) btnWatch.addEventListener('click', toggleWatch);
 if (tbWatch) tbWatch.addEventListener('click', toggleWatch);
 
-// Thread folding - click user block to fold/unfold middle responses
+// Thread folding — one floating button per thread.
+//
+// The button is sticky-positioned over the thread's vertical line
+// (see .fold-toggle CSS). Default state collapses threads that have
+// ANY intermediate response (2+ turns in the responses column), so
+// long sessions don't greet users with a wall of tool calls. The
+// button reveals its full label on hover/focus; a one-shot pulse
+// animation on first render draws the eye to it.
 document.querySelectorAll('.thread').forEach(thread => {
-  const userHeader = thread.querySelector('.turn-user .turn-header');
   const responses = thread.querySelector('.thread-responses');
-  if (!userHeader || !responses) return;
-
+  if (!responses) return;
   const turns = responses.querySelectorAll('.turn');
-  if (turns.length <= 1) return; // no folding needed for single response
+  if (turns.length <= 1) return;
 
-  // Add fold indicator in header
-  const indicator = document.createElement('span');
-  indicator.className = 'fold-indicator';
-  indicator.dataset.hidden = turns.length - 1;
-  userHeader.appendChild(indicator);
+  const hiddenWhenFolded = turns.length - 1;
 
-  // Add fold separator line between user and final response (clickable)
-  const separator = document.createElement('div');
-  separator.className = 'fold-separator';
-  separator.innerHTML = '<span class="fold-sep-line"></span><span class="fold-sep-text">+' + (turns.length - 1) + ' ▶ ··· ○</span><span class="fold-sep-line"></span>';
-  separator.title = 'Click to expand';
-  separator.addEventListener('click', function() {
-    thread.classList.remove('folded');
-  });
-  responses.insertBefore(separator, responses.firstChild);
+  const fold = document.createElement('button');
+  fold.type = 'button';
+  fold.className = 'fold-toggle';
+  fold.title = 'Toggle thread (z)';
+  fold.innerHTML =
+    '<span class="fold-chevron" aria-hidden="true">▸</span>' +
+    '<span class="fold-label">expand</span>' +
+    '<span class="fold-summary">' + hiddenWhenFolded + ' steps</span>';
 
-  // Start folded by default for threads with many responses
-  if (turns.length > 2) {
-    thread.classList.add('folded');
-  }
+  const applyState = function(folded) {
+    thread.classList.toggle('folded', folded);
+    fold.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    const label = fold.querySelector('.fold-label');
+    const chev  = fold.querySelector('.fold-chevron');
+    if (label) label.textContent = folded ? 'expand' : 'collapse';
+    if (chev)  chev.textContent  = folded ? '▸' : '▾';
+  };
 
-  userHeader.addEventListener('click', function(e) {
-    // Don't interfere with raw/copy buttons
-    if (e.target.closest('.turn-actions')) return;
-    // Prevent the user details from toggling (we're hijacking the click for thread fold)
+  fold.addEventListener('click', function(e) {
     e.preventDefault();
-    thread.classList.toggle('folded');
+    applyState(!thread.classList.contains('folded'));
   });
+
+  // Insert as the first child of .thread-responses so the button
+  // sits at the TOP of the vertical line, overlapping its left edge.
+  responses.insertBefore(fold, responses.firstChild);
+
+  // Default: fold any thread with intermediate responses. A single
+  // user→one-reply thread (turns.length === 1) doesn't even get a
+  // fold button (handled by the early return above).
+  applyState(turns.length >= 2);
 });
+
+// z keybinding toggles the thread fold under the current scroll position.
+// Finds the visible thread whose top is nearest the viewport top and
+// clicks its fold-toggle button.
+function toggleNearestThreadFold() {
+  const threads = document.querySelectorAll('.thread');
+  if (threads.length === 0) return;
+  const viewTop = window.scrollY + 80;
+  let best = null;
+  let bestDist = Infinity;
+  threads.forEach(t => {
+    const rect = t.getBoundingClientRect();
+    const top = rect.top + window.scrollY;
+    if (top <= viewTop + 200) {
+      const d = Math.abs(top - viewTop);
+      if (d < bestDist) { bestDist = d; best = t; }
+    }
+  });
+  if (!best) return;
+  const btn = best.querySelector('.fold-toggle');
+  if (btn) btn.click();
+}
 
 const btnExport = document.getElementById('btn-export');
 const exportMenu = document.getElementById('export-menu');
@@ -6192,7 +6934,9 @@ if (btnExport && exportMenu) {
   });
 }
 
-// Auto-scroll: jump to hash target, reload if hidden, or scroll to bottom
+// Auto-scroll: jump to hash target on load, reload with full history
+// if the target is hidden inside a progressive-loaded section, or
+// scroll to bottom when there's no hash.
 function jumpToHashTarget() {
   const hash = window.location.hash;
   if (!hash || !hash.startsWith('#msg-')) {
@@ -6200,40 +6944,18 @@ function jumpToHashTarget() {
     return;
   }
 
-  const msgEl = document.querySelector(hash);
-  if (!msgEl) {
-    // Target not in DOM. If progressive loading is active, reload with full history.
-    // Preserves hash via URL object; uses replace() so the broken page doesn't pollute history.
-    if (document.getElementById('load-earlier')) {
-      const url = new URL(window.location.href);
-      url.searchParams.set('all', '1');
-      window.location.replace(url.toString());
-    }
-    return;
-  }
-
-  // Walk up from the target, opening any ancestor details and unfolding any folded threads
-  let node = msgEl;
-  while (node) {
-    if (node.tagName === 'DETAILS') {
-      node.open = true;
-      node.setAttribute('open', '');
-    }
-    if (node.classList && node.classList.contains('thread') && node.classList.contains('folded')) {
-      node.classList.remove('folded');
-    }
-    node = node.parentElement;
-  }
-
-  // Expand details inside the target too, so inner content is visible
-  msgEl.querySelectorAll('details').forEach(d => { d.open = true; d.setAttribute('open', ''); });
-
-  msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  msgEl.style.animation = 'flash 0.8s';
-
   const msgId = hash.replace('#msg-', '');
-  const navItem = document.querySelector('.nav-item[data-msg="' + msgId + '"]');
-  if (navItem) navItem.classList.add('active');
+  if (jumpToAnchor(msgId)) return;
+
+  // Target not in DOM — the load-earlier escape hatch is our last
+  // resort: reload with ?all=1 so the full history renders, then the
+  // browser re-runs this handler after load and the jumpToAnchor call
+  // above will find the element.
+  if (document.getElementById('load-earlier')) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('all', '1');
+    window.location.replace(url.toString());
+  }
 }
 setTimeout(jumpToHashTarget, 150);
 
@@ -6264,6 +6986,11 @@ const timelineTicks = timelineTicksRaw.map(el => {
     cumulative: el.dataset.cumulative || '',
     tokens:     el.dataset.tokens || '',
     index:      el.dataset.index || '',
+    clock:      el.dataset.clock || '',
+    duration:   el.dataset.duration || '',
+    subagents:  parseInt(el.dataset.subagents || '0', 10) || 0,
+    skills:     parseInt(el.dataset.skills || '0', 10) || 0,
+    tools:      parseInt(el.dataset.tools || '0', 10) || 0,
     pct:        pct,
   };
 }).sort((a, b) => a.pct - b.pct);
@@ -6357,21 +7084,38 @@ function updateTimelineCurrent() {
 function showTooltip(tick, clientY) {
   if (!timelineTooltip || !tick) return;
 
-  // Content
-  const kindEl = timelineTooltip.querySelector('.tt-kind');
-  const offsetEl = timelineTooltip.querySelector('.tt-offset');
-  const indexEl = timelineTooltip.querySelector('.tt-index');
-  const snippetEl = timelineTooltip.querySelector('.tt-snippet');
-  const costEl = timelineTooltip.querySelector('.tt-cost');
-  const cumEl = timelineTooltip.querySelector('.tt-cum');
-  const tokensEl = timelineTooltip.querySelector('.tt-tokens');
-  if (kindEl) kindEl.textContent = tick.kind;
-  if (offsetEl) offsetEl.textContent = tick.offset ? '+' + tick.offset : '';
-  if (indexEl) indexEl.textContent = tick.index ? 'turn ' + tick.index : '';
-  if (snippetEl) snippetEl.textContent = tick.snippet || '(no preview)';
-  if (costEl) costEl.textContent = tick.cost || '';
-  if (cumEl) cumEl.textContent = tick.cumulative ? 'so far ' + tick.cumulative : '';
-  if (tokensEl) tokensEl.textContent = tick.tokens || '';
+  const clockEl    = timelineTooltip.querySelector('.tt-clock');
+  const offsetEl   = timelineTooltip.querySelector('.tt-offset');
+  const indexEl    = timelineTooltip.querySelector('.tt-index');
+  const durationEl = timelineTooltip.querySelector('.tt-duration');
+  const snippetEl  = timelineTooltip.querySelector('.tt-snippet');
+  const costEl     = timelineTooltip.querySelector('.tt-cost');
+  const cumEl      = timelineTooltip.querySelector('.tt-cum');
+  const tokensEl   = timelineTooltip.querySelector('.tt-tokens');
+  const badgesEl   = timelineTooltip.querySelector('.tt-badges');
+
+  if (clockEl)    clockEl.textContent    = tick.clock || '';
+  if (indexEl)    indexEl.textContent    = tick.index ? 'exchange ' + tick.index : '';
+  if (offsetEl)   offsetEl.textContent   = tick.offset || '';
+  if (durationEl) durationEl.textContent = tick.duration || '';
+  if (snippetEl)  snippetEl.textContent  = tick.snippet || '(no preview)';
+  if (costEl)     costEl.textContent     = tick.cost || '';
+  if (cumEl)      cumEl.textContent      = tick.cumulative ? 'so far ' + tick.cumulative : '';
+  if (tokensEl)   tokensEl.textContent   = tick.tokens || '';
+
+  if (badgesEl) {
+    const parts = [];
+    if (tick.subagents > 0) {
+      parts.push('<span class="badge badge-subagent">⎇ ' + tick.subagents + ' ' + (tick.subagents === 1 ? 'subagent' : 'subagents') + '</span>');
+    }
+    if (tick.skills > 0) {
+      parts.push('<span class="badge badge-skill">✦ ' + tick.skills + ' ' + (tick.skills === 1 ? 'skill' : 'skills') + '</span>');
+    }
+    if (tick.tools > 0) {
+      parts.push('<span class="badge badge-tool">◈ ' + tick.tools + ' ' + (tick.tools === 1 ? 'tool' : 'tools') + '</span>');
+    }
+    badgesEl.innerHTML = parts.join('<span class="badge-sep"> · </span>');
+  }
 
   timelineTooltip.className = 'timeline-tooltip kind-' + tick.kind + ' show';
 
@@ -6450,7 +7194,14 @@ function handleRailEnter() {
 function handleRailClick(e) {
   if (!currentNearest) return;
   e.preventDefault();
-  window.location.hash = '#msg-' + currentNearest.uuid;
+  // Update hash so the URL is shareable, but route the actual scroll
+  // through jumpToAnchor so ancestor unfold + flash + sidebar active
+  // state all happen consistently with outline clicks.
+  const uuid = currentNearest.uuid;
+  if (uuid) {
+    history.replaceState(null, '', '#msg-' + uuid);
+    jumpToAnchor(uuid);
+  }
 }
 
 if (timelineRail) {
@@ -6487,7 +7238,8 @@ function jumpTickRelative(delta) {
   }
   const target = timelineTicks[idx];
   if (target && target.uuid) {
-    window.location.hash = '#msg-' + target.uuid;
+    history.replaceState(null, '', '#msg-' + target.uuid);
+    jumpToAnchor(target.uuid);
   }
 }
 
@@ -6504,6 +7256,7 @@ document.addEventListener('keydown', function(e) {
     case 'r': document.getElementById('tb-refresh')?.click(); break;
     case '[': jumpTickRelative(-1); e.preventDefault(); break;
     case ']': jumpTickRelative(1); e.preventDefault(); break;
+    case 'z': toggleNearestThreadFold(); e.preventDefault(); break;
   }
 });
 
