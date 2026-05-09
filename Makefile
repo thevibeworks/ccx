@@ -1,5 +1,5 @@
 .PHONY: build build-all build-darwin-arm64 build-darwin-amd64 build-linux-amd64 build-linux-arm64
-.PHONY: test clean install lint fmt deps run tools skill verify-pricing dev devweb
+.PHONY: test clean install lint fmt deps run dev run-projects run-doctor tools skill verify-pricing
 
 VERSION ?= dev
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -73,37 +73,14 @@ deps:
 run: build
 	./bin/ccx
 
+dev: build
+	./bin/ccx web
+
 run-projects: build
 	./bin/ccx projects
 
 run-doctor: build
 	./bin/ccx doctor
-
-# Dev loop: rebuild + run the web UI. Override PORT / HOST on the
-# command line for non-default ports (`make devweb PORT=18080`), or
-# set NO_OPEN=1 to skip auto-launching the browser (handy when
-# iterating over SSH or in CI-adjacent tests).
-#
-# Kills any prior `ccx web` instance bound to the same PORT before
-# starting so back-to-back invocations don't fail with "address
-# already in use".
-PORT   ?= 8080
-HOST   ?= localhost
-NO_OPEN ?=
-devweb: build
-	@-pkill -f "bin/ccx web.*--port $(PORT)" 2>/dev/null; sleep 0.2
-	@echo ""
-	@echo "  ccx web (dev)"
-	@echo "  ─────────────────────────────────────"
-	@echo "  URL:  http://$(HOST):$(PORT)"
-	@echo "  Ctrl-C to stop."
-	@echo ""
-	@./bin/ccx web --host $(HOST) --port $(PORT) $(if $(NO_OPEN),--no-open,)
-
-# Default dev alias — fastest "rebuild + run web" loop. Templates
-# are embedded at compile time, so every edit to internal/web/
-# requires a rebuild, which this target makes a single command.
-dev: devweb
 
 skill:
 	cd skills && zip -r ../ccx.skill ccx/

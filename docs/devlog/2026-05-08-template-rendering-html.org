@@ -1,0 +1,184 @@
+* [2026-04-29] ccx rendering: sprintf HTML, sidechain erasure, schema drift :ARCH:RELIABILITY:
+
+** Tension
+
+Three problems converged in the same session and they share a root cause:
+ccx's web layer has no architecture.
+
+1. *Sidechain rendering*: Commit 0e21ab4 loaded sub-agent transcripts into
+   session.RootMessages. The web renderer created wrong thread sections.
+   We "fixed" it by filtering sidechain messages from all render paths
+   — including search. 152 messages of sub-agent work became invisible.
+   That's not a fix. That's information destruction dressed as a bugfix.
+
+2. *Printf HTML*: templates.go is 91k tokens of fmt.Sprintf building HTML
+   by string concatenation. No escaping safety net (Semgrep flags this as
+   XSS), no composition model, no separation of structure from logic. Every
+   change is a minefield of unclosed tags. Adding sub-agent inline rendering
+   to this codebase means adding MORE sprintf to an already-unreadable file.
+
+3. *Schema drift*: Claude Code 2.1.137 emits 24 JSONL fields that ccx's
+   rawMessage struct doesn't parse. Including:
+   - =aiTitle= (the "Session name" users see in Claude Code's status bar)
+   - =toolUseResult.agentId= (the link from tool_result to sidechain file)
+   - =toolUseResult.totalTokens/totalToolUseCount/totalDurationMs/toolStats=
+   - =attachment= types: file, directory, ultrathink_effort, deferred_tools,
+     mcp_instructions, skill_listing, nested_memory, task_reminder
+   - =stopReason=, =durationMs=, =permissionMode=, =entrypoint=, =url=
+   ccx discovers these gaps via user reports, not proactively.
+
+The common root: no structured data layer between the JSONL parser and the
+HTML output. The parser dumps raw fields into Go structs, the renderer
+reads those structs via sprintf. No schema validation, no template
+composition, no contract between layers.
+
+** Observation
+
+*** Printf at scale
+
+templates.go is the single largest file in the codebase. Sample:
+
+#+BEGIN_SRC go
+b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">
+Version</span><span class="info-value">%s</span></div>`,
+    html.EscapeString(session.Version)))
+#+END_SRC
+
+Repeated ~200 times. Manual =html.EscapeString= calls — miss one and you
+have XSS. No IDE support for the HTML structure. No way to compose
+components (a "turn" is copy-pasted, not parameterised).
+
+*** Sidechain data model
+
+The link chain is clean — Claude Code gives us everything:
+
+  Agent tool_use (tool_id=toolu_01Cv...)
+    -> tool_result with toolUseResult.agentId = "aca134e6b328dbb38"
+      -> subagents/agent-aca134e6b328dbb38.jsonl (31 msgs, 22k tokens)
+      -> subagents/agent-aca134e6b328dbb38.meta.json (agentType, description)
+
+=toolUseResult= also carries: =totalTokens=, =totalToolUseCount=,
+=totalDurationMs=, =usage= breakdown, and =toolStats= (readCount,
+bashCount, editFileCount, linesAdded, linesRemoved).
+
+The data is there. ccx doesn't parse =toolUseResult= at all.
+
+*** Schema gap (2.1.137 vs ccx)
+
+| ccx rawMessage has | Claude Code 2.1.137 also emits       |
+|--------------------+---------------------------------------|
+| 20 fields          | 24 additional fields                  |
+| 5 message types    | 8 types (adds attachment, ai-title,   |
+|                    | permission-mode, file-history-snapshot)|
+| 4 subtypes         | 6 subtypes (adds bridge_status,       |
+|                    | stop_hook_summary, turn_duration,     |
+|                    | away_summary)                         |
+| 0 attachment types | 8 attachment types                    |
+
+*** Go web templating ecosystem
+
+Surveyed real production usage:
+- =html/template= + =embed.FS=: Hugo, Gitea (35k stars). Zero deps, auto-
+  escaping, template composition via define/block. No compile-time type
+  checking. Standard Go answer.
+- =templ= (a-h/templ): 10.3k stars, Gitea evaluating migration. Compiles
+  .templ to Go code. Type-safe at compile time. Adds =templ generate= build
+  step. JSX-like component model.
+- =gomponents=: Pure Go function composition. Type-safe, no build step.
+  Verbose for content-heavy pages (369 importers, niche).
+- =Sprintf=: Flagged as XSS risk by Semgrep/Snyk. Google built =safehtml=
+  fork specifically because teams defeat auto-escaping this way.
+
+** Decision
+
+*** Template engine: html/template + embed.FS
+
+Not templ. Reasoning:
+
+- ccx principle: "single binary, zero dependencies." =templ= adds a build
+  tool and a dependency. =html/template= is stdlib.
+- ccx's templates are content-heavy (long HTML pages), not component-heavy
+  (small reusable widgets). =html/template= is better suited for this shape.
+- =templ='s compile-time safety is valuable but ccx already has runtime
+  tests that verify HTML output (nav_test.go, server_test.go). The safety
+  gap is real but not blocking.
+- Gitea — closest comparable project — still runs on =html/template= after
+  8+ years. Their =templ= migration is a proposal, not a commitment.
+
+If the component count grows significantly (sub-agent views, diff views,
+timeline interactions), re-evaluate templ.
+
+*** Sidechain rendering: inline collapsible transcripts, not filtered
+
+Revert the filter-everything approach. The correct design:
+
+1. =filterMainConversation= stays for thread ANCHORING only — sidechain
+   user prompts don't start new thread sections.
+2. Sidechain content renders INSIDE the Agent/Task tool_use block as a
+   collapsible =<details>= with the sub-agent's full transcript.
+3. Search includes sidechain content. Link target = parent exchange anchor
+   (the tool_use that dispatched), not the sidechain message UUID.
+4. Info panel shows sub-agent summary from =toolUseResult= metadata:
+   tokens, tool calls, duration, lines changed.
+
+Data model change needed: parse =toolUseResult= on tool_result messages,
+index sidechain files by agentId, and pass the index to the renderer.
+
+*** Schema drift: build an audit tool
+
+Model on =ccx-verify-pricing= (diffs ccx's pricing table against Claude
+Code source). New tool: =ccx audit-schema <session.jsonl>= that reports
+unknown fields, unknown types, unknown subtypes, unknown attachment types.
+Run it against fixture sessions in CI.
+
+** Tradeoff
+
+*** html/template vs templ
+
+We give up compile-time type safety on template variables. A typo like
+={{.Sesion.Model}}= is a runtime panic, not a build error. Mitigation:
+test coverage on all template paths (already partial, extend to full).
+If we later need templ, the .html template files migrate more easily than
+sprintf Go code.
+
+*** Incremental migration
+
+Can't rewrite 91k tokens at once. The migration path:
+
+1. New features (sub-agent rendering, info panel gaps) go directly into
+   .html template files.
+2. Extract one page at a time from templates.go: start with 404 (smallest),
+   then settings, then session (largest).
+3. Both can coexist: template.HTML bridges sprintf output into template
+   rendering.
+4. CSS and JS extract to embedded static files in parallel.
+
+Risk: half-sprintf, half-template codebase during migration. Each page is
+self-contained so the boundary is clean, but the migration could stall if
+other work takes priority.
+
+*** Schema audit scope
+
+The audit tool catches field-level drift but not semantic drift (e.g., a
+field's meaning changing between versions). We'd need versioned fixture
+sessions from each Claude Code release to catch semantic changes.
+
+** Next
+
+Three workstreams, in priority order:
+
+1. *Parse what Claude Code gives us.* Add =aiTitle=, =toolUseResult=
+   (agentId, totalTokens, totalToolUseCount, totalDurationMs, toolStats,
+   usage), =attachment=, =stopReason=, =durationMs=, =entrypoint=,
+   =permissionMode=, =url= to the parser. Display model, provider, session
+   name (aiTitle), and sub-agent summary in the info panel. This is the
+   immediate information-loss fix.
+
+2. *Template migration.* Set up =embed.FS= + =html/template= infrastructure.
+   Migrate one page as the proof of concept (404 page — smallest, already
+   self-contained). Then session page with sub-agent inline rendering as
+   the first real template.
+
+3. *Schema audit tool.* =ccx audit-schema= that diffs a session.jsonl
+   against ccx's rawMessage struct and reports gaps. Add to CI with fixture
+   sessions from 2.1.104 and 2.1.137.
