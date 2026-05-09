@@ -134,8 +134,8 @@ func forkSession(srcPath, dstPath, newSessionID, targetDir string) (*forkResult,
 
 		var record map[string]any
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			writer.WriteString(line)
-			writer.WriteByte('\n')
+			_, _ = writer.WriteString(line)
+			_ = writer.WriteByte('\n')
 			lineCount++
 			continue
 		}
@@ -160,14 +160,14 @@ func forkSession(srcPath, dstPath, newSessionID, targetDir string) (*forkResult,
 
 		rewritten, err := json.Marshal(record)
 		if err != nil {
-			writer.WriteString(line)
-			writer.WriteByte('\n')
+			_, _ = writer.WriteString(line)
+			_ = writer.WriteByte('\n')
 			lineCount++
 			continue
 		}
 
-		writer.Write(rewritten)
-		writer.WriteByte('\n')
+		_, _ = writer.Write(rewritten)
+		_ = writer.WriteByte('\n')
 		lineCount++
 	}
 
