@@ -1,0 +1,17 @@
+services:
+  ccx:
+    image: ghcr.io/thevibeworks/ccx:latest
+    build: .
+    ports:
+      - "${CCX_PORT:-2299}:8080"
+    restart: unless-stopped
+    volumes:
+      - ${CLAUDE_CODE_HOME:-${HOME}/.claude}:/data/.claude:ro
+      - ${CODEX_HOME:-${HOME}/.codex}:/data/.codex:ro
+      - ${CCX_CONFIG:-${HOME}/.config/ccx}:/data/.config/ccx
+      - ${CCX_DATA:-${HOME}/.local/share/ccx}:/data/.local/share/ccx
+    environment:
+      - CLAUDE_CODE_HOME=/data/.claude
+      - CODEX_HOME=/data/.codex
+      - XDG_CONFIG_HOME=/data/.config
+      - XDG_DATA_HOME=/data/.local/share
