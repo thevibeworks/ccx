@@ -1,5 +1,5 @@
 .PHONY: build build-all build-darwin-arm64 build-darwin-amd64 build-linux-amd64 build-linux-arm64
-.PHONY: test clean install lint fmt deps run dev run-projects run-doctor tools skill verify-pricing
+.PHONY: test clean install lint fmt deps run dev run-projects run-doctor tools skill verify-pricing audit-schema
 
 VERSION ?= dev
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -93,3 +93,6 @@ skill:
 CLAUDE_SOURCE ?= ../../reference/claude-code-2188
 verify-pricing:
 	@go run ./cmd/ccx-verify-pricing --claude-source $(CLAUDE_SOURCE)
+
+audit-schema:
+	go run ./cmd/ccx-audit-schema $(ARGS)

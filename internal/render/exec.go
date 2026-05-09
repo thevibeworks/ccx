@@ -59,8 +59,8 @@ func ExecMarkdown(session *parser.Session) string {
 	// as anchors — they're rendered separately between turns so readers
 	// see where context got rolled over.
 	allMsgs := flattenAllMessages(session.RootMessages)
-	turnsStats := parser.ComputeTurnStats(allMsgs)
-	costByAnchor := make(map[string]*parser.TurnStats, len(turnsStats))
+	turnsStats := parser.ComputeExchanges(allMsgs)
+	costByAnchor := make(map[string]*parser.Exchange, len(turnsStats))
 	for _, t := range turnsStats {
 		costByAnchor[t.AnchorID] = t
 	}
