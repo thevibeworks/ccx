@@ -448,11 +448,20 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Memory</span><a href="/project/%s#mem-section" class="mem-link">%d files</a></div>`,
 			html.EscapeString(projectName), memCount))
 	}
+	if session.Provider != "" {
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Provider</span>%s</div>`, providerBadgeHTML(session.Provider)))
+	}
 	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Session</span><code class="copyable">%s</code><button class="copy-btn-sm" data-copy="%s">⧉</button></div>`,
 		html.EscapeString(session.ID), html.EscapeString(session.ID)))
+	if session.Title != "" {
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Title</span><span class="info-value">%s</span></div>`, html.EscapeString(session.Title)))
+	}
 	if session.Slug != "" {
 		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Slug</span><code class="copyable">%s</code><button class="copy-btn-sm" data-copy="%s">⧉</button></div>`,
 			html.EscapeString(session.Slug), html.EscapeString(session.Slug)))
+	}
+	if session.Model != "" {
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Model</span><span class="info-value">%s</span></div>`, html.EscapeString(session.Model)))
 	}
 	if session.Version != "" {
 		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Version</span><span class="info-value">%s</span></div>`, html.EscapeString(session.Version)))
