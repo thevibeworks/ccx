@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -414,4 +415,48 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestParseToolUseResult_Object(t *testing.T) {
+	raw := json.RawMessage(`{"agentId":"abc123","agentType":"Explore","status":"completed","totalTokens":22351,"totalToolUseCount":12,"totalDurationMs":144629}`)
+	result := parseToolUseResult(raw)
+	if result == nil {
+		t.Fatal("expected non-nil result for valid object")
+	}
+	if result.AgentID != "abc123" {
+		t.Errorf("AgentID = %q, want abc123", result.AgentID)
+	}
+	if result.AgentType != "Explore" {
+		t.Errorf("AgentType = %q, want Explore", result.AgentType)
+	}
+	if result.TotalTokens != 22351 {
+		t.Errorf("TotalTokens = %d, want 22351", result.TotalTokens)
+	}
+}
+
+func TestParseToolUseResult_String(t *testing.T) {
+	raw := json.RawMessage(`"Error: File does not exist"`)
+	result := parseToolUseResult(raw)
+	if result != nil {
+		t.Error("string toolUseResult should return nil")
+	}
+}
+
+func TestParseToolUseResult_NoAgentID(t *testing.T) {
+	raw := json.RawMessage(`{"status":"completed","stdout":"hello"}`)
+	result := parseToolUseResult(raw)
+	if result != nil {
+		t.Error("toolUseResult without agentId should return nil")
+	}
+}
+
+func TestParseToolUseResult_Empty(t *testing.T) {
+	result := parseToolUseResult(nil)
+	if result != nil {
+		t.Error("nil raw should return nil")
+	}
+	result = parseToolUseResult(json.RawMessage{})
+	if result != nil {
+		t.Error("empty raw should return nil")
+	}
 }
