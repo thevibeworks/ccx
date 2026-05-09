@@ -723,6 +723,24 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 	var pendingUsageDelta parser.MessageUsage
 	usageWatermark := 0
 
+	// Codex 0.120.0+ rollouts occasionally emit the same user_message
+	// event twice in a row (byte-identical payload, identical
+	// timestamp) as part of resume/replay. Track the last seen one so
+	// we can drop immediate duplicates — if we don't, the session
+	// page shows the same prompt twice at the top before anything
+	// else renders and users think the UI is broken.
+	var lastUserMessageText string
+	var lastUserMessageTS time.Time
+
+	// Watermark into len(messages) at the moment the MOST RECENT
+	// event_msg/web_search_end finished emitting a fresh tool pair.
+	// Used by the response_item/web_search_call handler to detect
+	// that the just-arriving response_item is a redundant echo of
+	// a search we already represented, and skip its emission.
+	// See the long comment on the web_search_end / web_search_call
+	// cases below for the event-order explanation.
+	lastWebSearchClosedAt := -1
+
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScannerBufferBytes)
 
@@ -793,6 +811,18 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 				if text == "" {
 					text = "(empty)"
 				}
+				// Drop immediate duplicates: Codex rollouts sometimes
+				// replay the first user message. Matches same text AND
+				// same-or-close timestamp (within 2s) so we only collapse
+				// the replay case, never a user who legitimately pasted
+				// the same thing twice minutes apart.
+				if text == lastUserMessageText && !ts.IsZero() && !lastUserMessageTS.IsZero() &&
+					absDuration(ts.Sub(lastUserMessageTS)) < 2*time.Second {
+					continue
+				}
+				lastUserMessageText = text
+				lastUserMessageTS = ts
+
 				if firstUserSummary == "" {
 					firstUserSummary = text
 				}
@@ -941,6 +971,9 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 					continue
 				}
 				if handledCallIDs[payload.CallID] {
+					// Legacy format: a prior response_item/web_search_call
+					// already registered this call_id. Emit the tool_result
+					// to complete the pair.
 					if tool, ok := pendingTools[payload.CallID]; ok {
 						messages = append(messages, newToolResultMessage(
 							lineNum,
@@ -959,6 +992,15 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 					}
 					continue
 				}
+				// Codex 0.120.0+ event order: event_msg/web_search_end
+				// arrives BEFORE the corresponding response_item/
+				// web_search_call, and the latter carries an empty
+				// call_id, so handledCallIDs never records it. We
+				// become the authoritative source: emit a full
+				// toolPair (tool_use + tool_result) here, and the
+				// subsequent response_item handler will detect a
+				// recent WebSearch completion via lastWebSearchClosedAt
+				// and skip its own orphan emission.
 				stats.ToolCalls++
 				messages = append(messages, toolPairMessages(
 					lineNum,
@@ -974,6 +1016,7 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 					false,
 				)...)
 				completedCallIDs[payload.CallID] = true
+				lastWebSearchClosedAt = len(messages)
 
 			case "mcp_tool_call_end":
 				var payload mcpToolCallEndPayload
@@ -1218,6 +1261,19 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 			case "web_search_call":
 				var payload webSearchCallPayload
 				if err := json.Unmarshal(rollout.Payload, &payload); err != nil {
+					continue
+				}
+				// Codex 0.120.0+ emits this response_item AFTER the
+				// corresponding event_msg/web_search_end and with an
+				// empty call_id. If we just closed a WebSearch in
+				// the immediately preceding messages, this
+				// response_item is a redundant echo — skip the
+				// emission to avoid the double-count. The
+				// lastWebSearchClosedAt watermark is only bumped
+				// when web_search_end emitted a fresh tool pair
+				// (i.e., it wasn't merging into a prior handled
+				// call_id).
+				if payload.CallID == "" && lastWebSearchClosedAt == len(messages) {
 					continue
 				}
 				stats.ToolCalls++
@@ -1570,6 +1626,13 @@ func fallbackToolName(name string) string {
 		return "Tool"
 	}
 	return name
+}
+
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
 }
 
 func buildMessageTree(messages []*parser.Message) []*parser.Message {

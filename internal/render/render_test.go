@@ -212,7 +212,7 @@ func TestRenderHTMLBlockImageEmpty(t *testing.T) {
 
 func TestRenderMarkdownBlockText(t *testing.T) {
 	var b strings.Builder
-	renderMarkdownBlock(&b, parser.ContentBlock{Type: "text", Text: "hello"}, ExportOptions{})
+	renderMarkdownBlock(&b, parser.ContentBlock{Type: "text", Text: "hello"}, "assistant", ExportOptions{})
 	if !strings.Contains(b.String(), "hello") {
 		t.Error("text missing")
 	}
@@ -220,7 +220,7 @@ func TestRenderMarkdownBlockText(t *testing.T) {
 
 func TestRenderMarkdownBlockThinking(t *testing.T) {
 	var b strings.Builder
-	renderMarkdownBlock(&b, parser.ContentBlock{Type: "thinking", Text: "hmm"}, ExportOptions{IncludeThinking: true})
+	renderMarkdownBlock(&b, parser.ContentBlock{Type: "thinking", Text: "hmm"}, "assistant", ExportOptions{IncludeThinking: true})
 	got := b.String()
 	if !strings.Contains(got, "<details>") {
 		t.Error("details tag missing")
@@ -232,7 +232,7 @@ func TestRenderMarkdownBlockThinking(t *testing.T) {
 
 func TestRenderMarkdownBlockToolUseShort(t *testing.T) {
 	var b strings.Builder
-	renderMarkdownBlock(&b, parser.ContentBlock{Type: "tool_use", ToolName: "Bash", ToolInput: "ls"}, ExportOptions{})
+	renderMarkdownBlock(&b, parser.ContentBlock{Type: "tool_use", ToolName: "Bash", ToolInput: "ls"}, "assistant", ExportOptions{})
 	got := b.String()
 	if !strings.Contains(got, "`ls`") {
 		t.Errorf("short input should be inline code, got %q", got)
@@ -242,7 +242,7 @@ func TestRenderMarkdownBlockToolUseShort(t *testing.T) {
 func TestRenderMarkdownBlockToolUseLong(t *testing.T) {
 	var b strings.Builder
 	longInput := strings.Repeat("x", 100)
-	renderMarkdownBlock(&b, parser.ContentBlock{Type: "tool_use", ToolName: "Bash", ToolInput: longInput}, ExportOptions{})
+	renderMarkdownBlock(&b, parser.ContentBlock{Type: "tool_use", ToolName: "Bash", ToolInput: longInput}, "assistant", ExportOptions{})
 	got := b.String()
 	if !strings.Contains(got, "```") {
 		t.Error("long input should use code fence")
@@ -251,7 +251,7 @@ func TestRenderMarkdownBlockToolUseLong(t *testing.T) {
 
 func TestRenderMarkdownBlockToolUseMultiline(t *testing.T) {
 	var b strings.Builder
-	renderMarkdownBlock(&b, parser.ContentBlock{Type: "tool_use", ToolName: "Bash", ToolInput: "line1\nline2"}, ExportOptions{})
+	renderMarkdownBlock(&b, parser.ContentBlock{Type: "tool_use", ToolName: "Bash", ToolInput: "line1\nline2"}, "assistant", ExportOptions{})
 	got := b.String()
 	if !strings.Contains(got, "```") {
 		t.Error("multiline input should use code fence")
@@ -260,7 +260,7 @@ func TestRenderMarkdownBlockToolUseMultiline(t *testing.T) {
 
 func TestRenderMarkdownBlockToolResult(t *testing.T) {
 	var b strings.Builder
-	renderMarkdownBlock(&b, parser.ContentBlock{Type: "tool_result", ToolResult: "output", IsError: false}, ExportOptions{})
+	renderMarkdownBlock(&b, parser.ContentBlock{Type: "tool_result", ToolResult: "output", IsError: false}, "assistant", ExportOptions{})
 	if !strings.Contains(b.String(), "### Result") {
 		t.Error("result header missing")
 	}
@@ -268,7 +268,7 @@ func TestRenderMarkdownBlockToolResult(t *testing.T) {
 
 func TestRenderMarkdownBlockToolResultError(t *testing.T) {
 	var b strings.Builder
-	renderMarkdownBlock(&b, parser.ContentBlock{Type: "tool_result", ToolResult: "fail", IsError: true}, ExportOptions{})
+	renderMarkdownBlock(&b, parser.ContentBlock{Type: "tool_result", ToolResult: "fail", IsError: true}, "assistant", ExportOptions{})
 	if !strings.Contains(b.String(), "### Error") {
 		t.Error("error header missing")
 	}
@@ -276,9 +276,58 @@ func TestRenderMarkdownBlockToolResultError(t *testing.T) {
 
 func TestRenderMarkdownBlockImage(t *testing.T) {
 	var b strings.Builder
-	renderMarkdownBlock(&b, parser.ContentBlock{Type: "image", MediaType: "image/png"}, ExportOptions{})
+	renderMarkdownBlock(&b, parser.ContentBlock{Type: "image", MediaType: "image/png"}, "assistant", ExportOptions{})
 	if !strings.Contains(b.String(), "![Image]") {
 		t.Error("image markdown missing")
+	}
+}
+
+func TestRenderMarkdownBlockUserTextQuoted(t *testing.T) {
+	// User prompt that starts with "#" must not hijack the outline.
+	// Blockquote prefix neutralizes header-like characters.
+	var b strings.Builder
+	renderMarkdownBlock(&b, parser.ContentBlock{Type: "text", Text: "# Why did you rewrite the parser?"}, "user", ExportOptions{})
+	out := b.String()
+	if !strings.HasPrefix(out, "> ") {
+		t.Errorf("user text should start with '> ', got %q", out)
+	}
+	if strings.Contains(out, "\n# Why") {
+		t.Errorf("user text should not contain a bare '# Why' line, got %q", out)
+	}
+}
+
+func TestLongestBacktickRun(t *testing.T) {
+	cases := []struct {
+		input   string
+		wantLen int // length of returned fence
+		reason  string
+	}{
+		{"no backticks", 3, "minimum fence is 3"},
+		{"one ` tick", 3, "single tick still fits in 3-fence"},
+		{"``` triple ```", 4, "triple requires 4-fence"},
+		{"``` mixed ```` longest ```", 5, "quad requires 5-fence"},
+	}
+	for _, c := range cases {
+		got := longestBacktickRun(c.input)
+		if len(got) != c.wantLen {
+			t.Errorf("longestBacktickRun(%q) len = %d, want %d (%s)", c.input, len(got), c.wantLen, c.reason)
+		}
+	}
+}
+
+func TestRenderMarkdownBlockToolResultVariableFence(t *testing.T) {
+	// Tool result containing ``` must use a longer fence (at least 4
+	// backticks) so the result isn't prematurely terminated.
+	var b strings.Builder
+	result := "here is some ``` embedded ``` markdown"
+	renderMarkdownBlock(&b,
+		parser.ContentBlock{Type: "tool_result", ToolResult: result, IsError: false},
+		"assistant",
+		ExportOptions{},
+	)
+	out := b.String()
+	if !strings.Contains(out, "````") {
+		t.Errorf("expected 4-backtick fence to contain embedded ```, got %q", out)
 	}
 }
 

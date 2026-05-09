@@ -35,17 +35,21 @@ var (
 	exportIncludeThinking bool
 	exportIncludeAgents   bool
 	exportBrief           bool
+	exportShape           string
+	exportEnvelope        string
 	exportTemplate        string
 )
 
 func init() {
-	exportCmd.Flags().StringVarP(&exportFormat, "format", "f", "", "output format: html, md, org (default from config)")
+	exportCmd.Flags().StringVarP(&exportFormat, "format", "f", "", "output format: html, md, org, exec (default from config)")
 	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "output file path (default: session.<ext>)")
 	exportCmd.Flags().StringVarP(&exportProject, "project", "p", "", "project name")
 	exportCmd.Flags().StringVar(&exportTheme, "theme", "", "theme: dark, light (default from config)")
 	exportCmd.Flags().BoolVar(&exportIncludeThinking, "include-thinking", false, "include thinking blocks")
 	exportCmd.Flags().BoolVar(&exportIncludeAgents, "include-agents", false, "include agent sidechains")
-	exportCmd.Flags().BoolVarP(&exportBrief, "brief", "b", false, "conversation only: human input, agent responses, compactions")
+	exportCmd.Flags().BoolVarP(&exportBrief, "brief", "b", false, "(deprecated: use --shape=brief) conversation only")
+	exportCmd.Flags().StringVar(&exportShape, "shape", "", "content shape: full, brief, trace, exchange (default: full)")
+	exportCmd.Flags().StringVar(&exportEnvelope, "envelope", "", "HTML wrapper: standalone, fragment (default: standalone)")
 	exportCmd.Flags().StringVar(&exportTemplate, "template", "", "custom template path")
 }
 
@@ -98,12 +102,28 @@ func runExport(cmd *cobra.Command, args []string) error {
 		output = fmt.Sprintf("session-%s%s", id, ext)
 	}
 
+	shape := render.Shape(strings.ToLower(strings.TrimSpace(exportShape)))
+	switch shape {
+	case "", render.ShapeFull, render.ShapeBrief, render.ShapeTrace, render.ShapeExchange:
+	default:
+		return fmt.Errorf("invalid shape %q (want full, brief, trace, or exchange)", exportShape)
+	}
+
+	envelope := render.Envelope(strings.ToLower(strings.TrimSpace(exportEnvelope)))
+	switch envelope {
+	case "", render.EnvelopeStandalone, render.EnvelopeFragment:
+	default:
+		return fmt.Errorf("invalid envelope %q (want standalone or fragment)", exportEnvelope)
+	}
+
 	opts := render.ExportOptions{
 		Format:          format,
 		Theme:           theme,
 		IncludeThinking: exportIncludeThinking,
 		IncludeAgents:   exportIncludeAgents,
 		Brief:           exportBrief,
+		Shape:           shape,
+		Envelope:        envelope,
 		TemplatePath:    exportTemplate,
 	}
 

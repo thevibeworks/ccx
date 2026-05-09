@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -126,6 +127,23 @@ func ParseSession(filePath string) (*Session, error) {
 	summary := summaryFromFile
 	if summary == "" {
 		summary = extractSummary(messages)
+	}
+
+	// Load sub-agent sidechain files. Claude Code stores sub-agent
+	// transcripts in <uuid>/subagents/agent-*.jsonl alongside the
+	// main session JSONL. Each sidechain file is a complete transcript
+	// for one TaskCreate/Agent dispatch, with every message carrying
+	// isSidechain:true and an agentId.
+	//
+	// We parse each file, mark all its messages as sidechain, and
+	// append them as additional root messages. They're filtered from
+	// the main view by the IsSidechain flag but count in Stats and
+	// are available for sidechain-specific views (outline, timeline
+	// sub-agent satellites, export --shape=trace).
+	sidechainMsgs := loadSidechainFiles(filePath)
+	if len(sidechainMsgs) > 0 {
+		stats.AgentSidechains += len(sidechainMsgs)
+		rootMessages = append(rootMessages, buildMessageTree(sidechainMsgs)...)
 	}
 
 	session := &Session{
@@ -607,6 +625,86 @@ func countToolCalls(content any) int {
 		}
 	}
 	return count
+}
+
+// loadSidechainFiles discovers and parses sub-agent sidechain JSONL
+// files that live alongside the main session file. The Claude Code
+// on-disk layout for a session <uuid>.jsonl that dispatched sub-agents
+// is:
+//
+//	<uuid>.jsonl                           (main transcript)
+//	<uuid>/subagents/agent-<agentId>.jsonl (one per sub-agent)
+//	<uuid>/subagents/agent-<agentId>.meta.json
+//
+// Each sidechain message carries isSidechain:true and agentId in the
+// JSONL itself, so we don't need to synthesize those flags — we just
+// parse normally and the messages arrive correctly tagged.
+//
+// Returns a flat slice of all sidechain messages across all sub-agent
+// files. Returns nil if the subagents directory doesn't exist or is
+// empty.
+func loadSidechainFiles(mainSessionPath string) []*Message {
+	sessionID := extractSessionID(mainSessionPath)
+	if sessionID == "" {
+		return nil
+	}
+	dir := filepath.Dir(mainSessionPath)
+	subagentsDir := filepath.Join(dir, sessionID, "subagents")
+
+	entries, err := os.ReadDir(subagentsDir)
+	if err != nil {
+		return nil // directory doesn't exist — no sidechains
+	}
+
+	var allMsgs []*Message
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".jsonl") || !strings.HasPrefix(name, "agent-") {
+			continue
+		}
+		filePath := filepath.Join(subagentsDir, name)
+		msgs := parseSidechainFile(filePath)
+		allMsgs = append(allMsgs, msgs...)
+	}
+	return allMsgs
+}
+
+// parseSidechainFile reads a single agent-*.jsonl and returns its
+// messages. Each message already carries isSidechain:true from the
+// JSONL, so we just parse normally. If parsing fails we silently
+// return nil — a corrupt sidechain file shouldn't break the main
+// session.
+func parseSidechainFile(filePath string) []*Message {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+
+	var messages []*Message
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var raw rawMessage
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			continue
+		}
+		if raw.Type != "user" && raw.Type != "assistant" {
+			continue
+		}
+		msg := parseMessage(raw)
+		if msg != nil {
+			msg.RawJSON = line
+			messages = append(messages, msg)
+		}
+	}
+	return messages
 }
 
 func extractTextFromContent(content any) string {

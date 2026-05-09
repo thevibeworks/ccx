@@ -1,5 +1,5 @@
 .PHONY: build build-all build-darwin-arm64 build-darwin-amd64 build-linux-amd64 build-linux-arm64
-.PHONY: test clean install lint fmt deps run tools skill verify-pricing
+.PHONY: test clean install lint fmt deps run dev run-projects run-doctor tools skill verify-pricing
 
 VERSION ?= dev
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -72,6 +72,9 @@ deps:
 
 run: build
 	./bin/ccx
+
+dev: build
+	./bin/ccx web
 
 run-projects: build
 	./bin/ccx projects
