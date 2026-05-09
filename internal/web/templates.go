@@ -575,22 +575,21 @@ func splitByUserPrompts(messages []*parser.Message, chunkSize int) [][]*parser.M
 
 func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, showThinking, showTools, loadAll bool) {
 	allMsgs := flattenMessages(messages)
+	mainMsgs := filterMainConversation(allMsgs)
+	sidechainGroups := groupSidechainsByAgent(allMsgs)
+	scMap := matchSidechainsToToolUse(mainMsgs, sidechainGroups)
 
-	// Check if progressive loading is needed (unless loadAll is requested)
-	if !loadAll && len(allMsgs) > progressiveLoadThreshold {
-		renderMessagesProgressive(b, allMsgs, showThinking, showTools)
+	if !loadAll && len(mainMsgs) > progressiveLoadThreshold {
+		renderMessagesProgressive(b, mainMsgs, showThinking, showTools, scMap)
 		return
 	}
 
-	// Build tool results map for inline rendering
 	toolResults := buildToolResultsMap(allMsgs)
 
-	// Group messages into threads anchored by USER prompts
 	var currentThread []*parser.Message
 	inThread := false
 
-	for _, msg := range allMsgs {
-		// Skip standalone tool_result messages - they'll be rendered inline
+	for _, msg := range mainMsgs {
 		if msg.Kind == parser.KindToolResult {
 			continue
 		}
@@ -598,29 +597,25 @@ func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, s
 		isAnchor := msg.Kind == parser.KindUserPrompt || msg.Kind == parser.KindCommand
 
 		if isAnchor {
-			// Close previous thread if any
 			if inThread && len(currentThread) > 0 {
-				renderThread(b, currentThread, showThinking, showTools, toolResults)
+				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 			}
-			// Start new thread
 			currentThread = []*parser.Message{msg}
 			inThread = true
 		} else if inThread {
 			currentThread = append(currentThread, msg)
 		} else {
-			// Messages before first anchor - render directly
 			renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
 		}
 	}
 
-	// Close final thread
 	if inThread && len(currentThread) > 0 {
-		renderThread(b, currentThread, showThinking, showTools, toolResults)
+		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 	}
 }
 
 // renderMessagesProgressive renders large conversations with lazy loading
-func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, showThinking, showTools bool) {
+func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, showThinking, showTools bool, scMap map[string]sidechainGroup) {
 	sections := splitByCompactBoundaries(allMsgs)
 
 	// If no compact boundaries, fall back to splitting by user prompts
@@ -671,7 +666,7 @@ func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, sh
 
 		if isAnchor {
 			if inThread && len(currentThread) > 0 {
-				renderThread(b, currentThread, showThinking, showTools, toolResults)
+				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 			}
 			currentThread = []*parser.Message{msg}
 			inThread = true
@@ -683,7 +678,7 @@ func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, sh
 	}
 
 	if inThread && len(currentThread) > 0 {
-		renderThread(b, currentThread, showThinking, showTools, toolResults)
+		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 	}
 }
 
@@ -700,8 +695,109 @@ func buildToolResultsMap(messages []*parser.Message) map[string]parser.ContentBl
 	return results
 }
 
+type sidechainGroup struct {
+	AgentID  string
+	Messages []*parser.Message
+}
+
+func groupSidechainsByAgent(allMsgs []*parser.Message) []sidechainGroup {
+	order := make([]string, 0)
+	byAgent := make(map[string][]*parser.Message)
+	for _, m := range allMsgs {
+		if !m.IsSidechain || m.AgentID == "" {
+			continue
+		}
+		if _, seen := byAgent[m.AgentID]; !seen {
+			order = append(order, m.AgentID)
+		}
+		byAgent[m.AgentID] = append(byAgent[m.AgentID], m)
+	}
+	groups := make([]sidechainGroup, 0, len(order))
+	for _, id := range order {
+		groups = append(groups, sidechainGroup{AgentID: id, Messages: byAgent[id]})
+	}
+	return groups
+}
+
+var subagentToolSet = map[string]bool{
+	"Task": true, "TaskCreate": true, "Agent": true,
+}
+
+func matchSidechainsToToolUse(mainMsgs []*parser.Message, groups []sidechainGroup) map[string]sidechainGroup {
+	if len(groups) == 0 {
+		return nil
+	}
+	var dispatchIDs []string
+	for _, msg := range mainMsgs {
+		for _, block := range msg.Content {
+			if block.Type == "tool_use" && subagentToolSet[block.ToolName] {
+				dispatchIDs = append(dispatchIDs, block.ToolID)
+			}
+		}
+	}
+	result := make(map[string]sidechainGroup, len(groups))
+	for i, id := range dispatchIDs {
+		if i < len(groups) {
+			result[id] = groups[i]
+		}
+	}
+	return result
+}
+
+func renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, showTools bool) {
+	snippet := sidechainSnippet(g.Messages)
+	label := "Sub-agent"
+	if snippet != "" {
+		label += ": " + snippet
+	}
+	msgCount := len(g.Messages)
+	toolCount := 0
+	for _, m := range g.Messages {
+		for _, block := range m.Content {
+			if block.Type == "tool_use" {
+				toolCount++
+			}
+		}
+	}
+	b.WriteString(fmt.Sprintf(`<details class="sidechain-group" id="sidechain-%s">`, html.EscapeString(g.AgentID)))
+	b.WriteString(fmt.Sprintf(`<summary class="sidechain-header"><span class="sidechain-icon">◆</span> %s <span class="sidechain-meta">%d messages, %d tools</span></summary>`,
+		html.EscapeString(label), msgCount, toolCount))
+	b.WriteString(`<div class="sidechain-body">`)
+
+	toolResults := buildToolResultsMap(g.Messages)
+	for _, msg := range g.Messages {
+		if msg.Kind == parser.KindToolResult {
+			continue
+		}
+		renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
+	}
+
+	b.WriteString(`</div></details>`)
+}
+
+func sidechainSnippet(msgs []*parser.Message) string {
+	for _, m := range msgs {
+		if m.Kind != parser.KindUserPrompt {
+			continue
+		}
+		for _, block := range m.Content {
+			if block.Type == "text" && block.Text != "" {
+				text := strings.TrimSpace(block.Text)
+				if idx := strings.Index(text, "\n"); idx > 0 {
+					text = text[:idx]
+				}
+				if len(text) > 80 {
+					text = text[:77] + "..."
+				}
+				return text
+			}
+		}
+	}
+	return ""
+}
+
 // renderThread renders a conversation thread anchored by a USER message
-func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock) {
+func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock, scMap map[string]sidechainGroup) {
 	if len(thread) == 0 {
 		return
 	}
@@ -709,15 +805,12 @@ func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, sh
 	anchor := thread[0]
 	responses := thread[1:]
 
-	// Thread container with visual line
 	b.WriteString(`<div class="thread">`)
 
-	// Render anchor (USER prompt or Command)
 	b.WriteString(`<div class="thread-anchor">`)
 	renderTurnMessage(b, anchor, showThinking, showTools, 0, toolResults)
 	b.WriteString(`</div>`)
 
-	// Render responses with indent
 	if len(responses) > 0 {
 		b.WriteString(`<div class="thread-responses">`)
 		for _, msg := range responses {
@@ -726,6 +819,13 @@ func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, sh
 				level = 2
 			}
 			renderTurnMessage(b, msg, showThinking, showTools, level, toolResults)
+			for _, block := range msg.Content {
+				if block.Type == "tool_use" && subagentToolSet[block.ToolName] {
+					if sc, ok := scMap[block.ToolID]; ok {
+						renderInlineSidechain(b, sc, showThinking, showTools)
+					}
+				}
+			}
 		}
 		b.WriteString(`</div>`)
 	}
@@ -1814,7 +1914,9 @@ func renderSpendSection(turns []*parser.TurnStats, sessionTotal float64) string 
 // Group children are rendered in a <div class="nav-children"> that the
 // JS can hide/show via the aria-expanded attribute on the group root.
 func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
-	allMsgs := flattenMessages(messages)
+	flat := flattenMessages(messages)
+	allMsgs := filterMainConversation(flat)
+	sidechains := groupSidechainsByAgent(flat)
 
 	type navGroup struct {
 		user     *parser.Message
@@ -1923,6 +2025,23 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 			b.WriteString(`</div>`) // .nav-children
 			b.WriteString(`</div>`) // .nav-group
 		}
+	}
+
+	for i, g := range sidechains {
+		snippet := sidechainSnippet(g.Messages)
+		label := fmt.Sprintf("Sub-agent %d", i+1)
+		if snippet != "" {
+			label = snippet
+			if len(label) > 30 {
+				label = label[:27] + "..."
+			}
+		}
+		b.WriteString(fmt.Sprintf(`<a href="#sidechain-%s" class="nav-item nav-sidechain" data-msg="sidechain-%s">`,
+			html.EscapeString(g.AgentID), html.EscapeString(g.AgentID)))
+		b.WriteString(fmt.Sprintf(`<span class="nav-icon" aria-hidden="true">◆</span><span class="nav-text">%s</span>`,
+			html.EscapeString(label)))
+		b.WriteString(fmt.Sprintf(`<span class="nav-count">%d</span>`, len(g.Messages)))
+		b.WriteString(`</a>`)
 	}
 }
 
@@ -4253,6 +4372,13 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 }
 .nav-compact .nav-icon { color: #fa0; }
 
+.nav-sidechain {
+  border-left: 3px solid #86c;
+  margin: 4px 0;
+  opacity: 0.85;
+}
+.nav-sidechain .nav-icon { color: #86c; }
+
 .nav-user { padding-left: 8px; font-weight: 500; }
 .nav-user .nav-icon { color: var(--user-border); }
 
@@ -5115,6 +5241,30 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 .turn-agent .turn-header { background: transparent; }
 .turn-agent .turn-icon { color: #86c; }
 .turn-agent .turn-role { display: inline; color: #86c; }
+
+/* Sub-agent transcript sections */
+.sidechain-sections { margin-top: 32px; }
+.sidechain-group {
+  margin: 12px 0;
+  border: 1px solid var(--border, #e5e7eb);
+  border-left: 3px solid #86c;
+  border-radius: 6px;
+}
+.sidechain-header {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text-secondary, #6b7280);
+}
+.sidechain-header:hover { background: var(--bg-hover, #f9fafb); }
+.sidechain-icon { color: #86c; margin-right: 6px; }
+.sidechain-meta {
+  font-size: 0.85em;
+  font-weight: 400;
+  color: var(--text-tertiary, #9ca3af);
+  margin-left: 8px;
+}
+.sidechain-body { padding: 0 14px 14px; }
 
 /* Compacted context - minimal separator */
 .turn-compacted {

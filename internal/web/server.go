@@ -1354,6 +1354,16 @@ func flattenMessages(messages []*parser.Message) []*parser.Message {
 	return result
 }
 
+func filterMainConversation(msgs []*parser.Message) []*parser.Message {
+	out := make([]*parser.Message, 0, len(msgs))
+	for _, m := range msgs {
+		if !m.IsSidechain {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 func exportMarkdown(s *parser.Session) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("# Session %s\n\n", s.ID))
