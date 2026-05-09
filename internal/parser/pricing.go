@@ -39,11 +39,7 @@ var (
 		InputPer1M: 5.00, OutputPer1M: 25.00,
 		CacheReadPer1M: 0.50, CacheWritePer1M: 6.25,
 	}
-	costTier_30_150 = ModelPricing{
-		InputPer1M: 30.00, OutputPer1M: 150.00,
-		CacheReadPer1M: 3.00, CacheWritePer1M: 37.50,
-	}
-	costHaiku_35 = ModelPricing{
+costHaiku_35 = ModelPricing{
 		InputPer1M: 0.80, OutputPer1M: 4.00,
 		CacheReadPer1M: 0.08, CacheWritePer1M: 1.00,
 	}
