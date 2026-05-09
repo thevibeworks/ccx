@@ -129,7 +129,7 @@ type Message struct {
 	Subtype     string // For system messages: compact_boundary, local_command
 
 	Usage          *MessageUsage      // Per-message API token usage + cost. nil if absent.
-	SubAgentResult *toolUseResultData // Sub-agent summary from toolUseResult. nil for non-agent tool results.
+	SubAgentResult *SubAgentResultData // Sub-agent summary from toolUseResult. nil for non-agent tool results.
 
 	RawJSON string // Original JSONL line verbatim
 	raw     rawMessage
@@ -181,7 +181,7 @@ type rawMessage struct {
 	ToolUseResult json.RawMessage `json:"toolUseResult"` // Sub-agent result metadata (string or object)
 }
 
-type toolUseResultData struct {
+type SubAgentResultData struct {
 	AgentID           string     `json:"agentId"`
 	AgentType         string     `json:"agentType"`
 	Status            string     `json:"status"`
