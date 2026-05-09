@@ -126,6 +126,9 @@ func TestParseSessionBuildsUsableTranscript(t *testing.T) {
 	if session.Stats.InputTokens != 10 || session.Stats.CacheReadTokens != 2 || session.Stats.OutputTokens != 5 {
 		t.Fatalf("unexpected token stats: %+v", session.Stats)
 	}
+	if session.Stats.CostUSD <= 0 {
+		t.Fatalf("session.Stats.CostUSD = %v, want > 0", session.Stats.CostUSD)
+	}
 	if len(session.RootMessages) != 1 {
 		t.Fatalf("len(session.RootMessages) = %d, want 1", len(session.RootMessages))
 	}
@@ -148,6 +151,21 @@ func TestParseSessionBuildsUsableTranscript(t *testing.T) {
 	}
 	if root.Children[3].Content[0].Text != "done" {
 		t.Fatalf("root.Children[3].Content[0].Text = %q, want %q", root.Children[3].Content[0].Text, "done")
+	}
+	if root.Children[3].Usage == nil {
+		t.Fatal("assistant message missing Usage after trailing token_count")
+	}
+	if root.Children[3].Usage.CostUSD <= 0 {
+		t.Fatalf("assistant message CostUSD = %v, want > 0", root.Children[3].Usage.CostUSD)
+	}
+	var sumCost float64
+	for _, child := range root.Children {
+		if child.Usage != nil {
+			sumCost += child.Usage.CostUSD
+		}
+	}
+	if session.Stats.CostUSD != sumCost {
+		t.Fatalf("session.Stats.CostUSD = %v, want %v", session.Stats.CostUSD, sumCost)
 	}
 }
 
@@ -414,6 +432,62 @@ func TestParseSessionDeduplicatesWebSearchCallAndEnd(t *testing.T) {
 	}
 	if toolResults != 1 {
 		t.Fatalf("WebSearch tool results = %d, want 1", toolResults)
+	}
+}
+
+// TestParseSession_DedupesConsecutiveUserMessage guards against the
+// Codex 0.120.0+ rollout quirk where the first user_message is
+// emitted twice with byte-identical payload and timestamp. Without
+// dedupe, the session page renders the same prompt twice at the top
+// and users think the UI is broken.
+func TestParseSession_DedupesConsecutiveUserMessage(t *testing.T) {
+	home := t.TempDir()
+	sessionsDir := filepath.Join(home, "sessions")
+	rolloutPath := filepath.Join(sessionsDir, "2026", "04", "14", "rollout-dupe.jsonl")
+	writeRollout(t, rolloutPath, `{"timestamp":"2026-04-14T10:00:00Z","type":"session_meta","payload":{"id":"dupe-thread","timestamp":"2026-04-14T10:00:00Z","cwd":"/tmp/work","originator":"codex","cli_version":"0.120.0"}}
+{"timestamp":"2026-04-14T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"please review PR #7","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-04-14T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"please review PR #7","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-04-14T10:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"ok"}}
+{"timestamp":"2026-04-14T10:00:30Z","type":"event_msg","payload":{"type":"user_message","message":"please review PR #7","images":[],"local_images":[],"text_elements":[]}}
+`)
+	backend := NewWithDirs(home, sessionsDir, filepath.Join(home, "archived_sessions"))
+	session, err := backend.ParseSession(rolloutPath)
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	// First two user_message events (identical + same-timestamp) collapse
+	// to one. The third user_message 29s later with the same text does
+	// NOT dedupe because it's outside the 2-second window — user
+	// legitimately re-asked.
+	if got := session.Stats.UserPrompts; got != 2 {
+		t.Fatalf("UserPrompts = %d, want 2 (dedupe the instant replay, keep the real re-ask)", got)
+	}
+	if len(session.RootMessages) != 2 {
+		t.Fatalf("RootMessages = %d, want 2", len(session.RootMessages))
+	}
+	if session.RootMessages[0].Content[0].Text != "please review PR #7" {
+		t.Errorf("first root content wrong: %q", session.RootMessages[0].Content[0].Text)
+	}
+}
+
+// TestParseSession_DoesNotDedupDistinctUserMessages guards the other
+// direction: two same-second user_messages with DIFFERENT text must
+// both survive.
+func TestParseSession_DoesNotDedupDistinctUserMessages(t *testing.T) {
+	home := t.TempDir()
+	sessionsDir := filepath.Join(home, "sessions")
+	rolloutPath := filepath.Join(sessionsDir, "2026", "04", "14", "rollout-distinct.jsonl")
+	writeRollout(t, rolloutPath, `{"timestamp":"2026-04-14T10:00:00Z","type":"session_meta","payload":{"id":"distinct","cwd":"/tmp/work","cli_version":"0.120.0"}}
+{"timestamp":"2026-04-14T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"first question","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-04-14T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"second question","images":[],"local_images":[],"text_elements":[]}}
+`)
+	backend := NewWithDirs(home, sessionsDir, filepath.Join(home, "archived_sessions"))
+	session, err := backend.ParseSession(rolloutPath)
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	if got := session.Stats.UserPrompts; got != 2 {
+		t.Fatalf("UserPrompts = %d, want 2 (different text should not dedupe)", got)
 	}
 }
 

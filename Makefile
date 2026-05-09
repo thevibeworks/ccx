@@ -1,5 +1,5 @@
 .PHONY: build build-all build-darwin-arm64 build-darwin-amd64 build-linux-amd64 build-linux-arm64
-.PHONY: test clean install lint fmt deps run tools skill
+.PHONY: test clean install lint fmt deps run dev run-projects run-doctor tools skill verify-pricing
 
 VERSION ?= dev
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -73,6 +73,9 @@ deps:
 run: build
 	./bin/ccx
 
+dev: build
+	./bin/ccx web
+
 run-projects: build
 	./bin/ccx projects
 
@@ -82,3 +85,11 @@ run-doctor: build
 skill:
 	cd skills && zip -r ../ccx.skill ccx/
 	@echo "Packaged: ccx.skill"
+
+# verify-pricing compares ccx's embedded pricing table against Claude
+# Code's source of truth (modelCost.ts). Requires a local checkout of
+# claude-code under ../../reference/claude-code-2188 by default; pass
+# CLAUDE_SOURCE=<path> to override. Exits non-zero on drift.
+CLAUDE_SOURCE ?= ../../reference/claude-code-2188
+verify-pricing:
+	@go run ./cmd/ccx-verify-pricing --claude-source $(CLAUDE_SOURCE)

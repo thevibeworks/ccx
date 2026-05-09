@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -281,8 +283,18 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 func renderSessionPage(session *parser.Session, projectName string, allSessions []*parser.Session, memCount int, showThinking, showTools, loadAll bool, theme string) string {
 	var b strings.Builder
 
-	title := fmt.Sprintf("Session %s - ccx", session.ID[:8])
+	idPrefix := session.ID
+	if len(idPrefix) > 8 {
+		idPrefix = idPrefix[:8]
+	}
+	title := fmt.Sprintf("Session %s - ccx", idPrefix)
 	b.WriteString(pageHeader(title, theme))
+	// Hint the current session's provider to the CSS layer so the
+	// loading spinner can pick up a provider-specific accent (e.g.
+	// green for Codex). Non-session pages never set this attribute.
+	if provider := strings.TrimSpace(session.Provider); provider != "" {
+		b.WriteString(fmt.Sprintf(`<script>document.body.dataset.ccxProvider=%q;</script>`, provider))
+	}
 	b.WriteString(renderTopNav(projectName, session.ID))
 	b.WriteString(`<div class="layout session-layout">`)
 
@@ -352,6 +364,11 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	b.WriteString(`<div class="tail-output" id="tail-output" style="display:none"></div>`)
 
 	b.WriteString(`</main>`)
+
+	// Timeline rail — right-edge time-axis scrubber. Narrow by default,
+	// expands on hover with a floating tooltip that snaps to the nearest
+	// tick. Click to jump. Hidden on narrow viewports.
+	renderTimelineRail(&b, session)
 
 	// Bottom dock toolbar - horizontal, modern UX
 	b.WriteString(`<div class="dock-toolbar" id="dock-toolbar">`)
@@ -484,7 +501,19 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 			}
 		}
 		b.WriteString(fmt.Sprintf(`<div class="info-row info-total" title="Input + Output tokens"><span class="info-label">Total</span><span class="info-value"><strong>%s</strong></span></div>`, formatTokens(totalTokens)))
+		// Cost row, shown when pricing resolved for at least one model
+		if session.Stats.CostUSD > 0 {
+			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="Sum of per-message USD cost using pinned Anthropic list pricing"><span class="info-label">Cost</span><span class="info-value"><strong>%s</strong></span></div>`, formatCost(session.Stats.CostUSD)))
+		}
 		b.WriteString(`</div>`)
+	}
+
+	// Per-turn spend section — the crown jewel of v0.next.
+	// Only render when we have at least one turn with billable usage.
+	allMsgs := flattenMessages(session.RootMessages)
+	turns := parser.ComputeTurnStats(allMsgs)
+	if hasBillableUsage(turns) {
+		b.WriteString(renderSpendSection(turns, session.Stats.CostUSD))
 	}
 
 	b.WriteString(`</div>`)
@@ -546,22 +575,21 @@ func splitByUserPrompts(messages []*parser.Message, chunkSize int) [][]*parser.M
 
 func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, showThinking, showTools, loadAll bool) {
 	allMsgs := flattenMessages(messages)
+	mainMsgs := filterMainConversation(allMsgs)
+	sidechainGroups := groupSidechainsByAgent(allMsgs)
+	scMap := matchSidechainsToToolUse(mainMsgs, sidechainGroups)
 
-	// Check if progressive loading is needed (unless loadAll is requested)
-	if !loadAll && len(allMsgs) > progressiveLoadThreshold {
-		renderMessagesProgressive(b, allMsgs, showThinking, showTools)
+	if !loadAll && len(mainMsgs) > progressiveLoadThreshold {
+		renderMessagesProgressive(b, mainMsgs, showThinking, showTools, scMap)
 		return
 	}
 
-	// Build tool results map for inline rendering
 	toolResults := buildToolResultsMap(allMsgs)
 
-	// Group messages into threads anchored by USER prompts
 	var currentThread []*parser.Message
 	inThread := false
 
-	for _, msg := range allMsgs {
-		// Skip standalone tool_result messages - they'll be rendered inline
+	for _, msg := range mainMsgs {
 		if msg.Kind == parser.KindToolResult {
 			continue
 		}
@@ -569,29 +597,25 @@ func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, s
 		isAnchor := msg.Kind == parser.KindUserPrompt || msg.Kind == parser.KindCommand
 
 		if isAnchor {
-			// Close previous thread if any
 			if inThread && len(currentThread) > 0 {
-				renderThread(b, currentThread, showThinking, showTools, toolResults)
+				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 			}
-			// Start new thread
 			currentThread = []*parser.Message{msg}
 			inThread = true
 		} else if inThread {
 			currentThread = append(currentThread, msg)
 		} else {
-			// Messages before first anchor - render directly
 			renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
 		}
 	}
 
-	// Close final thread
 	if inThread && len(currentThread) > 0 {
-		renderThread(b, currentThread, showThinking, showTools, toolResults)
+		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 	}
 }
 
 // renderMessagesProgressive renders large conversations with lazy loading
-func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, showThinking, showTools bool) {
+func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, showThinking, showTools bool, scMap map[string]sidechainGroup) {
 	sections := splitByCompactBoundaries(allMsgs)
 
 	// If no compact boundaries, fall back to splitting by user prompts
@@ -642,7 +666,7 @@ func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, sh
 
 		if isAnchor {
 			if inThread && len(currentThread) > 0 {
-				renderThread(b, currentThread, showThinking, showTools, toolResults)
+				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 			}
 			currentThread = []*parser.Message{msg}
 			inThread = true
@@ -654,7 +678,7 @@ func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, sh
 	}
 
 	if inThread && len(currentThread) > 0 {
-		renderThread(b, currentThread, showThinking, showTools, toolResults)
+		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
 	}
 }
 
@@ -671,8 +695,109 @@ func buildToolResultsMap(messages []*parser.Message) map[string]parser.ContentBl
 	return results
 }
 
+type sidechainGroup struct {
+	AgentID  string
+	Messages []*parser.Message
+}
+
+func groupSidechainsByAgent(allMsgs []*parser.Message) []sidechainGroup {
+	order := make([]string, 0)
+	byAgent := make(map[string][]*parser.Message)
+	for _, m := range allMsgs {
+		if !m.IsSidechain || m.AgentID == "" {
+			continue
+		}
+		if _, seen := byAgent[m.AgentID]; !seen {
+			order = append(order, m.AgentID)
+		}
+		byAgent[m.AgentID] = append(byAgent[m.AgentID], m)
+	}
+	groups := make([]sidechainGroup, 0, len(order))
+	for _, id := range order {
+		groups = append(groups, sidechainGroup{AgentID: id, Messages: byAgent[id]})
+	}
+	return groups
+}
+
+var subagentToolSet = map[string]bool{
+	"Task": true, "TaskCreate": true, "Agent": true,
+}
+
+func matchSidechainsToToolUse(mainMsgs []*parser.Message, groups []sidechainGroup) map[string]sidechainGroup {
+	if len(groups) == 0 {
+		return nil
+	}
+	var dispatchIDs []string
+	for _, msg := range mainMsgs {
+		for _, block := range msg.Content {
+			if block.Type == "tool_use" && subagentToolSet[block.ToolName] {
+				dispatchIDs = append(dispatchIDs, block.ToolID)
+			}
+		}
+	}
+	result := make(map[string]sidechainGroup, len(groups))
+	for i, id := range dispatchIDs {
+		if i < len(groups) {
+			result[id] = groups[i]
+		}
+	}
+	return result
+}
+
+func renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, showTools bool) {
+	snippet := sidechainSnippet(g.Messages)
+	label := "Sub-agent"
+	if snippet != "" {
+		label += ": " + snippet
+	}
+	msgCount := len(g.Messages)
+	toolCount := 0
+	for _, m := range g.Messages {
+		for _, block := range m.Content {
+			if block.Type == "tool_use" {
+				toolCount++
+			}
+		}
+	}
+	b.WriteString(fmt.Sprintf(`<details class="sidechain-group" id="sidechain-%s">`, html.EscapeString(g.AgentID)))
+	b.WriteString(fmt.Sprintf(`<summary class="sidechain-header"><span class="sidechain-icon">◆</span> %s <span class="sidechain-meta">%d messages, %d tools</span></summary>`,
+		html.EscapeString(label), msgCount, toolCount))
+	b.WriteString(`<div class="sidechain-body">`)
+
+	toolResults := buildToolResultsMap(g.Messages)
+	for _, msg := range g.Messages {
+		if msg.Kind == parser.KindToolResult {
+			continue
+		}
+		renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
+	}
+
+	b.WriteString(`</div></details>`)
+}
+
+func sidechainSnippet(msgs []*parser.Message) string {
+	for _, m := range msgs {
+		if m.Kind != parser.KindUserPrompt {
+			continue
+		}
+		for _, block := range m.Content {
+			if block.Type == "text" && block.Text != "" {
+				text := strings.TrimSpace(block.Text)
+				if idx := strings.Index(text, "\n"); idx > 0 {
+					text = text[:idx]
+				}
+				if len(text) > 80 {
+					text = text[:77] + "..."
+				}
+				return text
+			}
+		}
+	}
+	return ""
+}
+
 // renderThread renders a conversation thread anchored by a USER message
-func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock) {
+func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock, scMap map[string]sidechainGroup) {
 	if len(thread) == 0 {
 		return
 	}
@@ -680,15 +805,12 @@ func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, sh
 	anchor := thread[0]
 	responses := thread[1:]
 
-	// Thread container with visual line
 	b.WriteString(`<div class="thread">`)
 
-	// Render anchor (USER prompt or Command)
 	b.WriteString(`<div class="thread-anchor">`)
 	renderTurnMessage(b, anchor, showThinking, showTools, 0, toolResults)
 	b.WriteString(`</div>`)
 
-	// Render responses with indent
 	if len(responses) > 0 {
 		b.WriteString(`<div class="thread-responses">`)
 		for _, msg := range responses {
@@ -697,6 +819,13 @@ func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, sh
 				level = 2
 			}
 			renderTurnMessage(b, msg, showThinking, showTools, level, toolResults)
+			for _, block := range msg.Content {
+				if block.Type == "tool_use" && subagentToolSet[block.ToolName] {
+					if sc, ok := scMap[block.ToolID]; ok {
+						renderInlineSidechain(b, sc, showThinking, showTools)
+					}
+				}
+			}
 		}
 		b.WriteString(`</div>`)
 	}
@@ -1027,6 +1156,27 @@ func isActiveTool(name string) bool {
 
 // renderToolInput renders tool input in a formatted way
 func renderToolInput(b *strings.Builder, toolName string, input any) {
+	// ApplyPatch handles a RAW STRING input (the patch body itself)
+	// before the map-type check, because unlike every other tool its
+	// input isn't a JSON object — it's the patch text directly.
+	if toolName == "ApplyPatch" || toolName == "apply_patch" {
+		if s, ok := input.(string); ok && s != "" {
+			b.WriteString(`<pre class="tool-input apply-patch">`)
+			b.WriteString(html.EscapeString(s))
+			b.WriteString(`</pre>`)
+			return
+		}
+		if m, ok := input.(map[string]any); ok {
+			if changes, ok := m["changes"]; ok {
+				inputJSON, _ := json.MarshalIndent(changes, "", "  ")
+				b.WriteString(`<pre class="tool-input apply-patch">`)
+				b.WriteString(html.EscapeString(string(inputJSON)))
+				b.WriteString(`</pre>`)
+				return
+			}
+		}
+	}
+
 	m, ok := input.(map[string]any)
 	if !ok {
 		inputJSON, _ := json.MarshalIndent(input, "", "  ")
@@ -1035,6 +1185,89 @@ func renderToolInput(b *strings.Builder, toolName string, input any) {
 	}
 
 	switch toolName {
+	case "Bash":
+		// Two supported shapes: Claude Code uses {command, description,
+		// timeout}; Codex's exec_command (normalized → Bash) uses
+		// {cmd, workdir, max_output_tokens}. Pick whichever is present.
+		b.WriteString(`<div class="bash-call">`)
+		cmd := ""
+		if v, ok := m["command"].(string); ok && v != "" {
+			cmd = v
+		} else if v, ok := m["cmd"].(string); ok && v != "" {
+			cmd = v
+		} else if argv, ok := m["argv"].([]any); ok {
+			parts := make([]string, 0, len(argv))
+			for _, a := range argv {
+				if s, ok := a.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+			cmd = strings.Join(parts, " ")
+		}
+		if cmd != "" {
+			b.WriteString(`<pre class="bash-cmd">$ `)
+			b.WriteString(html.EscapeString(cmd))
+			b.WriteString(`</pre>`)
+		}
+		if wd, ok := m["workdir"].(string); ok && wd != "" {
+			b.WriteString(fmt.Sprintf(`<div class="bash-meta">cwd: <code>%s</code></div>`, html.EscapeString(wd)))
+		} else if wd, ok := m["cwd"].(string); ok && wd != "" {
+			b.WriteString(fmt.Sprintf(`<div class="bash-meta">cwd: <code>%s</code></div>`, html.EscapeString(wd)))
+		}
+		if desc, ok := m["description"].(string); ok && desc != "" {
+			b.WriteString(fmt.Sprintf(`<div class="bash-desc">%s</div>`, html.EscapeString(desc)))
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "UpdatePlan", "update_plan":
+		// Codex's plan tool. Input shape:
+		//   {explanation: "...", plan: [{step: "...", status: "pending|in_progress|completed"}]}
+		b.WriteString(`<div class="update-plan">`)
+		if exp, ok := m["explanation"].(string); ok && exp != "" {
+			b.WriteString(fmt.Sprintf(`<div class="plan-exp">%s</div>`, html.EscapeString(exp)))
+		}
+		if plan, ok := m["plan"].([]any); ok {
+			b.WriteString(`<ul class="plan-steps">`)
+			for _, item := range plan {
+				pm, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				step, _ := pm["step"].(string)
+				status, _ := pm["status"].(string)
+				icon := "○"
+				cls := "plan-pending"
+				if status == "completed" {
+					icon = "✓"
+					cls = "plan-done"
+				} else if status == "in_progress" {
+					icon = "◐"
+					cls = "plan-active"
+				}
+				b.WriteString(fmt.Sprintf(`<li class="%s"><span class="plan-icon">%s</span><span class="plan-text">%s</span></li>`,
+					cls, icon, html.EscapeString(step)))
+			}
+			b.WriteString(`</ul>`)
+		}
+		b.WriteString(`</div>`)
+		return
+
+	case "WriteStdin", "write_stdin":
+		b.WriteString(`<div class="stdin-call">`)
+		if sid, ok := m["session_id"]; ok {
+			b.WriteString(fmt.Sprintf(`<span class="stdin-sid">session %v</span>`, sid))
+		}
+		if chars, ok := m["chars"].(string); ok {
+			if chars == "" {
+				b.WriteString(`<span class="stdin-empty">(empty — poll)</span>`)
+			} else {
+				b.WriteString(fmt.Sprintf(`<pre class="stdin-chars">%s</pre>`, html.EscapeString(chars)))
+			}
+		}
+		b.WriteString(`</div>`)
+		return
+
 	case "Edit":
 		// Show diff-style view for Edit tool
 		b.WriteString(`<div class="edit-diff">`)
@@ -1294,6 +1527,30 @@ func renderMarkdown(text string) string {
 			continue
 		}
 
+		// Heading detection: 1-6 leading '#' followed by a space and text.
+		// Matches CommonMark ATX headings. Anything else falls through to
+		// the paragraph renderer below.
+		if level, headingText, ok := parseATXHeading(line); ok {
+			escaped := html.EscapeString(headingText)
+			escaped = processInlineCode(escaped)
+			escaped = processBold(escaped)
+			b.WriteString(fmt.Sprintf(`<div class="md-h%d">%s</div>`, level, escaped))
+			continue
+		}
+
+		// List detection: "- item" / "* item" / "N. item". Render as an
+		// unnumbered line (the bullet is kept literal) rather than a flat
+		// paragraph so the structure is visually preserved in the feed.
+		trimmedLine := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmedLine, "- ") || strings.HasPrefix(trimmedLine, "* ") {
+			text := trimmedLine[2:]
+			escaped := html.EscapeString(text)
+			escaped = processInlineCode(escaped)
+			escaped = processBold(escaped)
+			b.WriteString(`<div class="md-li">• ` + escaped + `</div>`)
+			continue
+		}
+
 		// Process inline formatting
 		escaped := html.EscapeString(line)
 		escaped = processInlineCode(escaped)
@@ -1349,6 +1606,36 @@ func parseTableRow(row string) []string {
 	row = strings.TrimSpace(row)
 	row = strings.Trim(row, "|")
 	return strings.Split(row, "|")
+}
+
+// parseATXHeading recognizes a CommonMark-style ATX heading ("# title"
+// through "###### title"). Returns the heading level (1-6), the inner
+// text with heading syntax stripped, and ok=true on match.
+//
+// Rejected: more than 6 leading #s, no space after the #s, empty inner
+// text (we prefer to render those as plain paragraphs so the rail has
+// nothing but real headings to latch onto), and any leading whitespace
+// (CommonMark allows up to 3 spaces but ccx's pipeline trims lines
+// before reaching here).
+func parseATXHeading(line string) (int, string, bool) {
+	i := 0
+	for i < 6 && i < len(line) && line[i] == '#' {
+		i++
+	}
+	if i == 0 || i >= len(line) {
+		return 0, "", false
+	}
+	// Must be followed by a space or tab (CommonMark requirement)
+	if line[i] != ' ' && line[i] != '\t' {
+		return 0, "", false
+	}
+	text := strings.TrimSpace(line[i+1:])
+	// Strip trailing #s per CommonMark (e.g. "## heading ##")
+	text = strings.TrimRight(text, " #")
+	if text == "" {
+		return 0, "", false
+	}
+	return i, text, true
 }
 
 // processInlineCode converts `code` to <code>code</code>
@@ -1499,11 +1786,138 @@ func formatTokens(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-// renderConversationNav renders a collapsible tree navigation
-func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
-	allMsgs := flattenMessages(messages)
+// formatCost returns a USD string with adaptive precision:
+//
+//	< $0.01      -> "<$0.01"
+//	< $1         -> "$0.0123"
+//	>= $1        -> "$1.23"
+//	>= $100      -> "$123"
+//	>= $10,000   -> "$12.3k"
+//
+// No rounding games, no locale. Cost is the user's whole reason for
+// looking — show what's billed.
+func formatCost(usd float64) string {
+	if usd <= 0 {
+		return "$0.00"
+	}
+	if usd < 0.01 {
+		return "<$0.01"
+	}
+	if usd < 1 {
+		return fmt.Sprintf("$%.4f", usd)
+	}
+	if usd < 100 {
+		return fmt.Sprintf("$%.2f", usd)
+	}
+	if usd < 10_000 {
+		return fmt.Sprintf("$%.0f", usd)
+	}
+	return fmt.Sprintf("$%.1fk", usd/1000)
+}
 
-	// Group messages: each user prompt starts a new group
+// hasBillableUsage reports whether any turn in the slice has non-zero
+// tokens. Used to decide whether to render the spend section at all.
+func hasBillableUsage(turns []*parser.TurnStats) bool {
+	for _, t := range turns {
+		if t != nil && t.TotalTokens() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// renderSpendSection renders the per-turn breakdown inside the info panel.
+// Turns are sorted by cost desc (most expensive first) so quota hogs
+// surface immediately. Rows link to #msg-<anchor> which composes with
+// the load-earlier hash-nav fix shipped in #3.
+func renderSpendSection(turns []*parser.TurnStats, sessionTotal float64) string {
+	var b strings.Builder
+
+	// Sort by cost desc (stable — ties break by original turn index).
+	// We don't sort the underlying slice; work on a copy so callers get
+	// chronological order back.
+	sorted := make([]*parser.TurnStats, len(turns))
+	copy(sorted, turns)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].CostUSD != sorted[j].CostUSD {
+			return sorted[i].CostUSD > sorted[j].CostUSD
+		}
+		return sorted[i].Index < sorted[j].Index
+	})
+
+	b.WriteString(`<div class="info-section info-section-spend">`)
+	b.WriteString(`<div class="info-section-header">Per-turn spend</div>`)
+
+	priced := 0
+	for _, t := range sorted {
+		if t.CostUSD > 0 {
+			priced++
+		}
+	}
+	if priced == 0 {
+		// Tokens present but no pricing matched any model (unknown model).
+		// Still useful to show token-only breakdown; label the limitation.
+		b.WriteString(`<div class="spend-note">No pricing match for model — showing token totals.</div>`)
+	}
+
+	b.WriteString(`<div class="spend-list">`)
+	for _, t := range sorted {
+		// Skip turns with literally zero activity (no tokens, no cost)
+		if t.TotalTokens() == 0 && t.CostUSD == 0 {
+			continue
+		}
+		snippet := t.Snippet
+		if len(snippet) > 42 {
+			snippet = snippet[:39] + "..."
+		}
+		label := fmt.Sprintf("%d. %s", t.Index, snippet)
+		tokensLabel := formatTokens(t.TotalTokens())
+
+		b.WriteString(fmt.Sprintf(
+			`<a class="spend-row" href="#msg-%s" title="Jump to turn %d — %s tokens, %s"><span class="spend-label">%s</span><span class="spend-cost">%s</span></a>`,
+			html.EscapeString(sanitizeID(t.AnchorID)),
+			t.Index,
+			tokensLabel,
+			formatCost(t.CostUSD),
+			html.EscapeString(label),
+			formatCost(t.CostUSD),
+		))
+	}
+	b.WriteString(`</div>`)
+
+	// Footer: total cost summary + known-models link
+	if sessionTotal > 0 {
+		b.WriteString(fmt.Sprintf(
+			`<div class="spend-footer">Session total: <strong>%s</strong></div>`,
+			formatCost(sessionTotal),
+		))
+	}
+
+	b.WriteString(`</div>`)
+	return b.String()
+}
+
+// renderConversationNav emits the outline sidebar.
+//
+// Each Exchange group is a <div class="nav-group"> with two distinct
+// clickable targets:
+//
+//	<a  class="nav-title"  href="#msg-…">prompt preview … 14:03</a>
+//	<button class="nav-expand" aria-expanded="…">▶</button>
+//
+// Clicking the title jumps to the message. Clicking the expand button
+// (and only the expand button) toggles the group's children. There is
+// no <details>/<summary> overlap between "toggle" and "jump": one
+// element, one action.
+//
+// The last three exchanges default to expanded; earlier ones collapse.
+// Group children are rendered in a <div class="nav-children"> that the
+// JS can hide/show via the aria-expanded attribute on the group root.
+func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
+	flat := flattenMessages(messages)
+	allMsgs := filterMainConversation(flat)
+	sidechains := groupSidechainsByAgent(flat)
+
 	type navGroup struct {
 		user     *parser.Message
 		children []*parser.Message
@@ -1514,13 +1928,11 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 	for _, msg := range allMsgs {
 		switch msg.Kind {
 		case parser.KindUserPrompt, parser.KindCommand, parser.KindCompactSummary:
-			// Start new group
 			if currentGroup != nil {
 				groups = append(groups, *currentGroup)
 			}
 			currentGroup = &navGroup{user: msg}
 		default:
-			// Add to current group
 			if currentGroup != nil {
 				currentGroup.children = append(currentGroup.children, msg)
 			}
@@ -1530,59 +1942,106 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 		groups = append(groups, *currentGroup)
 	}
 
-	// Render groups as collapsible tree
 	for i, g := range groups {
-		isLast := i >= len(groups)-3 // Expand last 3 groups
+		isLast := i >= len(groups)-3 // default-expand last 3 exchanges
+		uuid := sanitizeID(g.user.UUID)
+		timeAttr := ""
+		if !g.user.Timestamp.IsZero() {
+			timeAttr = g.user.Timestamp.Local().Format("15:04")
+		}
 
-		// User/command/compact header
 		switch g.user.Kind {
 		case parser.KindCompactSummary:
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-compact" data-msg="%s">`,
-				sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
-			b.WriteString(`<span class="nav-icon">◇</span><span class="nav-text">COMPACT</span></a>`)
+				uuid, html.EscapeString(uuid)))
+			b.WriteString(`<span class="nav-icon" aria-hidden="true">◇</span><span class="nav-text">COMPACT</span>`)
+			if timeAttr != "" {
+				b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
+			}
+			b.WriteString(`</a>`)
 
 		case parser.KindCommand:
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-command" data-msg="%s">`,
-				sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
-			b.WriteString(fmt.Sprintf(`<span class="nav-icon">⌘</span><span class="nav-text">%s</span></a>`,
+				uuid, html.EscapeString(uuid)))
+			b.WriteString(fmt.Sprintf(`<span class="nav-icon" aria-hidden="true">⌘</span><span class="nav-text">%s</span>`,
 				html.EscapeString(g.user.CommandName)))
+			if timeAttr != "" {
+				b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
+			}
+			b.WriteString(`</a>`)
 
 		case parser.KindUserPrompt:
 			preview := getNavPreview(g.user)
 			childCount := len(g.children)
 
 			if childCount == 0 {
-				// No children - simple link
 				b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-user" data-msg="%s">`,
-					sanitizeID(g.user.UUID), html.EscapeString(sanitizeID(g.user.UUID))))
-				b.WriteString(fmt.Sprintf(`<span class="nav-icon">▶</span><span class="nav-text">%s</span></a>`,
+					uuid, html.EscapeString(uuid)))
+				b.WriteString(fmt.Sprintf(`<span class="nav-icon" aria-hidden="true">▶</span><span class="nav-text">%s</span>`,
 					html.EscapeString(preview)))
-			} else {
-				// Has children - collapsible
-				openAttr := ""
-				if isLast {
-					openAttr = " open"
+				if timeAttr != "" {
+					b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
 				}
-				b.WriteString(fmt.Sprintf(`<details class="nav-group"%s>`, openAttr))
-				b.WriteString(fmt.Sprintf(`<summary class="nav-item nav-user" data-msg="%s">`, html.EscapeString(sanitizeID(g.user.UUID))))
-				b.WriteString(fmt.Sprintf(`<span class="nav-icon">▶</span><span class="nav-text">%s</span>`,
-					html.EscapeString(preview)))
-				b.WriteString(fmt.Sprintf(`<span class="nav-count">%d</span>`, childCount))
-				b.WriteString(`</summary>`)
-				b.WriteString(`<div class="nav-children">`)
+				b.WriteString(`</a>`)
+				continue
+			}
 
-				// Render children (limit to avoid bloat)
-				maxChildren := 10
-				for j, child := range g.children {
-					if j >= maxChildren {
-						b.WriteString(fmt.Sprintf(`<span class="nav-more">+%d more</span>`, len(g.children)-maxChildren))
-						break
-					}
+			expandedAttr := "false"
+			if isLast {
+				expandedAttr = "true"
+			}
+			b.WriteString(fmt.Sprintf(`<div class="nav-group" data-expanded="%s">`, expandedAttr))
+			b.WriteString(`<div class="nav-row">`)
+			b.WriteString(fmt.Sprintf(`<button type="button" class="nav-expand" aria-expanded="%s" aria-label="Toggle exchange" data-target="%s"></button>`,
+				expandedAttr, html.EscapeString(uuid)))
+			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-title nav-user" data-msg="%s">`,
+				uuid, html.EscapeString(uuid)))
+			b.WriteString(fmt.Sprintf(`<span class="nav-text">%s</span>`, html.EscapeString(preview)))
+			b.WriteString(fmt.Sprintf(`<span class="nav-count">%d</span>`, childCount))
+			if timeAttr != "" {
+				b.WriteString(fmt.Sprintf(`<span class="nav-time">%s</span>`, html.EscapeString(timeAttr)))
+			}
+			b.WriteString(`</a>`)
+			b.WriteString(`</div>`) // .nav-row
+
+			b.WriteString(`<div class="nav-children">`)
+			const maxChildren = 10
+			total := len(g.children)
+			if total <= maxChildren {
+				for _, child := range g.children {
 					renderNavChild(b, child)
 				}
-				b.WriteString(`</div></details>`)
+			} else {
+				head := maxChildren - 1
+				for _, child := range g.children[:head] {
+					renderNavChild(b, child)
+				}
+				hidden := total - head - 1
+				if hidden > 0 {
+					b.WriteString(fmt.Sprintf(`<span class="nav-more">+%d more</span>`, hidden))
+				}
+				renderNavChild(b, g.children[total-1])
+			}
+			b.WriteString(`</div>`) // .nav-children
+			b.WriteString(`</div>`) // .nav-group
+		}
+	}
+
+	for i, g := range sidechains {
+		snippet := sidechainSnippet(g.Messages)
+		label := fmt.Sprintf("Sub-agent %d", i+1)
+		if snippet != "" {
+			label = snippet
+			if len(label) > 30 {
+				label = label[:27] + "..."
 			}
 		}
+		b.WriteString(fmt.Sprintf(`<a href="#sidechain-%s" class="nav-item nav-sidechain" data-msg="sidechain-%s">`,
+			html.EscapeString(g.AgentID), html.EscapeString(g.AgentID)))
+		b.WriteString(fmt.Sprintf(`<span class="nav-icon" aria-hidden="true">◆</span><span class="nav-text">%s</span>`,
+			html.EscapeString(label)))
+		b.WriteString(fmt.Sprintf(`<span class="nav-count">%d</span>`, len(g.Messages)))
+		b.WriteString(`</a>`)
 	}
 }
 
@@ -2564,6 +3023,84 @@ func pageHeader(title, theme string) string {
 `, theme, html.EscapeString(title), faviconLink(), cssStyles())
 }
 
+// renderNotFoundPage emits a styled 404 page with a pre-filled
+// "report this bug" link to the ccx GitHub issues page.
+//
+// kind is a one-word category ("session", "project", "page",
+// "export") used in the headline. detail is an optional one-line
+// explanation that helps the user understand what went wrong
+// (e.g. "couldn't resolve session 019d8f43... in project foo").
+//
+// The bug report link captures the failing URL, user agent, and
+// timestamp — everything a maintainer needs to reproduce without
+// asking follow-up questions. The issue body is a Markdown template
+// the user can edit before submitting.
+func renderNotFoundPage(w http.ResponseWriter, r *http.Request, kind, detail string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
+
+	failingURL := r.URL.String()
+	userAgent := r.UserAgent()
+	timestamp := time.Now().Format(time.RFC3339)
+
+	// Pre-filled issue title + body. The user can (and should) edit
+	// them before submitting; we just take the boring parts off
+	// their plate.
+	title := "404: " + kind + " not found"
+	if detail != "" {
+		title = "404: " + detail
+	}
+	bodyTemplate := "### What I tried to access\n\n" +
+		"```\n" + failingURL + "\n```\n\n" +
+		"### What I expected\n\n" +
+		"_Replace this with what you expected to see._\n\n" +
+		"### What actually happened\n\n" +
+		"ccx web returned a 404 page.\n\n"
+	if detail != "" {
+		bodyTemplate += "Detail from the 404 page: `" + detail + "`\n\n"
+	}
+	bodyTemplate += "### Environment\n\n" +
+		"- Timestamp: " + timestamp + "\n" +
+		"- User-Agent: `" + userAgent + "`\n" +
+		"- ccx version: _(paste output of `ccx --version` here)_\n"
+
+	issueURL := "https://github.com/thevibeworks/ccx/issues/new?" +
+		"labels=bug" +
+		"&title=" + url.QueryEscape(title) +
+		"&body=" + url.QueryEscape(bodyTemplate)
+
+	var b strings.Builder
+	b.WriteString(pageHeader("ccx — not found", "light"))
+	b.WriteString(renderTopNav("", ""))
+	b.WriteString(`<main class="nf-main">`)
+	b.WriteString(`<div class="nf-box">`)
+	b.WriteString(`<div class="nf-glyph" aria-hidden="true">404</div>`)
+	b.WriteString(`<h1 class="nf-title">Can't find this ` + html.EscapeString(kind) + `.</h1>`)
+	if detail != "" {
+		b.WriteString(`<p class="nf-detail">` + html.EscapeString(detail) + `</p>`)
+	}
+	b.WriteString(`<pre class="nf-url">` + html.EscapeString(failingURL) + `</pre>`)
+	b.WriteString(`<p class="nf-note">`)
+	b.WriteString(`This can happen if the session was deleted, if ccx's project index is stale, `)
+	b.WriteString(`or — more interestingly — if we broke something. If you didn't expect this, `)
+	b.WriteString(`please tell us:`)
+	b.WriteString(`</p>`)
+	b.WriteString(`<div class="nf-actions">`)
+	b.WriteString(`<a class="nf-btn nf-primary" href="` + html.EscapeString(issueURL) + `" target="_blank" rel="noopener noreferrer">`)
+	b.WriteString(`<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:middle;margin-right:6px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`)
+	b.WriteString(`Report this bug`)
+	b.WriteString(`</a>`)
+	b.WriteString(`<a class="nf-btn" href="/">← All projects</a>`)
+	b.WriteString(`<a class="nf-btn" href="/search">Search sessions</a>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`</div>`)
+	b.WriteString(`</main>`)
+	b.WriteString(renderFooter())
+	b.WriteString("</body></html>")
+
+	fmt.Fprint(w, b.String())
+}
+
 func faviconLink() string {
 	// Bold favicon: cc in white, x in coral
 	return `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23111'/%3E%3Ctext x='3' y='23' font-family='ui-monospace,monospace' font-weight='800' font-size='14'%3E%3Ctspan fill='%23fff'%3Ecc%3C/tspan%3E%3Ctspan fill='%23da7756'%3Ex%3C/tspan%3E%3C/text%3E%3C/svg%3E">`
@@ -2574,20 +3111,46 @@ func pageFooter() string {
 <div id="loading-overlay" class="loading-overlay">
   <div class="cli-spinner">
     <span class="cli-spinner-char"></span>
-    <span>Loading...</span>
+    <span id="spinner-verb">Loading</span>
   </div>
 </div>
 <script>
 // Global loading overlay control
 const loadingOverlay = document.getElementById('loading-overlay');
-window.showLoading = function() { loadingOverlay?.classList.add('active'); };
-window.hideLoading = function() { loadingOverlay?.classList.remove('active'); };
+const spinnerVerbEl = document.getElementById('spinner-verb');
+
+// ccx-flavored gerund list. Pure decoration — the label the spinner
+// shows has no correlation with what ccx is actually doing. See
+// internal/web/spinner_verbs.go for the Go-side source of truth.
+const SPINNER_VERBS = ` + spinnerVerbsJSArray() + `;
+let spinnerTimer = null;
+function pickSpinnerVerb() {
+  return SPINNER_VERBS[Math.floor(Math.random() * SPINNER_VERBS.length)] + '...';
+}
+function startSpinnerRotation() {
+  if (spinnerVerbEl) spinnerVerbEl.textContent = pickSpinnerVerb();
+  if (spinnerTimer) return;
+  spinnerTimer = setInterval(() => {
+    if (spinnerVerbEl) spinnerVerbEl.textContent = pickSpinnerVerb();
+  }, 1400);
+}
+function stopSpinnerRotation() {
+  if (spinnerTimer) { clearInterval(spinnerTimer); spinnerTimer = null; }
+}
+
+window.showLoading = function() {
+  loadingOverlay?.classList.add('active');
+  startSpinnerRotation();
+};
+window.hideLoading = function() {
+  loadingOverlay?.classList.remove('active');
+  stopSpinnerRotation();
+};
 
 // Show loading on navigation (skip downloads/API links)
 document.querySelectorAll('a[href^="/"]').forEach(a => {
   a.addEventListener('click', function(e) {
     const href = this.getAttribute('href') || '';
-    // Skip: modifier keys, API/export links, anchor links
     if (e.metaKey || e.ctrlKey || e.shiftKey) return;
     if (href.startsWith('/api/')) return;
     if (href.startsWith('#')) return;
@@ -2617,6 +3180,17 @@ func cssStyles() string {
   /* Provider accent colors */
   --accent-cc: #da7756;
   --accent-cx: #10b981;
+  /* Semantic event tokens — one color per event kind, used by the
+   * rail, outline, info panel, badges, and any future surface. If
+   * you want to rebrand an event kind, change it HERE, not in a
+   * dozen component rules. */
+  --event-prompt:   var(--accent-session, #8b5cf6);
+  --event-command:  var(--accent-conversation, #06b6d4);
+  --event-compact:  #fa0;
+  --event-tool:     var(--text-muted);
+  --event-subagent: var(--accent-project, #3b82f6);
+  --event-skill:    var(--accent-session, #8b5cf6);
+  --event-plugin:   var(--accent-conversation, #06b6d4);
   --user-bg: #fff8f5;
   --user-border: #da7756;
   --assistant-bg: #f5faf5;
@@ -2831,6 +3405,96 @@ code, pre, .session-id, .model-badge {
 .footer-text { font-size: 12px; color: inherit; text-decoration: none; }
 .footer-text:hover { opacity: 0.8; }
 
+/* 404 not-found page — renderNotFoundPage */
+.nf-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 64px 24px 120px;
+  min-height: calc(100vh - 200px);
+}
+.nf-box {
+  max-width: 560px;
+  width: 100%;
+  text-align: left;
+}
+.nf-glyph {
+  font-family: var(--font-mono);
+  font-size: 72px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -2px;
+  color: var(--primary);
+  opacity: 0.85;
+  margin-bottom: 12px;
+}
+.nf-title {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 8px;
+  letter-spacing: -0.2px;
+}
+.nf-detail {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 14px;
+  font-family: var(--font-mono);
+}
+.nf-url {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0 0 18px;
+  word-break: break-all;
+}
+.nf-note {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0 0 20px;
+}
+.nf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.nf-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-decoration: none;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.nf-btn:hover {
+  color: var(--text);
+  background: var(--bg-tertiary);
+  border-color: var(--text-muted);
+}
+.nf-btn.nf-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.nf-btn.nf-primary:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+  color: #fff;
+}
+
 /* Two-panel navigation */
 .panel-nav {
   width: 170px;
@@ -2842,6 +3506,103 @@ code, pre, .session-id, .model-badge {
   height: calc(100vh - 48px);
   position: sticky;
   top: 48px;
+}
+
+/* Session nav: narrow-by-default, expand-on-hover.
+ *
+ * Default state is 56px — wide enough for a session-id stub + provider
+ * badge, narrow enough that the reading content gets the space it
+ * needs. On hover the sidebar expands to 260px via overlay (absolute
+ * positioning inside a 56px flex slot) so the outline sidebar and main
+ * content don't shift sideways when the cursor drifts over.
+ *
+ * The outer <aside.session-nav> keeps its 56px footprint in the flex
+ * layout. The inner stack (.panel-header + .panel-list) is the element
+ * that actually widens — anchored left to the aside so expansion grows
+ * rightward into a floating column with a soft shadow. */
+.panel-nav.session-nav {
+  width: 56px;
+  min-width: 56px;
+  background: transparent;
+  border-right: none;
+  position: sticky;
+  top: 48px;
+  z-index: 20;
+  overflow: visible;
+  display: block;
+}
+.panel-nav.session-nav .panel-header,
+.panel-nav.session-nav .panel-list {
+  width: 56px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  transition: width 0.18s ease, box-shadow 0.18s ease;
+}
+.panel-nav.session-nav:hover .panel-header,
+.panel-nav.session-nav:hover .panel-list {
+  width: 260px;
+  box-shadow: 6px 0 18px rgba(0, 0, 0, 0.08);
+}
+.panel-nav.session-nav .panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 14px 0;
+  text-align: center;
+  font-size: 0; /* Hide the "Sessions" text when collapsed */
+}
+.panel-nav.session-nav .panel-header::before {
+  content: 'S';
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  line-height: 24px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent-session) 15%, transparent);
+  color: var(--accent-session);
+}
+.panel-nav.session-nav:hover .panel-header {
+  padding: 12px 16px;
+  font-size: 13px;
+  text-align: left;
+}
+.panel-nav.session-nav:hover .panel-header::before { display: none; }
+.panel-nav.session-nav .panel-list {
+  max-height: calc(100vh - 48px - 52px);
+  overflow-y: auto;
+}
+/* Collapsed panel items: compact pill showing only session id */
+.panel-nav.session-nav .panel-item {
+  padding: 8px 6px;
+  gap: 2px;
+  overflow: hidden;
+}
+.panel-nav.session-nav:hover .panel-item {
+  padding: 8px 16px;
+}
+.panel-nav.session-nav .panel-item .panel-summary {
+  display: none;
+}
+.panel-nav.session-nav:hover .panel-item .panel-summary {
+  display: block;
+}
+.panel-nav.session-nav .panel-item .panel-id {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+.panel-nav.session-nav:hover .panel-item .panel-id {
+  font-size: 11px;
+}
+/* Hide the provider badge's right-align magic when collapsed so it
+ * centers under the id stub instead of floating off-screen */
+.panel-nav.session-nav .panel-item .panel-id-row {
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.panel-nav.session-nav:hover .panel-item .panel-id-row {
+  justify-content: flex-start;
 }
 .panel-header {
   padding: 12px 16px;
@@ -3125,21 +3886,49 @@ code, pre, .session-id, .model-badge {
 }
 @keyframes spin { to { transform: translateY(-50%) rotate(360deg); } }
 
-/* CLI-style loading spinner */
+/* CLI-style loading spinner.
+ *
+ * Layout invariant: the spinner icon must NOT move horizontally as
+ * the verb changes length. Flex + center + gap lets the whole block
+ * grow/shrink with the verb, which the overlay then re-centers,
+ * which causes the icon to visibly jitter across ~40px as the label
+ * rotates ("Ccxing" → "Flibbertigibbeting" → "Pondering"...).
+ *
+ * Fix: the spinner block is a FIXED-width container with the icon
+ * absolute-positioned at the left edge and the verb text anchored
+ * to a fixed padding-left. Short verbs leave trailing empty space;
+ * long verbs are capped by overflow. The overlay still centers the
+ * whole block, but because the block size is stable, the icon sits
+ * at the same screen coordinate every frame. */
 .cli-spinner {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  position: relative;
+  display: inline-block;
+  width: 220px;
+  padding-left: 26px;
   color: var(--primary);
   font-family: var(--font-mono);
   font-size: 14px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cli-spinner-char {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-block;
-  width: 16px;
+  width: 18px;
   text-align: center;
   animation: cli-spin 0.72s steps(6) infinite;
 }
+/* Codex sessions swap the spinner color to the Codex accent so the
+ * provenance of the session you're viewing is visible even during
+ * a page-load flash. Claude Code sessions (and all non-session
+ * pages) stay on the primary terracotta. */
+body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 @keyframes cli-spin {
   0% { content: '·'; }
   16% { content: '✢'; }
@@ -3313,6 +4102,12 @@ code, pre, .session-id, .model-badge {
   min-width: 50px;
   text-align: center;
 }
+.search-info .search-load-all-link {
+  color: var(--primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.search-info .search-load-all-link:hover { text-decoration: none; }
 .search-nav {
   background: none;
   border: 1px solid var(--border);
@@ -3377,10 +4172,65 @@ code, pre, .session-id, .model-badge {
   z-index: 200;
   display: none;
   min-width: 260px;
-  max-width: 320px;
-  overflow: hidden;
+  max-width: 340px;
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
 }
 .info-panel.show { display: block; }
+/* Per-turn spend section */
+.info-row.info-cost .info-value { color: var(--primary); }
+.info-section-spend .spend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 4px -4px 0 -4px;
+}
+.info-section-spend .spend-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  font-size: 11px;
+  text-decoration: none;
+  color: var(--text);
+  border-radius: 4px;
+}
+.info-section-spend .spend-row:hover {
+  background: var(--bg-alt, rgba(127,127,127,0.08));
+}
+.info-section-spend .spend-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.info-section-spend .spend-cost {
+  font-variant-numeric: tabular-nums;
+  color: var(--primary);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.info-section-spend .spend-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 4px 0;
+}
+.info-section-spend .spend-footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+}
+.info-section-spend .spend-footer strong {
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
 .info-section {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
@@ -3522,6 +4372,13 @@ code, pre, .session-id, .model-badge {
 }
 .nav-compact .nav-icon { color: #fa0; }
 
+.nav-sidechain {
+  border-left: 3px solid #86c;
+  margin: 4px 0;
+  opacity: 0.85;
+}
+.nav-sidechain .nav-icon { color: #86c; }
+
 .nav-user { padding-left: 8px; font-weight: 500; }
 .nav-user .nav-icon { color: var(--user-border); }
 
@@ -3540,25 +4397,79 @@ code, pre, .session-id, .model-badge {
 .nav-meta { padding-left: 20px; opacity: 0.4; font-style: italic; }
 .nav-meta .nav-icon { color: #999; }
 
-/* Collapsible nav groups */
+/* Exchange outline groups: title + expand button + children.
+   Two distinct click targets — clicking the title jumps to the message,
+   clicking the expand button toggles children. No overlap. */
 .nav-group { margin: 2px 0; }
-.nav-group > summary { list-style: none; cursor: pointer; }
-.nav-group > summary::-webkit-details-marker { display: none; }
-.nav-group > summary .nav-icon { transition: transform 0.15s; }
-.nav-group[open] > summary .nav-icon { transform: rotate(90deg); }
+.nav-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+.nav-expand {
+  flex-shrink: 0;
+  width: 16px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.nav-expand::before {
+  content: '▸';
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+.nav-expand:hover { background: var(--bg-tertiary); color: var(--text); }
+.nav-expand:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  color: var(--text);
+}
+.nav-expand[aria-expanded="true"]::before { transform: rotate(90deg); }
+.nav-group > .nav-row > .nav-title { flex: 1; min-width: 0; }
+.nav-time {
+  margin-left: 6px;
+  font-size: 9px;
+  color: var(--text-muted);
+  opacity: 0.65;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
 .nav-count {
-  margin-left: auto;
+  margin-left: 6px;
   font-size: 9px;
   background: var(--bg-tertiary);
   padding: 1px 5px;
   border-radius: 8px;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 .nav-children {
   padding-left: 12px;
   border-left: 1px solid var(--border);
   margin-left: 10px;
   margin-top: 2px;
+  overflow: hidden;
+  transition: max-height 0.18s ease, opacity 0.18s ease;
+}
+.nav-group[data-expanded="false"] > .nav-children {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  pointer-events: none;
+}
+.nav-group[data-expanded="true"] > .nav-children {
+  max-height: 2000px;
+  opacity: 1;
 }
 .nav-children .nav-item { font-size: 9px; padding: 2px 6px; }
 .nav-more {
@@ -3583,6 +4494,384 @@ code, pre, .session-id, .model-badge {
 
 .session-main { flex: 1; max-width: 900px; min-width: 0; margin-left: 0; padding: 24px 32px; }
 .session-layout.sidebar-collapsed .nav-sidebar { width: 48px; }
+
+/* Timeline rail — right-edge semantic scrubber with ruler-style notches.
+ *
+ * Visual metaphor: a physical ruler. Each tick is a horizontal notch
+ * extending from a faint center spine — major events (user turns,
+ * compact boundaries) get full-width notches; minor sub-events (sub-
+ * agents, skill calls) get shorter notches.
+ *
+ * Background is fully transparent at rest and stays transparent on
+ * hover — only the spine + ticks + faint left-border get painted.
+ * No background fill so the rail blends with whatever content it
+ * overlays.
+ *
+ * Layout: fixed position, 14px inward from the viewport right edge
+ * so it never fights the browser scrollbar. 24px invisible hit target
+ * with a 10px-visible notch strip centered inside — forgives slight
+ * mouse drift on entry. Expands to 52px on hover to give the notches
+ * room to extend.
+ *
+ * Interaction:
+ *   - Move mouse over rail → hover-scrub: nearest tick highlights,
+ *     5-tick fisheye zoom follows the cursor, floating tooltip snaps
+ *     to the nearest tick with kind/offset/snippet/cost/cumulative.
+ *   - Click anywhere on rail → jumps to nearest tick via #msg-<uuid>.
+ *   - Keyboard [ / ] jumps prev/next tick relative to viewport center.
+ *   - 120ms grace period on mouseleave forgives slight drift. */
+.timeline-rail {
+  position: fixed;
+  right: 14px; /* gutter for browser scrollbar + visual breathing room */
+  top: 56px;
+  bottom: 24px;
+  width: 24px; /* invisible hit target; visual notch strip is centered */
+  padding: 14px 8px 14px 14px; /* extra left-side hit zone for forgiving entry */
+  box-sizing: content-box;
+  z-index: 150;
+  background: transparent;
+  border: none;
+  transition: width 0.18s ease, padding 0.18s ease;
+  cursor: crosshair;
+}
+.timeline-rail:hover {
+  width: 52px;
+  padding-left: 28px;
+}
+.timeline-rail.has-no-ticks { pointer-events: none; }
+
+.timeline-rail .timeline-spine {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+/* Faint center guideline — the "ruler's edge" that ticks extend from */
+.timeline-rail .timeline-spine::before {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  transition: background 0.18s ease;
+}
+.timeline-rail:hover .timeline-spine::before {
+  background: var(--border);
+}
+
+/* Ruler gridlines — major/minor horizontal reference lines for ordinal
+ * position ("turn 10", "turn 20"...). Anchored to the spine (right
+ * edge of the rail), extending left. Subtle when collapsed, labels
+ * fade in on hover. Non-interactive. */
+.timeline-rail .timeline-gridline {
+  position: absolute;
+  right: 0;
+  width: 8px;
+  height: 0;
+  border-top: 1px solid var(--border);
+  opacity: 0.3;
+  transition: opacity 0.18s ease, width 0.18s ease;
+  pointer-events: none;
+}
+.timeline-rail:hover .timeline-gridline {
+  width: 14px;
+  opacity: 0.55;
+}
+.timeline-rail .gridline-major {
+  border-top-color: var(--text-muted);
+  opacity: 0.5;
+}
+.timeline-rail:hover .gridline-major {
+  opacity: 0.85;
+  width: 22px;
+}
+.timeline-rail .gridline-label {
+  position: absolute;
+  right: 24px;
+  top: -7px;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.timeline-rail:hover .gridline-label { opacity: 0.75; }
+
+/* Ticks — horizontal notches extending LEFT from the spine. Base
+ * width varies by kind (major events get longer notches). --heat
+ * scales up user/command ticks based on per-turn cost. Fisheye zoom
+ * multiplies on top for the 5 nearest ticks to the cursor. */
+.timeline-rail .timeline-tick {
+  position: absolute;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  transform: translateY(-1px) scaleX(var(--tick-scale, 1));
+  transform-origin: right center;
+  transition: width 0.12s ease, height 0.12s ease, background 0.12s ease,
+              box-shadow 0.12s ease,
+              transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none; /* the rail itself handles clicks; ticks are visual */
+}
+
+/* Fisheye zoom — applied by JS via the 5 nearest ticks. Uses scaleX
+ * so the horizontal notches stretch outward from the spine (longer
+ * marks, not taller circles). zoom-0 is closest (biggest). */
+.timeline-rail .timeline-tick.zoom-0 { --tick-scale: 3.0; z-index: 12; }
+.timeline-rail .timeline-tick.zoom-1 { --tick-scale: 2.1; z-index: 11; }
+.timeline-rail .timeline-tick.zoom-2 { --tick-scale: 1.45; z-index: 10; }
+/* Ruler-style notches. Base width: major events get longer notches,
+ * sub-events get shorter ones. --heat (0-1, set inline from per-turn
+ * cost) scales the notch length further so expensive turns protrude
+ * further from the spine. */
+
+/* User turn — medium notch, heat-sensitive */
+.timeline-rail .tick-user {
+  width: calc(5px + var(--heat, 0) * 4px);
+  background: var(--event-prompt);
+  opacity: calc(0.65 + var(--heat, 0) * 0.35);
+}
+.timeline-rail:hover .tick-user {
+  width: calc(9px + var(--heat, 0) * 8px);
+  opacity: calc(0.85 + var(--heat, 0) * 0.15);
+}
+
+/* Slash command — medium notch, distinct color */
+.timeline-rail .tick-command {
+  width: calc(5px + var(--heat, 0) * 4px);
+  background: var(--event-command);
+  opacity: calc(0.65 + var(--heat, 0) * 0.35);
+}
+.timeline-rail:hover .tick-command {
+  width: calc(9px + var(--heat, 0) * 8px);
+  opacity: calc(0.85 + var(--heat, 0) * 0.15);
+}
+
+/* Compact boundary — longest notch, bold because it resets context */
+.timeline-rail .tick-compact {
+  width: 10px;
+  height: 2px;
+  background: var(--event-compact);
+  opacity: 0.75;
+}
+.timeline-rail:hover .tick-compact {
+  width: 22px;
+  height: 3px;
+  opacity: 1;
+}
+
+/* Satellite markers — decorations on the primary exchange notch.
+ * Rendered as tiny colored dots fanning LEFT from the parent tick so
+ * they don't fight for the same pixel column. One dot per sub-agent,
+ * skill, compact, or tool call, capped by render budget. Only visible
+ * on hover — otherwise the rail stays a clean Exchange ruler. */
+.timeline-rail .timeline-tick .sat {
+  position: absolute;
+  right: calc(100%% + 3px);
+  top: 50%%;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%%;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%%);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.timeline-rail:hover .timeline-tick .sat {
+  opacity: 0.85;
+}
+/* Fan satellites horizontally so they don't all overlap on a single pixel. */
+.timeline-rail .timeline-tick .sat:nth-of-type(1) { margin-right: 0px;  }
+.timeline-rail .timeline-tick .sat:nth-of-type(2) { margin-right: 5px;  }
+.timeline-rail .timeline-tick .sat:nth-of-type(3) { margin-right: 10px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(4) { margin-right: 15px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(5) { margin-right: 20px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(6) { margin-right: 25px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(7) { margin-right: 30px; }
+.timeline-rail .timeline-tick .sat:nth-of-type(8) { margin-right: 35px; }
+
+.timeline-rail .timeline-tick .sat-subagent { background: var(--event-subagent); }
+.timeline-rail .timeline-tick .sat-skill    { background: var(--event-skill); }
+.timeline-rail .timeline-tick .sat-compact  { background: var(--event-compact); }
+.timeline-rail .timeline-tick .sat-tool     { background: var(--event-tool); opacity: 0; }
+/* Tool satellites are only revealed when the rail expands — they're
+ * the most common step kind and would clutter the collapsed view. */
+.timeline-rail:hover .timeline-tick .sat-tool { opacity: 0.6; }
+
+/* The locked-nearest tick gets a primary-color halo */
+.timeline-rail .tick-nearest {
+  background: var(--primary) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 30%, transparent);
+}
+
+/* Current-position marker — horizontal bar snapping across the full
+ * visible width at your current scroll pct. Always visible. */
+.timeline-rail .timeline-current {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: color-mix(in srgb, var(--primary) 85%, transparent);
+  pointer-events: none;
+  transform: translateY(-1px);
+  transition: top 0.08s linear;
+  border-radius: 1px;
+  z-index: 8;
+}
+
+/* Playhead — dashed guide snapping to the hovered tick. Only visible
+ * while the rail is hovered. */
+.timeline-rail .timeline-playhead {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--primary) 75%, transparent);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease, top 0.08s ease;
+  transform: translateY(-0.5px);
+  z-index: 9;
+}
+.timeline-rail:hover .timeline-playhead { opacity: 0.9; }
+
+/* Floating tooltip — positioned to the LEFT of the rail, tracks mouse Y,
+ * snaps to the nearest tick. Invisible until hover. right offset clears
+ * the expanded rail (rail at right:14px + width:52px = ends at 66px from
+ * viewport right; tooltip starts at right:80px so there's breathing room). */
+.timeline-tooltip {
+  position: fixed;
+  right: 80px;
+  top: 0;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 151;
+  min-width: 160px;
+  max-width: 320px;
+  transform: translateY(-50%);
+}
+.timeline-rail:hover ~ .timeline-tooltip,
+.timeline-tooltip.show {
+  opacity: 1;
+}
+/* Tooltip layout
+ *   [clock]  exchange N  +offset · duration        ← head
+ *   first line of the prompt                       ← snippet
+ *   $cost  so far $cumulative  ⧫ tokens            ← meta
+ *   ⎇ 2 subagents · ✦ 1 skill · ◈ 3 tools          ← badges (only if any)
+ *
+ * The head row is clock-led because the user's first question is
+ * almost always "what time was this?". Exchange N is the stable
+ * identity; offset/duration are secondary context. */
+.timeline-tooltip .tt-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.timeline-tooltip .tt-clock {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.2px;
+}
+.timeline-tooltip .tt-clock:empty { display: none; }
+.timeline-tooltip .tt-index {
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+.timeline-tooltip .tt-index:empty { display: none; }
+.timeline-tooltip .tt-offset {
+  color: var(--text-muted);
+  font-size: 9px;
+  opacity: 0.8;
+}
+.timeline-tooltip .tt-offset:empty { display: none; }
+.timeline-tooltip .tt-offset::before { content: '+'; opacity: 0.6; }
+.timeline-tooltip .tt-duration {
+  color: var(--text-muted);
+  font-size: 9px;
+  opacity: 0.7;
+}
+.timeline-tooltip .tt-duration:empty { display: none; }
+.timeline-tooltip .tt-duration::before { content: '· '; opacity: 0.5; }
+.timeline-tooltip .tt-snippet {
+  display: block;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 4px;
+}
+.timeline-tooltip .tt-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+.timeline-tooltip .tt-meta:empty { display: none; padding: 0; border: 0; }
+.timeline-tooltip .tt-cost:empty, .timeline-tooltip .tt-tokens:empty, .timeline-tooltip .tt-cum:empty { display: none; }
+.timeline-tooltip .tt-cost {
+  color: var(--primary);
+  font-weight: 600;
+}
+.timeline-tooltip .tt-cum {
+  color: var(--text);
+  opacity: 0.75;
+}
+.timeline-tooltip .tt-cum::before { content: '∑ '; opacity: 0.5; }
+.timeline-tooltip .tt-tokens::before { content: '⧫ '; opacity: 0.6; }
+
+.timeline-tooltip .tt-badges {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  padding-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.timeline-tooltip .tt-badges:empty { display: none; padding: 0; }
+.timeline-tooltip .tt-badges .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.timeline-tooltip .tt-badges .badge-subagent { color: var(--event-subagent); }
+.timeline-tooltip .tt-badges .badge-skill    { color: var(--event-skill); }
+.timeline-tooltip .tt-badges .badge-tool     { color: var(--event-tool); }
+
+.timeline-rail .timeline-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 10px;
+  opacity: 0.4;
+  writing-mode: vertical-rl;
+}
+
+/* Hide on narrow viewports; outline sidebar is the fallback nav */
+@media (max-width: 1024px) {
+  .timeline-rail, .timeline-tooltip { display: none; }
+}
 
 .session-page-header {
   margin-bottom: 20px;
@@ -3669,7 +4958,9 @@ code, pre, .session-id, .model-badge {
 }
 .thread-responses::before { display: none; }
 
-/* Thread folding - collapse middle responses (direct children only) */
+/* Thread folding — collapse middle responses. The one fold button
+ * FLOATS on the thread's vertical line (the left border of
+ * .thread-responses). Clicking the user header does not toggle. */
 .thread.folded > .thread-responses > .turn:not(:last-child) {
   max-height: 0;
   overflow: hidden;
@@ -3683,49 +4974,100 @@ code, pre, .session-id, .model-badge {
   opacity: 1;
   transition: opacity 0.2s;
 }
-/* Fold indicator in header */
-.fold-indicator {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-  margin-left: 8px;
-  padding: 2px 6px;
-  background: var(--bg-secondary);
-  border-radius: 3px;
-  cursor: pointer;
+/* When folded, brighten the vertical line so the thread reads as
+ * "something is here, collapsed" rather than "this section is
+ * empty". */
+.thread.folded > .thread-responses {
+  border-left-color: var(--primary);
+  border-left-style: solid;
+  min-height: 28px;
 }
-.thread.folded .fold-indicator { background: var(--primary); color: white; }
-.thread.folded .fold-indicator::after { content: '+' attr(data-hidden); }
-.thread:not(.folded) .fold-indicator::after { content: '−'; }
 
-/* Fold separator line in middle - clickable */
-.fold-separator {
-  display: none;
+/* Floating fold toggle
+ *
+ * Lives absolute-positioned on the thread-responses' left edge, so it
+ * straddles the vertical line the user already associates with "this
+ * thread's body". Default state is a tiny pill with just a chevron +
+ * step count — low profile, doesn't distract from the conversation.
+ * On hover it slides out to the right and reveals the full label
+ * ("collapse" / "expand N steps"). Clicking toggles.
+ *
+ * The button is sticky-positioned INSIDE .thread-responses so long
+ * threads keep it in view as the user scrolls through the responses
+ * column. At the top of the thread it sits at the top of the vertical
+ * line; as the user scrolls down, the button follows down to the top
+ * of the viewport but never leaves its own thread's bounds. */
+.thread-responses { /* make room for the floating button without
+                      displacing content — the button overlaps the
+                      border, not the padding */ }
+.fold-toggle {
+  position: sticky;
+  top: 64px; /* clear the top-nav */
+  left: 0;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  margin: 8px 0;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: background 0.15s;
-}
-.fold-separator:hover { background: var(--bg-secondary); }
-.thread.folded .fold-separator { display: flex; }
-.fold-sep-line {
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-.fold-sep-text {
-  font-size: 11px;
+  gap: 6px;
+  margin: 0 0 8px -20px; /* -20px pulls the button left over the
+                             vertical line; padding-left of responses
+                             is 12px + margin 8px = 20px */
+  padding: 3px 8px 3px 6px;
   font-family: var(--font-mono);
-  color: white;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  z-index: 5;
+  max-width: 24px;
+  overflow: hidden;
   white-space: nowrap;
-  padding: 4px 10px;
-  background: var(--primary);
-  border-radius: 12px;
+  transition: max-width 0.2s ease, color 0.12s ease,
+              background 0.12s ease, border-color 0.12s ease,
+              box-shadow 0.12s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
-.fold-separator:hover .fold-sep-text { background: var(--primary-hover); }
+.fold-toggle:hover,
+.fold-toggle:focus-visible {
+  color: var(--text);
+  background: var(--bg-secondary);
+  border-color: var(--primary);
+  max-width: 220px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+.fold-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.fold-toggle .fold-chevron {
+  display: inline-block;
+  font-size: 10px;
+  line-height: 1;
+  width: 10px;
+  text-align: center;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.fold-toggle[aria-expanded="false"] .fold-chevron {
+  color: var(--primary);
+}
+.fold-toggle .fold-label {
+  letter-spacing: 0.2px;
+  padding-left: 6px;
+}
+.fold-toggle .fold-summary {
+  font-size: 9px;
+  opacity: 0.7;
+  padding-left: 6px;
+}
+/* When folded, a subtle pulse draws attention to the floating
+ * button so users discover the affordance on long sessions. Runs
+ * only until first hover. */
+@keyframes fold-hint {
+  0%, 100% { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 18%, transparent); }
+}
+.thread.folded > .thread-responses > .fold-toggle[aria-expanded="false"]:not(:hover):not(:focus-visible) {
+  animation: fold-hint 2.4s ease-in-out 1;
+}
 
 /* Level indentation */
 .level-1 { margin-left: 0; }
@@ -3899,6 +5241,30 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 .turn-agent .turn-header { background: transparent; }
 .turn-agent .turn-icon { color: #86c; }
 .turn-agent .turn-role { display: inline; color: #86c; }
+
+/* Sub-agent transcript sections */
+.sidechain-sections { margin-top: 32px; }
+.sidechain-group {
+  margin: 12px 0;
+  border: 1px solid var(--border, #e5e7eb);
+  border-left: 3px solid #86c;
+  border-radius: 6px;
+}
+.sidechain-header {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text-secondary, #6b7280);
+}
+.sidechain-header:hover { background: var(--bg-hover, #f9fafb); }
+.sidechain-icon { color: #86c; margin-right: 6px; }
+.sidechain-meta {
+  font-size: 0.85em;
+  font-weight: 400;
+  color: var(--text-tertiary, #9ca3af);
+  margin-left: 8px;
+}
+.sidechain-body { padding: 0 14px 14px; }
 
 /* Compacted context - minimal separator */
 .turn-compacted {
@@ -4559,6 +5925,11 @@ function loadEarlierMessages() {
     btn.classList.add('loading');
     btn.querySelector('.load-earlier-btn').innerHTML = '<span class="load-icon">↻</span> Loading...';
   }
+  // Persist active search across the reload, so "search full history" picks up where it was
+  const pendingQuery = document.getElementById('search-input')?.value;
+  if (pendingQuery && pendingQuery.trim().length >= 2) {
+    try { sessionStorage.setItem('ccx-pending-search', pendingQuery); } catch (_) {}
+  }
   // Reload page with all=1 parameter to load full content
   const url = new URL(window.location.href);
   url.searchParams.set('all', '1');
@@ -4828,31 +6199,78 @@ function copyTurn(e, btn) {
   setTimeout(() => btn.textContent = 'copy', 1500);
 }
 
+// jumpToAnchor is the single entry point for "scroll this message into
+// view with smooth behavior, open any closed ancestors, flash it to
+// orient the eye." Used by outline clicks, rail ticks, load-earlier
+// restore, hash navigation, and search result jumps. Any caller that
+// wants "take me there" goes through here — one code path, one set of
+// edge cases.
+//
+// opts.preserveFold (default false) — if true, do NOT auto-unfold a
+// closed thread that contains the target. Used by the fold keybinding
+// which wants to toggle without moving.
+function jumpToAnchor(msgId, opts) {
+  opts = opts || {};
+  if (!msgId) return false;
+  const msgEl = document.getElementById('msg-' + msgId);
+  if (!msgEl) return false;
+
+  if (!opts.preserveFold) {
+    let node = msgEl;
+    while (node) {
+      if (node.tagName === 'DETAILS') {
+        node.open = true;
+        node.setAttribute('open', '');
+      }
+      if (node.classList && node.classList.contains('thread') && node.classList.contains('folded')) {
+        node.classList.remove('folded');
+      }
+      node = node.parentElement;
+    }
+    msgEl.querySelectorAll('details').forEach(d => { d.open = true; d.setAttribute('open', ''); });
+  }
+
+  // Mark the matching nav item as active so the sidebar mirrors focus.
+  document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
+  const navItem = document.querySelector('.nav-item[data-msg="' + msgId + '"]');
+  if (navItem) {
+    navItem.classList.add('active');
+    // Also expand the owning group so the active child is visible.
+    const group = navItem.closest('.nav-group');
+    if (group && group.dataset.expanded === 'false') {
+      group.dataset.expanded = 'true';
+      const btn = group.querySelector('.nav-expand');
+      if (btn) btn.setAttribute('aria-expanded', 'true');
+    }
+  }
+
+  msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  msgEl.style.animation = 'flash 0.8s';
+  // Clear the animation so re-clicking the same target re-flashes.
+  setTimeout(() => { msgEl.style.animation = ''; }, 900);
+  return true;
+}
+
+// Outline title clicks jump; expand buttons toggle. Two targets, two
+// actions, no overlap. The nav row intercepts neither — events reach
+// the individual child elements.
+document.querySelectorAll('.nav-expand').forEach(btn => {
+  btn.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const group = this.closest('.nav-group');
+    if (!group) return;
+    const expanded = group.dataset.expanded === 'true';
+    group.dataset.expanded = expanded ? 'false' : 'true';
+    this.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+  });
+});
+
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', function(e) {
-    // Summary elements: just toggle group (native behavior), no jump
-    const isSummary = this.tagName === 'SUMMARY' || this.closest('summary');
-    if (isSummary) {
-      // Update active state only, let native toggle handle open/close
-      document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
-      this.classList.add('active');
-      return;
-    }
-
-    // Regular nav items: prevent default anchor and scroll to message
     e.preventDefault();
-    document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
-    this.classList.add('active');
     const msgId = this.dataset.msg;
-    if (msgId) {
-      const msgEl = document.getElementById('msg-' + msgId);
-      if (msgEl) {
-        const details = msgEl.querySelector('details');
-        if (details) details.setAttribute('open', '');
-        msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        msgEl.style.animation = 'flash 0.4s';
-      }
-    }
+    jumpToAnchor(msgId);
   });
 });
 
@@ -5399,9 +6817,7 @@ function updateNavForMessage(uuid, kind, content, time) {
   item.innerHTML = '<span class="nav-icon">' + icon + '</span><span class="nav-text">' + escapeHtml(text || kind) + '</span>';
   item.addEventListener('click', function(e) {
     e.preventDefault();
-    document.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
-    this.classList.add('active');
-    document.getElementById('msg-' + safeId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    jumpToAnchor(safeId);
   });
   liveSection.appendChild(item);
 }
@@ -5435,44 +6851,76 @@ function toggleWatch() {
 if (btnWatch) btnWatch.addEventListener('click', toggleWatch);
 if (tbWatch) tbWatch.addEventListener('click', toggleWatch);
 
-// Thread folding - click user block to fold/unfold middle responses
+// Thread folding — one floating button per thread.
+//
+// The button is sticky-positioned over the thread's vertical line
+// (see .fold-toggle CSS). Default state collapses threads that have
+// ANY intermediate response (2+ turns in the responses column), so
+// long sessions don't greet users with a wall of tool calls. The
+// button reveals its full label on hover/focus; a one-shot pulse
+// animation on first render draws the eye to it.
 document.querySelectorAll('.thread').forEach(thread => {
-  const userHeader = thread.querySelector('.turn-user .turn-header');
   const responses = thread.querySelector('.thread-responses');
-  if (!userHeader || !responses) return;
-
+  if (!responses) return;
   const turns = responses.querySelectorAll('.turn');
-  if (turns.length <= 1) return; // no folding needed for single response
+  if (turns.length <= 1) return;
 
-  // Add fold indicator in header
-  const indicator = document.createElement('span');
-  indicator.className = 'fold-indicator';
-  indicator.dataset.hidden = turns.length - 1;
-  userHeader.appendChild(indicator);
+  const hiddenWhenFolded = turns.length - 1;
 
-  // Add fold separator line between user and final response (clickable)
-  const separator = document.createElement('div');
-  separator.className = 'fold-separator';
-  separator.innerHTML = '<span class="fold-sep-line"></span><span class="fold-sep-text">+' + (turns.length - 1) + ' ▶ ··· ○</span><span class="fold-sep-line"></span>';
-  separator.title = 'Click to expand';
-  separator.addEventListener('click', function() {
-    thread.classList.remove('folded');
-  });
-  responses.insertBefore(separator, responses.firstChild);
+  const fold = document.createElement('button');
+  fold.type = 'button';
+  fold.className = 'fold-toggle';
+  fold.title = 'Toggle thread (z)';
+  fold.innerHTML =
+    '<span class="fold-chevron" aria-hidden="true">▸</span>' +
+    '<span class="fold-label">expand</span>' +
+    '<span class="fold-summary">' + hiddenWhenFolded + ' steps</span>';
 
-  // Start folded by default for threads with many responses
-  if (turns.length > 2) {
-    thread.classList.add('folded');
-  }
+  const applyState = function(folded) {
+    thread.classList.toggle('folded', folded);
+    fold.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    const label = fold.querySelector('.fold-label');
+    const chev  = fold.querySelector('.fold-chevron');
+    if (label) label.textContent = folded ? 'expand' : 'collapse';
+    if (chev)  chev.textContent  = folded ? '▸' : '▾';
+  };
 
-  userHeader.addEventListener('click', function(e) {
-    // Don't interfere with raw/copy buttons
-    if (e.target.closest('.turn-actions')) return;
-    // Prevent the user details from toggling (we're hijacking the click for thread fold)
+  fold.addEventListener('click', function(e) {
     e.preventDefault();
-    thread.classList.toggle('folded');
+    applyState(!thread.classList.contains('folded'));
   });
+
+  // Insert as the first child of .thread-responses so the button
+  // sits at the TOP of the vertical line, overlapping its left edge.
+  responses.insertBefore(fold, responses.firstChild);
+
+  // Default: fold any thread with intermediate responses. A single
+  // user→one-reply thread (turns.length === 1) doesn't even get a
+  // fold button (handled by the early return above).
+  applyState(turns.length >= 2);
 });
+
+// z keybinding toggles the thread fold under the current scroll position.
+// Finds the visible thread whose top is nearest the viewport top and
+// clicks its fold-toggle button.
+function toggleNearestThreadFold() {
+  const threads = document.querySelectorAll('.thread');
+  if (threads.length === 0) return;
+  const viewTop = window.scrollY + 80;
+  let best = null;
+  let bestDist = Infinity;
+  threads.forEach(t => {
+    const rect = t.getBoundingClientRect();
+    const top = rect.top + window.scrollY;
+    if (top <= viewTop + 200) {
+      const d = Math.abs(top - viewTop);
+      if (d < bestDist) { bestDist = d; best = t; }
+    }
+  });
+  if (!best) return;
+  const btn = best.querySelector('.fold-toggle');
+  if (btn) btn.click();
+}
 
 const btnExport = document.getElementById('btn-export');
 const exportMenu = document.getElementById('export-menu');
@@ -5486,28 +6934,314 @@ if (btnExport && exportMenu) {
   });
 }
 
-// Auto-scroll: jump to hash target or scroll to bottom
-setTimeout(() => {
+// Auto-scroll: jump to hash target on load, reload with full history
+// if the target is hidden inside a progressive-loaded section, or
+// scroll to bottom when there's no hash.
+function jumpToHashTarget() {
   const hash = window.location.hash;
-  if (hash && hash.startsWith('#msg-')) {
-    // Jump to specific message from search
-    const msgEl = document.querySelector(hash);
-    if (msgEl) {
-      // Expand parent details if collapsed
-      const details = msgEl.querySelector('details');
-      if (details) details.setAttribute('open', '');
-      msgEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      msgEl.style.animation = 'flash 0.8s';
-      // Highlight in nav
-      const msgId = hash.replace('#msg-', '');
-      const navItem = document.querySelector('.nav-item[data-msg="' + msgId + '"]');
-      if (navItem) navItem.classList.add('active');
-    }
-  } else {
-    // No hash - scroll to bottom (default behavior)
+  if (!hash || !hash.startsWith('#msg-')) {
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    return;
   }
-}, 150);
+
+  const msgId = hash.replace('#msg-', '');
+  if (jumpToAnchor(msgId)) return;
+
+  // Target not in DOM — the load-earlier escape hatch is our last
+  // resort: reload with ?all=1 so the full history renders, then the
+  // browser re-runs this handler after load and the jumpToAnchor call
+  // above will find the element.
+  if (document.getElementById('load-earlier')) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('all', '1');
+    window.location.replace(url.toString());
+  }
+}
+setTimeout(jumpToHashTarget, 150);
+
+// Listen for manual hash changes (e.g. nav clicks after initial load)
+window.addEventListener('hashchange', jumpToHashTarget);
+
+// Timeline rail — semantic scrubber with hover-scrub, fisheye zoom,
+// hysteresis, and rAF-throttled motion.
+const timelineRail = document.getElementById('timeline-rail');
+const timelineSpine = document.getElementById('timeline-spine');
+const timelineCurrent = document.getElementById('timeline-current');
+const timelinePlayhead = document.getElementById('timeline-playhead');
+const timelineTooltip = document.getElementById('timeline-tooltip');
+const timelineTicksRaw = timelineRail ? Array.from(timelineRail.querySelectorAll('.timeline-tick')) : [];
+
+// Snapshot tick data once so hover-scrub is O(log n) and doesn't re-parse
+// attributes on every mousemove. Cost / cumulative / token strings are
+// preformatted server-side so the tooltip just displays them.
+const timelineTicks = timelineTicksRaw.map(el => {
+  const pct = parseFloat(el.style.top) || 0;
+  return {
+    el:         el,
+    uuid:       el.dataset.uuid || '',
+    offset:     el.dataset.offset || '',
+    snippet:    el.dataset.snippet || '',
+    kind:       el.dataset.kind || 'user',
+    cost:       el.dataset.cost || '',
+    cumulative: el.dataset.cumulative || '',
+    tokens:     el.dataset.tokens || '',
+    index:      el.dataset.index || '',
+    clock:      el.dataset.clock || '',
+    duration:   el.dataset.duration || '',
+    subagents:  parseInt(el.dataset.subagents || '0', 10) || 0,
+    skills:     parseInt(el.dataset.skills || '0', 10) || 0,
+    tools:      parseInt(el.dataset.tools || '0', 10) || 0,
+    pct:        pct,
+  };
+}).sort((a, b) => a.pct - b.pct);
+
+// Interaction state
+let currentNearest = null;         // Tick currently shown in the tooltip
+let zoomedTicks = [];              // Ticks with active fisheye zoom classes
+let rafHandle = null;              // Pending rAF id
+let pendingClientY = null;         // Latest mouse Y, coalesced to next frame
+let leaveTimer = null;             // mouseleave grace-period timer
+
+// Hysteresis: cursor must move this much closer (as %% of rail height)
+// to a new tick before we switch the tooltip away from the locked one.
+// Prevents flicker between adjacent ticks when the cursor sits on the edge.
+const TIMELINE_HYSTERESIS_PCT = 1.5;
+const TIMELINE_LEAVE_GRACE_MS = 120;
+
+function clearNearest() {
+  if (currentNearest) currentNearest.el.classList.remove('tick-nearest');
+  currentNearest = null;
+}
+
+function clearZoom() {
+  for (const t of zoomedTicks) {
+    t.el.classList.remove('zoom-0', 'zoom-1', 'zoom-2');
+  }
+  zoomedTicks = [];
+}
+
+// Binary-search helper: returns the index of the tick whose pct is
+// closest to the cursor. Returns -1 when there are no ticks.
+function nearestTickIndex(cursorPct) {
+  if (timelineTicks.length === 0) return -1;
+  let lo = 0, hi = timelineTicks.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (timelineTicks[mid].pct < cursorPct) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0 &&
+      Math.abs(timelineTicks[lo - 1].pct - cursorPct) <
+      Math.abs(timelineTicks[lo].pct - cursorPct)) {
+    return lo - 1;
+  }
+  return lo;
+}
+
+// Apply fisheye zoom to the 5 ticks nearest centerIdx (±2 around it).
+function applyFisheyeZoom(centerIdx) {
+  clearZoom();
+  if (centerIdx < 0) return;
+  const radius = 2;
+  const start = Math.max(0, centerIdx - radius);
+  const end = Math.min(timelineTicks.length - 1, centerIdx + radius);
+  for (let i = start; i <= end; i++) {
+    const distance = Math.abs(i - centerIdx);
+    timelineTicks[i].el.classList.add('zoom-' + distance);
+    zoomedTicks.push(timelineTicks[i]);
+  }
+}
+
+// Hysteresis: return the locked tick unless the cursor is meaningfully
+// closer (by TIMELINE_HYSTERESIS_PCT) to a different tick. Prevents
+// rapid flipping between adjacent ticks at their midpoint.
+function selectWithHysteresis(cursorPct, candidateIdx) {
+  if (candidateIdx < 0) return null;
+  const candidate = timelineTicks[candidateIdx];
+  if (!currentNearest) return candidate;
+  if (currentNearest.el === candidate.el) return currentNearest;
+  const distToCurrent = Math.abs(cursorPct - currentNearest.pct);
+  const distToCandidate = Math.abs(cursorPct - candidate.pct);
+  if (distToCandidate + TIMELINE_HYSTERESIS_PCT < distToCurrent) {
+    return candidate;
+  }
+  return currentNearest;
+}
+
+function updateTimelineCurrent() {
+  if (!timelineCurrent) return;
+  const doc = document.documentElement;
+  const scrollTop = window.scrollY || doc.scrollTop || 0;
+  const scrollMax = (doc.scrollHeight - doc.clientHeight);
+  if (scrollMax <= 0) {
+    timelineCurrent.style.top = '0%%';
+    return;
+  }
+  const pct = (scrollTop / scrollMax) * 100;
+  timelineCurrent.style.top = pct.toFixed(2) + '%%';
+}
+
+function showTooltip(tick, clientY) {
+  if (!timelineTooltip || !tick) return;
+
+  const clockEl    = timelineTooltip.querySelector('.tt-clock');
+  const offsetEl   = timelineTooltip.querySelector('.tt-offset');
+  const indexEl    = timelineTooltip.querySelector('.tt-index');
+  const durationEl = timelineTooltip.querySelector('.tt-duration');
+  const snippetEl  = timelineTooltip.querySelector('.tt-snippet');
+  const costEl     = timelineTooltip.querySelector('.tt-cost');
+  const cumEl      = timelineTooltip.querySelector('.tt-cum');
+  const tokensEl   = timelineTooltip.querySelector('.tt-tokens');
+  const badgesEl   = timelineTooltip.querySelector('.tt-badges');
+
+  if (clockEl)    clockEl.textContent    = tick.clock || '';
+  if (indexEl)    indexEl.textContent    = tick.index ? 'exchange ' + tick.index : '';
+  if (offsetEl)   offsetEl.textContent   = tick.offset || '';
+  if (durationEl) durationEl.textContent = tick.duration || '';
+  if (snippetEl)  snippetEl.textContent  = tick.snippet || '(no preview)';
+  if (costEl)     costEl.textContent     = tick.cost || '';
+  if (cumEl)      cumEl.textContent      = tick.cumulative ? 'so far ' + tick.cumulative : '';
+  if (tokensEl)   tokensEl.textContent   = tick.tokens || '';
+
+  if (badgesEl) {
+    const parts = [];
+    if (tick.subagents > 0) {
+      parts.push('<span class="badge badge-subagent">⎇ ' + tick.subagents + ' ' + (tick.subagents === 1 ? 'subagent' : 'subagents') + '</span>');
+    }
+    if (tick.skills > 0) {
+      parts.push('<span class="badge badge-skill">✦ ' + tick.skills + ' ' + (tick.skills === 1 ? 'skill' : 'skills') + '</span>');
+    }
+    if (tick.tools > 0) {
+      parts.push('<span class="badge badge-tool">◈ ' + tick.tools + ' ' + (tick.tools === 1 ? 'tool' : 'tools') + '</span>');
+    }
+    badgesEl.innerHTML = parts.join('<span class="badge-sep"> · </span>');
+  }
+
+  timelineTooltip.className = 'timeline-tooltip kind-' + tick.kind + ' show';
+
+  // Viewport clamp — keep the tooltip fully visible even near top/bottom edges.
+  // Use the tooltip's actual height once it's laid out.
+  const tooltipHeight = timelineTooltip.offsetHeight || 64;
+  const margin = 12;
+  const minY = tooltipHeight / 2 + margin;
+  const maxY = window.innerHeight - tooltipHeight / 2 - margin;
+  const clampedY = Math.max(minY, Math.min(maxY, clientY));
+  timelineTooltip.style.top = clampedY + 'px';
+}
+
+function hideTooltip() {
+  if (timelineTooltip) timelineTooltip.classList.remove('show');
+  clearNearest();
+  clearZoom();
+  if (timelinePlayhead) timelinePlayhead.style.opacity = '0';
+}
+
+function processRailFrame() {
+  rafHandle = null;
+  if (pendingClientY === null || !timelineSpine || timelineTicks.length === 0) return;
+  const rect = timelineSpine.getBoundingClientRect();
+  if (rect.height <= 0) return;
+  const cursorY = pendingClientY;
+  pendingClientY = null;
+  const pct = Math.max(0, Math.min(100, ((cursorY - rect.top) / rect.height) * 100));
+
+  const candidateIdx = nearestTickIndex(pct);
+  applyFisheyeZoom(candidateIdx);
+
+  const tick = selectWithHysteresis(pct, candidateIdx);
+  if (!tick) return;
+
+  if (tick !== currentNearest) {
+    clearNearest();
+    tick.el.classList.add('tick-nearest');
+    currentNearest = tick;
+  }
+
+  if (timelinePlayhead) {
+    timelinePlayhead.style.top = tick.pct.toFixed(2) + '%%';
+    timelinePlayhead.style.opacity = '0.9';
+  }
+
+  // Snap tooltip Y to the tick's screen position (stable, not floating with cursor)
+  const tickScreenY = rect.top + (tick.pct / 100) * rect.height;
+  showTooltip(tick, tickScreenY);
+}
+
+function handleRailMouse(e) {
+  // Cancel any pending leave grace timer — user is still engaging
+  if (leaveTimer !== null) { clearTimeout(leaveTimer); leaveTimer = null; }
+
+  pendingClientY = e.clientY;
+  if (rafHandle === null) {
+    rafHandle = requestAnimationFrame(processRailFrame);
+  }
+}
+
+function handleRailLeave() {
+  // Grace period: user might have slipped slightly off the rail; wait
+  // a moment before fading out so re-entering feels uninterrupted.
+  if (leaveTimer !== null) clearTimeout(leaveTimer);
+  leaveTimer = setTimeout(() => {
+    leaveTimer = null;
+    hideTooltip();
+  }, TIMELINE_LEAVE_GRACE_MS);
+}
+
+function handleRailEnter() {
+  if (leaveTimer !== null) { clearTimeout(leaveTimer); leaveTimer = null; }
+}
+
+function handleRailClick(e) {
+  if (!currentNearest) return;
+  e.preventDefault();
+  // Update hash so the URL is shareable, but route the actual scroll
+  // through jumpToAnchor so ancestor unfold + flash + sidebar active
+  // state all happen consistently with outline clicks.
+  const uuid = currentNearest.uuid;
+  if (uuid) {
+    history.replaceState(null, '', '#msg-' + uuid);
+    jumpToAnchor(uuid);
+  }
+}
+
+if (timelineRail) {
+  updateTimelineCurrent();
+  window.addEventListener('scroll', updateTimelineCurrent, { passive: true });
+  window.addEventListener('resize', updateTimelineCurrent);
+
+  if (timelineTicks.length > 0) {
+    timelineRail.addEventListener('mouseenter', handleRailEnter);
+    timelineRail.addEventListener('mousemove', handleRailMouse, { passive: true });
+    timelineRail.addEventListener('mouseleave', handleRailLeave);
+    timelineRail.addEventListener('click', handleRailClick);
+  }
+}
+
+function jumpTickRelative(delta) {
+  if (timelineTicks.length === 0) return;
+  const doc = document.documentElement;
+  const scrollTop = window.scrollY || doc.scrollTop || 0;
+  const scrollMax = (doc.scrollHeight - doc.clientHeight);
+  const currentPct = scrollMax > 0 ? (scrollTop / scrollMax) * 100 : 0;
+
+  let idx;
+  if (delta > 0) {
+    idx = timelineTicks.findIndex(t => t.pct > currentPct + 0.5);
+    if (idx === -1) idx = timelineTicks.length - 1;
+  } else {
+    idx = -1;
+    for (let i = 0; i < timelineTicks.length; i++) {
+      if (timelineTicks[i].pct < currentPct - 0.5) idx = i;
+      else break;
+    }
+    if (idx === -1) idx = 0;
+  }
+  const target = timelineTicks[idx];
+  if (target && target.uuid) {
+    history.replaceState(null, '', '#msg-' + target.uuid);
+    jumpToAnchor(target.uuid);
+  }
+}
 
 document.addEventListener('keydown', function(e) {
   if (e.target.matches('input, textarea')) return;
@@ -5520,6 +7254,9 @@ document.addEventListener('keydown', function(e) {
     case 'i': document.getElementById('tb-info')?.click(); break;
     case 'w': btnWatch?.click(); break;
     case 'r': document.getElementById('tb-refresh')?.click(); break;
+    case '[': jumpTickRelative(-1); e.preventDefault(); break;
+    case ']': jumpTickRelative(1); e.preventDefault(); break;
+    case 'z': toggleNearestThreadFold(); e.preventDefault(); break;
   }
 });
 
@@ -5847,7 +7584,21 @@ function highlightCurrent() {
 function updateSearchInfo() {
   if (!searchInfo) return;
   if (searchMatches.length === 0) {
-    searchInfo.textContent = 'No matches';
+    // If progressive loading hid some history, let the user reload into full history and keep searching
+    const hiddenLoader = document.getElementById('load-earlier');
+    const hasQuery = searchInput && searchInput.value && searchInput.value.trim().length >= 2;
+    if (hiddenLoader && hasQuery) {
+      searchInfo.innerHTML = 'No matches in visible range — <a href="#" id="search-load-all" class="search-load-all-link">search full history</a>';
+      const link = document.getElementById('search-load-all');
+      if (link) {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          loadEarlierMessages();
+        });
+      }
+    } else {
+      searchInfo.textContent = 'No matches';
+    }
   } else {
     searchInfo.textContent = (searchIdx + 1) + '/' + searchMatches.length;
   }
@@ -5894,6 +7645,17 @@ searchInput?.addEventListener('keydown', (e) => {
     e.preventDefault();
   }
 });
+
+// Restore pending search after a "search full history" reload
+try {
+  const pending = sessionStorage.getItem('ccx-pending-search');
+  if (pending && searchInput) {
+    sessionStorage.removeItem('ccx-pending-search');
+    searchInput.value = pending;
+    openSearch();
+    doSearch(pending);
+  }
+} catch (_) {}
 
 // Global keyboard shortcuts for search
 document.addEventListener('keydown', function(e) {

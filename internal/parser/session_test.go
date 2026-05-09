@@ -1,8 +1,10 @@
 package parser
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -496,6 +498,98 @@ func BenchmarkComputeStats(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		computeStats(messages)
+	}
+}
+
+// writeLargeFixture writes a realistic synthetic session of msgCount
+// messages to a temp file and returns its path. Each "turn" contains:
+// 1 user prompt (200 char text), 1 assistant reply (thinking + text +
+// tool_use, with usage field), 1 tool_result (2KB content). Every 10th
+// turn launches a sidechain.
+func writeLargeFixture(b *testing.B, msgCount int) string {
+	b.Helper()
+	dir := b.TempDir()
+	path := filepath.Join(dir, "bench-session.jsonl")
+
+	f, err := os.Create(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer f.Close()
+
+	longText := strings.Repeat("the quick brown fox jumps over the lazy dog. ", 5) // ~220 chars
+	toolResult := strings.Repeat("line of output\n", 140)                          // ~2.1KB
+
+	var parentUUID string
+	for i := 0; i < msgCount; i++ {
+		uuid := fmt.Sprintf("m-%08d", i)
+		parentAttr := ""
+		if parentUUID != "" {
+			parentAttr = `,"parentUuid":"` + parentUUID + `"`
+		}
+		sidechainAttr := ""
+		if i > 0 && i%20 == 0 {
+			sidechainAttr = `,"isSidechain":true`
+		}
+
+		switch i % 4 {
+		case 0:
+			// User prompt
+			_, _ = f.WriteString(`{"type":"user","timestamp":"2026-04-01T10:00:00Z","uuid":"` + uuid + `"` + parentAttr + `,"message":{"content":"` + longText + `"}}` + "\n")
+		case 1:
+			// Assistant with thinking + text + tool_use + usage
+			content := `[{"type":"thinking","thinking":"` + longText + `"},{"type":"text","text":"` + longText + `"},{"type":"tool_use","id":"tool-` + uuid + `","name":"Read","input":{"file_path":"/tmp/a"}}]`
+			usage := `{"input_tokens":5000,"output_tokens":400,"cache_read_input_tokens":12000,"cache_creation_input_tokens":800}`
+			_, _ = f.WriteString(`{"type":"assistant","timestamp":"2026-04-01T10:00:01Z","uuid":"` + uuid + `"` + parentAttr + sidechainAttr + `,"message":{"role":"assistant","model":"claude-sonnet-4-5","content":` + content + `,"usage":` + usage + `}}` + "\n")
+		case 2:
+			// Tool result
+			content := `[{"type":"tool_result","tool_use_id":"tool-m-` + fmt.Sprintf("%08d", i-1) + `","content":"` + toolResult + `"}]`
+			_, _ = f.WriteString(`{"type":"user","timestamp":"2026-04-01T10:00:02Z","uuid":"` + uuid + `"` + parentAttr + `,"message":{"content":` + content + `}}` + "\n")
+		case 3:
+			// Final assistant text (closing the turn)
+			usage := `{"input_tokens":1200,"output_tokens":300,"cache_read_input_tokens":16000,"cache_creation_input_tokens":0}`
+			_, _ = f.WriteString(`{"type":"assistant","timestamp":"2026-04-01T10:00:03Z","uuid":"` + uuid + `"` + parentAttr + `,"message":{"role":"assistant","model":"claude-sonnet-4-5","content":"` + longText + `","usage":` + usage + `}}` + "\n")
+		}
+		parentUUID = uuid
+	}
+	return path
+}
+
+func BenchmarkParseSession_1500Messages(b *testing.B) {
+	path := writeLargeFixture(b, 1500)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(info.Size())
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := ParseSession(path)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkParseSession_5000Messages(b *testing.B) {
+	path := writeLargeFixture(b, 5000)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(info.Size())
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := ParseSession(path)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

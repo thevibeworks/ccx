@@ -335,3 +335,158 @@ func TestMultiParseSessionReturnsNilOnMiss(t *testing.T) {
 		t.Fatal("expected nil for missing session")
 	}
 }
+
+// TestMultiFindSession_CrossAgentMergedURL reproduces the regression
+// where clicking a Codex session in a Workspace-merged row returned
+// 404. The two backends encode the same cwd differently:
+//
+//	Claude Code: "-Users-eric-foo-bar"   (from ~/.claude/projects/ folder name)
+//	Codex:       "Users-eric-foo_bar"    (from parser.EncodePath)
+//
+// DiscoverProjects merges them under one row, whose EncodedName is
+// whichever backend landed first (Claude Code). URLs built from the
+// merged row use Claude Code's form. When the user clicks a Codex
+// session, per-backend FindSession can't resolve because Codex's
+// FindProject(name) is looking up a name that doesn't match.
+//
+// After the fix, Multi.FindSession falls back to searching the
+// merged project list by sessionID, so cross-agent URLs resolve
+// to the right session regardless of which backend stored it.
+func TestMultiFindSession_CrossAgentMergedURL(t *testing.T) {
+	claudeSession := &parser.Session{
+		ID:          "aaaaaaaa-cc",
+		FilePath:    "/home/user/.claude/projects/-Users-eric-foo-bar/aaaa.jsonl",
+		ProjectName: "-Users-eric-foo-bar",
+		CWD:         "/Users/eric/foo_bar",
+		Provider:    "claude-code",
+		EndTime:     time.Now(),
+	}
+	codexSession := &parser.Session{
+		ID:          "019d8f43-cx",
+		FilePath:    "/home/user/.codex/sessions/2026/04/019d8f43.jsonl",
+		ProjectName: "Users-eric-foo_bar",
+		CWD:         "/Users/eric/foo_bar",
+		Provider:    "codex",
+		EndTime:     time.Now().Add(-time.Minute),
+	}
+
+	claudeBackend := &mockBackend{
+		id:    "claude-code",
+		homes: []string{"/home/user/.claude"},
+		projects: []*parser.Project{{
+			Name:         "foo_bar",
+			EncodedName:  "-Users-eric-foo-bar", // Claude Code's encoding
+			Path:         "/Users/eric/foo_bar",
+			Sessions:     []*parser.Session{claudeSession},
+			LastModified: claudeSession.EndTime,
+		}},
+		sessions: map[string]*parser.Session{
+			"-Users-eric-foo-bar/aaaaaaaa-cc": claudeSession,
+		},
+	}
+	codexBackend := &mockBackend{
+		id:    "codex",
+		homes: []string{"/home/user/.codex"},
+		projects: []*parser.Project{{
+			Name:         "foo_bar",
+			EncodedName:  "Users-eric-foo_bar", // Codex's encoding (no leading dash, keeps _)
+			Path:         "/Users/eric/foo_bar",
+			Sessions:     []*parser.Session{codexSession},
+			LastModified: codexSession.EndTime,
+		}},
+		sessions: map[string]*parser.Session{
+			// Deliberately keyed under Codex's own encoded name, so
+			// looking up by Claude Code's encoded name will MISS the
+			// direct per-backend path and exercise the fallback.
+			"Users-eric-foo_bar/019d8f43-cx": codexSession,
+		},
+	}
+
+	m := NewMulti(claudeBackend, codexBackend)
+
+	// 1. Merged discovery should produce ONE row for this cwd.
+	projects, err := m.DiscoverProjects()
+	if err != nil {
+		t.Fatalf("DiscoverProjects: %v", err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("want 1 merged project, got %d", len(projects))
+	}
+	merged := projects[0]
+	if len(merged.Sessions) != 2 {
+		t.Errorf("merged project should carry both sessions, got %d", len(merged.Sessions))
+	}
+
+	// 2. URL built from the merged row uses Claude Code's encoded name.
+	urlProjectName := merged.EncodedName
+	if urlProjectName == "" {
+		t.Fatal("merged EncodedName empty")
+	}
+
+	// 3. Fetching the Codex session via that URL must resolve. Before
+	//    the fix, the per-backend FindSession calls would both miss
+	//    (Claude Code doesn't know the Codex session ID; Codex doesn't
+	//    know the Claude Code encoded name) and the handler 404'd.
+	got, err := m.FindSession(urlProjectName, "019d8f43-cx")
+	if err != nil {
+		t.Fatalf("FindSession: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("FindSession returned nil for cross-agent URL (project=%q, session=019d8f43-cx)", urlProjectName)
+	}
+	if got.ID != "019d8f43-cx" {
+		t.Errorf("got session ID %q, want 019d8f43-cx", got.ID)
+	}
+	if got.Provider != "codex" {
+		t.Errorf("got provider %q, want codex", got.Provider)
+	}
+
+	// 4. The Claude Code session in the same merged row must ALSO
+	//    still resolve via the same URL project name.
+	got2, err := m.FindSession(urlProjectName, "aaaaaaaa-cc")
+	if err != nil {
+		t.Fatalf("FindSession claude: %v", err)
+	}
+	if got2 == nil {
+		t.Fatal("claude code session should still resolve via merged URL")
+	}
+	if got2.Provider != "claude-code" {
+		t.Errorf("got provider %q, want claude-code", got2.Provider)
+	}
+}
+
+// TestMultiFindProject_MatchesAlternateEncoding ensures FindProject
+// resolves a merged row when queried with EITHER backend's encoded
+// name, not just whichever one landed first.
+func TestMultiFindProject_MatchesAlternateEncoding(t *testing.T) {
+	s := &parser.Session{
+		ID:       "s1",
+		FilePath: "/home/user/.codex/sessions/2026/s1.jsonl",
+		CWD:      "/Users/eric/foo",
+		EndTime:  time.Now(),
+	}
+	b := &mockBackend{
+		id:    "codex",
+		homes: []string{"/home/user/.codex"},
+		projects: []*parser.Project{{
+			Name:         "foo",
+			EncodedName:  "Users-eric-foo",
+			Path:         "/Users/eric/foo",
+			Sessions:     []*parser.Session{s},
+			LastModified: s.EndTime,
+		}},
+	}
+	m := NewMulti(b)
+
+	// Query using the OTHER (Claude Code-style) encoding.
+	got, err := m.FindProject("-Users-eric-foo")
+	if err != nil {
+		t.Fatalf("FindProject: %v", err)
+	}
+	if got == nil {
+		t.Fatal("FindProject should match the alternate encoding via canonical-path pass")
+	}
+	if got.Path != "/Users/eric/foo" {
+		t.Errorf("got path %q, want /Users/eric/foo", got.Path)
+	}
+}
