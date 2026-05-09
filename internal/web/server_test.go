@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thevibeworks/ccx/internal/db"
+	"github.com/thevibeworks/ccx/internal/parser"
 	"github.com/thevibeworks/ccx/internal/provider/claude"
 )
 
@@ -68,6 +70,169 @@ func TestHandleIndex_NotFoundForOtherPaths(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("handleIndex for /nonexistent returned %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+// TestHandleIndex_NotFoundRendersReportBugPage — when the handler
+// returns a 404 to a human-facing route, the body should be the
+// styled "report a bug" page, not net/http's plain text default.
+// The page must include the failing URL AND a pre-filled GitHub
+// issue link so users can report breakage in one click.
+func TestHandleIndex_NotFoundRendersReportBugPage(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/totally-not-a-route", nil)
+	w := httptest.NewRecorder()
+	handleIndex(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	body := w.Body.String()
+
+	// Must be the styled page, not net/http's default "404 page not found\n".
+	if !strings.Contains(body, "nf-box") {
+		t.Error("response missing styled .nf-box container")
+	}
+	if !strings.Contains(body, "Report this bug") {
+		t.Error("response missing 'Report this bug' CTA")
+	}
+	// The pre-filled issue URL must point at the ccx repo.
+	if !strings.Contains(body, "github.com/thevibeworks/ccx/issues/new") {
+		t.Error("response missing github issue link")
+	}
+	// The failing URL must be visible so the user (and the maintainer
+	// reading the bug report) can see what was attempted.
+	if !strings.Contains(body, "/totally-not-a-route") {
+		t.Error("response missing the failing URL in the body")
+	}
+	// The issue title/body parameters must include the failing URL
+	// URL-encoded. %2F = "/" means the path shows up in the query
+	// string.
+	if !strings.Contains(body, "totally-not-a-route") {
+		t.Error("issue body missing failing path")
+	}
+}
+
+// TestHandleSession_NotFoundRendersReportBugPageWithSessionDetail —
+// when a session lookup fails, the 404 page's detail line should
+// mention the session and project so users (and maintainers reading
+// a bug report) know what was being looked for.
+func TestHandleSession_NotFoundRendersReportBugPageWithSessionDetail(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-no-such-project/019d8f43-8d53-7263-8e70-7729495e2b95", nil)
+	w := httptest.NewRecorder()
+	handleSession(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Can't find this session") {
+		t.Errorf("missing session headline, got: %s", truncateForLog(body))
+	}
+	if !strings.Contains(body, "019d8f43-8d5") {
+		t.Errorf("detail line should include truncated session id, got: %s", truncateForLog(body))
+	}
+	if !strings.Contains(body, "-no-such-project") {
+		t.Errorf("detail line should include project name, got: %s", truncateForLog(body))
+	}
+	if !strings.Contains(body, "github.com/thevibeworks/ccx/issues/new") {
+		t.Error("response missing github issue link")
+	}
+}
+
+func truncateForLog(s string) string {
+	if len(s) > 400 {
+		return s[:400] + "…"
+	}
+	return s
+}
+
+// TestFoldToggle_FloatsOnThreadLine asserts the fold-toggle CSS
+// positions the button as a sticky, sliding pill on the thread's
+// vertical line — not as a static chip at the top of the responses
+// column. Guards against the CSS regressing back to the old
+// inline-flex chip that sat in the content flow.
+func TestFoldToggle_FloatsOnThreadLine(t *testing.T) {
+	css := cssStyles()
+	if !strings.Contains(css, ".fold-toggle {\n  position: sticky;") {
+		t.Error("fold-toggle must be position:sticky so it floats on the thread's vertical line")
+	}
+	if !strings.Contains(css, "margin: 0 0 8px -20px;") {
+		t.Error("fold-toggle negative left margin must pull the button over the vertical line")
+	}
+	// Must have the slide-out max-width transition so the button
+	// reveals its label on hover.
+	if !strings.Contains(css, "transition: max-width") {
+		t.Error("fold-toggle should animate max-width for the slide-out reveal")
+	}
+	if !strings.Contains(css, ".fold-toggle:hover") || !strings.Contains(css, "max-width: 220px;") {
+		t.Error("fold-toggle:hover must expand max-width to reveal the full label")
+	}
+	// Folded-thread class should brighten the vertical line so the
+	// thread reads as "something collapsed here".
+	if !strings.Contains(css, ".thread.folded > .thread-responses") || !strings.Contains(css, "border-left-color: var(--primary);") {
+		t.Error("folded thread should tint the vertical line with --primary")
+	}
+}
+
+// TestCliSpinnerLayout_FixedWidth asserts the spinner CSS pins the
+// icon to a stable screen position — icon absolute-positioned at
+// left, block with a fixed width — so rotating the verb doesn't make
+// the icon jitter horizontally.
+func TestCliSpinnerLayout_FixedWidth(t *testing.T) {
+	css := cssStyles()
+	if !strings.Contains(css, ".cli-spinner-char {\n  position: absolute;") {
+		t.Error("cli-spinner-char must be position:absolute (otherwise icon jitters as verb changes)")
+	}
+	if !strings.Contains(css, ".cli-spinner {") || !strings.Contains(css, "width: 220px;") {
+		t.Error("cli-spinner must have a fixed width so the centered overlay doesn't re-center with each verb")
+	}
+	if !strings.Contains(css, `body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }`) {
+		t.Error("codex sessions should swap the spinner color to the Codex accent")
+	}
+}
+
+// TestRenderSessionPage_EmitsProviderDataAttribute verifies that a
+// Codex session page sets body.dataset.ccxProvider = "codex" so the
+// CSS rule above actually fires. Claude Code sessions should set it
+// to "claude-code", and anything with an empty provider should
+// simply omit the hint.
+func TestRenderSessionPage_EmitsProviderDataAttribute(t *testing.T) {
+	session := &parser.Session{
+		ID:        "019d8f43-8d53",
+		Provider:  "codex",
+		StartTime: time.Now(),
+	}
+	html := renderSessionPage(session, "test-project", nil, 0, false, false, false, "light")
+	if !strings.Contains(html, `document.body.dataset.ccxProvider="codex"`) {
+		t.Error("expected codex provider hint in body dataset, got: ", truncateForLog(html))
+	}
+
+	sessionCC := &parser.Session{
+		ID:        "abcdef",
+		Provider:  "claude-code",
+		StartTime: time.Now(),
+	}
+	htmlCC := renderSessionPage(sessionCC, "test-project", nil, 0, false, false, false, "light")
+	if !strings.Contains(htmlCC, `document.body.dataset.ccxProvider="claude-code"`) {
+		t.Error("expected claude-code provider hint in body dataset")
+	}
+
+	sessionNoProvider := &parser.Session{
+		ID:        "abcdef",
+		StartTime: time.Now(),
+	}
+	htmlNone := renderSessionPage(sessionNoProvider, "test-project", nil, 0, false, false, false, "light")
+	if strings.Contains(htmlNone, "dataset.ccxProvider") {
+		t.Error("empty provider should NOT emit the hint")
 	}
 }
 
@@ -263,6 +428,370 @@ func TestHandleSession_NotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("handleSession for nonexistent returned %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+// setupLargeSessionDir creates a project with a session large enough (>500 msgs)
+// to trigger progressive loading. Used to test the load-earlier hash-nav fix.
+func setupLargeSessionDir(t *testing.T, msgCount int) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	projectDir := filepath.Join(dir, "projects", "-large-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var b strings.Builder
+	for i := 0; i < msgCount; i++ {
+		uuid := "m" + strings.Repeat("0", 8-len(itoa(i))) + itoa(i)
+		parent := ""
+		if i > 0 {
+			prev := "m" + strings.Repeat("0", 8-len(itoa(i-1))) + itoa(i-1)
+			parent = `,"parentUuid":"` + prev + `"`
+		}
+		kind := "user"
+		if i%2 == 1 {
+			kind = "assistant"
+		}
+		b.WriteString(`{"type":"` + kind + `","timestamp":"2024-01-01T10:00:00Z","uuid":"` + uuid + `"` + parent + `,"message":{"content":"msg ` + itoa(i) + `"}}` + "\n")
+	}
+
+	sessionFile := filepath.Join(projectDir, "large-session-abc.jsonl")
+	if err := os.WriteFile(sessionFile, []byte(b.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var digits []byte
+	for i > 0 {
+		digits = append([]byte{byte('0' + i%10)}, digits...)
+		i /= 10
+	}
+	return string(digits)
+}
+
+func TestHandleSession_ProgressiveLoadingMarkersPresent(t *testing.T) {
+	dir := setupLargeSessionDir(t, 600)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-large-project/large-session-abc", nil)
+	w := httptest.NewRecorder()
+
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+
+	// The load-earlier button must be rendered (progressive loading is active)
+	if !strings.Contains(body, `id="load-earlier"`) {
+		t.Error("expected load-earlier element to be rendered for 600-msg session")
+	}
+	// The hidden-reload branch must be wired up in the hash handler
+	if !strings.Contains(body, `document.getElementById('load-earlier')`) {
+		t.Error("expected hash handler to check for load-earlier when target not found")
+	}
+	if !strings.Contains(body, `jumpToHashTarget`) {
+		t.Error("expected jumpToHashTarget function in session page JS")
+	}
+	// The pending-search persistence must be in loadEarlierMessages
+	if !strings.Contains(body, `ccx-pending-search`) {
+		t.Error("expected sessionStorage ccx-pending-search key for search persistence across reload")
+	}
+}
+
+func TestHandleSession_LoadAllBypassesProgressive(t *testing.T) {
+	dir := setupLargeSessionDir(t, 600)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-large-project/large-session-abc?all=1", nil)
+	w := httptest.NewRecorder()
+
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+
+	// With ?all=1, the load-earlier button must not be rendered (no hidden sections)
+	if strings.Contains(body, `id="load-earlier"`) {
+		t.Error("load-earlier element should not be present when ?all=1 is set")
+	}
+	// But the hash handler JS is still present — we just don't need to trigger it
+	if !strings.Contains(body, `jumpToHashTarget`) {
+		t.Error("jumpToHashTarget should still be wired up even when loadAll is active")
+	}
+}
+
+// setupPricedSessionDir creates a project with a session containing real
+// per-message usage and a known model so the spend section renders with
+// non-zero cost. Used to test the per-turn breakdown UI (issue #2).
+func setupPricedSessionDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	projectDir := filepath.Join(dir, "projects", "-priced-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two turns, known model, known usage. Turn 2 intentionally more expensive
+	// than turn 1 so sorting by cost desc is observable.
+	content := `{"type":"user","timestamp":"2026-04-01T10:00:00Z","uuid":"u1","message":{"content":"cheap turn"}}
+{"type":"assistant","timestamp":"2026-04-01T10:00:01Z","uuid":"a1","parentUuid":"u1","message":{"role":"assistant","content":"reply","model":"claude-sonnet-4-5","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+{"type":"user","timestamp":"2026-04-01T10:01:00Z","uuid":"u2","parentUuid":"a1","message":{"content":"expensive turn with way more tokens"}}
+{"type":"assistant","timestamp":"2026-04-01T10:01:02Z","uuid":"a2","parentUuid":"u2","message":{"role":"assistant","content":"big reply","model":"claude-sonnet-4-5","usage":{"input_tokens":5000,"output_tokens":3000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+`
+
+	sessionFile := filepath.Join(projectDir, "priced-session-xyz.jsonl")
+	if err := os.WriteFile(sessionFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestHandleSession_SpendSectionRendersWithCost(t *testing.T) {
+	dir := setupPricedSessionDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-priced-project/priced-session-xyz", nil)
+	w := httptest.NewRecorder()
+
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+
+	// Spend section must be present with a total
+	if !strings.Contains(body, `info-section-spend`) {
+		t.Error("expected info-section-spend in rendered info panel")
+	}
+	if !strings.Contains(body, `Per-turn spend`) {
+		t.Error("expected 'Per-turn spend' header")
+	}
+	if !strings.Contains(body, `spend-row`) {
+		t.Error("expected spend-row elements linking to turn anchors")
+	}
+	if !strings.Contains(body, `Session total:`) {
+		t.Error("expected session total footer in spend section")
+	}
+	// Cost row must appear in the Tokens section
+	if !strings.Contains(body, `"info-row info-cost"`) {
+		t.Error("expected info-cost row in Tokens section")
+	}
+	// The expensive turn's anchor must be linked (#msg-u2)
+	if !strings.Contains(body, `href="#msg-u2"`) {
+		t.Error("expected spend row linking to turn anchor #msg-u2")
+	}
+}
+
+func TestHandleSession_TimelineRailRendered(t *testing.T) {
+	dir := setupPricedSessionDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-priced-project/priced-session-xyz", nil)
+	w := httptest.NewRecorder()
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+
+	// Rail structure
+	if !strings.Contains(body, `id="timeline-rail"`) {
+		t.Error("expected timeline-rail aside in rendered page")
+	}
+	if !strings.Contains(body, `id="timeline-spine"`) {
+		t.Error("expected timeline-spine id on the rail")
+	}
+	if !strings.Contains(body, `id="timeline-current"`) {
+		t.Error("expected timeline-current scroll indicator")
+	}
+	if !strings.Contains(body, `id="timeline-playhead"`) {
+		t.Error("expected timeline-playhead hover indicator")
+	}
+	if !strings.Contains(body, `id="timeline-tooltip"`) {
+		t.Error("expected timeline-tooltip sibling element")
+	}
+
+	// Ticks are spans with data-* attributes (no native anchor nav;
+	// click is dispatched via the rail's click handler and JS hash nav)
+	if !strings.Contains(body, `tick-user`) {
+		t.Error("expected tick-user class on user-prompt ticks")
+	}
+	if !strings.Contains(body, `data-uuid="u1"`) {
+		t.Error("expected data-uuid=u1 on a timeline tick")
+	}
+	if !strings.Contains(body, `data-uuid="u2"`) {
+		t.Error("expected data-uuid=u2 on a timeline tick")
+	}
+	if !strings.Contains(body, `data-offset=`) {
+		t.Error("expected data-offset attribute on ticks for hover tooltip")
+	}
+	if !strings.Contains(body, `data-snippet=`) {
+		t.Error("expected data-snippet attribute on ticks for hover tooltip")
+	}
+
+	// JS handlers wired up
+	if !strings.Contains(body, `jumpTickRelative`) {
+		t.Error("expected jumpTickRelative function for [/] keyboard nav")
+	}
+	if !strings.Contains(body, `handleRailMouse`) {
+		t.Error("expected handleRailMouse for hover-to-scrub interaction")
+	}
+	if !strings.Contains(body, `nearestTickIndex`) {
+		t.Error("expected nearestTickIndex binary-search helper")
+	}
+
+	// Cost-weighted integration: ticks must carry data-cost and --heat
+	// inline, wired from the matching TurnStats.
+	if !strings.Contains(body, `data-cost=`) {
+		t.Error("expected data-cost attribute on at least one priced tick")
+	}
+	if !strings.Contains(body, `data-tokens=`) {
+		t.Error("expected data-tokens attribute on at least one priced tick")
+	}
+	if !strings.Contains(body, `data-cumulative=`) {
+		t.Error("expected data-cumulative attribute for running total in tooltip")
+	}
+	if !strings.Contains(body, `data-index=`) {
+		t.Error("expected data-index attribute for turn ordinal in tooltip")
+	}
+	if !strings.Contains(body, `--heat:`) {
+		t.Error("expected --heat CSS var inline on timeline ticks")
+	}
+
+	// Fisheye zoom + hysteresis + rAF-throttled interaction model
+	if !strings.Contains(body, `zoom-0`) {
+		t.Error("expected zoom-0 class for fisheye-nearest tick")
+	}
+	if !strings.Contains(body, `applyFisheyeZoom`) {
+		t.Error("expected applyFisheyeZoom JS helper")
+	}
+	if !strings.Contains(body, `selectWithHysteresis`) {
+		t.Error("expected selectWithHysteresis helper to prevent tooltip flicker between adjacent ticks")
+	}
+	if !strings.Contains(body, `requestAnimationFrame(processRailFrame)`) {
+		t.Error("expected rAF-throttled mousemove processing")
+	}
+	if !strings.Contains(body, `TIMELINE_LEAVE_GRACE_MS`) {
+		t.Error("expected mouseleave grace-period constant")
+	}
+}
+
+func TestHandleSession_TimelineRailEmptyFallback(t *testing.T) {
+	// Session with a single message (zero duration span) should still
+	// render the rail but with the empty spine class — not crash.
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "projects", "-solo-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"type":"user","timestamp":"2026-04-01T10:00:00Z","uuid":"u1","message":{"content":"only message"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(projectDir, "solo-session-abc.jsonl"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-solo-project/solo-session-abc", nil)
+	w := httptest.NewRecorder()
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, `id="timeline-rail"`) {
+		t.Error("expected timeline-rail even for single-message session")
+	}
+	if !strings.Contains(body, `timeline-empty`) {
+		t.Error("expected timeline-empty class when session has no span")
+	}
+}
+
+func TestHandleSession_SessionNavIsNarrowByDefault(t *testing.T) {
+	// The session-nav sidebar should emit the narrow-by-default CSS
+	// rules (panel-nav.session-nav width:56px, hover → 260px expand).
+	// This is a smoke test — the actual layout behaviour is CSS-only
+	// and can't be exercised from Go, but we can verify the right
+	// selectors are in the rendered page.
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-test-project/test-session-123", nil)
+	w := httptest.NewRecorder()
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, `.panel-nav.session-nav {`) {
+		t.Error("expected .panel-nav.session-nav CSS block (narrow default state)")
+	}
+	if !strings.Contains(body, `width: 56px;`) {
+		t.Error("expected collapsed 56px width for session-nav")
+	}
+	if !strings.Contains(body, `.panel-nav.session-nav:hover`) {
+		t.Error("expected hover-expand rule on session-nav")
+	}
+	if !strings.Contains(body, `width: 260px;`) {
+		t.Error("expected expanded 260px width on hover")
+	}
+}
+
+func TestHandleSession_SpendSectionShowsTokenBreakdownForUnpricedModel(t *testing.T) {
+	// Session with an unknown model still renders the breakdown (token-only),
+	// because seeing which turns used the most tokens is still useful even
+	// when cost can't be computed.
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "projects", "-unpriced-project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"type":"user","timestamp":"2026-04-01T10:00:00Z","uuid":"u1","message":{"content":"hi"}}
+{"type":"assistant","timestamp":"2026-04-01T10:00:01Z","uuid":"a1","parentUuid":"u1","message":{"role":"assistant","content":"hi","model":"gpt-4","usage":{"input_tokens":100,"output_tokens":50}}}
+`
+	if err := os.WriteFile(filepath.Join(projectDir, "unpriced-session-abc.jsonl"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-unpriced-project/unpriced-session-abc", nil)
+	w := httptest.NewRecorder()
+	handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleSession returned %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+
+	if !strings.Contains(body, `info-section-spend`) {
+		t.Error("expected info-section-spend even for unpriced models (token-only breakdown is useful)")
+	}
+	if !strings.Contains(body, `No pricing match`) {
+		t.Error("expected 'No pricing match' note when model is unknown")
+	}
+	// Cost row in Tokens section should NOT appear (no cost resolved)
+	if strings.Contains(body, `"info-row info-cost"`) {
+		t.Error("info-cost row should NOT render when session cost is 0")
 	}
 }
 

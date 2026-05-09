@@ -93,10 +93,11 @@ type tokenUsageInfo struct {
 }
 
 type tokenUsageTotals struct {
-	InputTokens       int `json:"input_tokens"`
-	CachedInputTokens int `json:"cached_input_tokens"`
-	OutputTokens      int `json:"output_tokens"`
-	TotalTokens       int `json:"total_tokens"`
+	InputTokens           int `json:"input_tokens"`
+	CachedInputTokens     int `json:"cached_input_tokens"`
+	OutputTokens          int `json:"output_tokens"`
+	ReasoningOutputTokens int `json:"reasoning_output_tokens"`
+	TotalTokens           int `json:"total_tokens"`
 }
 
 type execCommandEndPayload struct {
@@ -710,6 +711,35 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 	pendingTools := make(map[string]pendingToolCall)
 	handledCallIDs := make(map[string]bool)
 	completedCallIDs := make(map[string]bool)
+	// Tracks the running token totals seen in the most recent
+	// token_count event AND the index into messages beyond which we
+	// haven't yet attributed. On each token_count, we distribute the
+	// delta-since-last-event across every untagged assistant in
+	// messages[usageWatermark:], then advance the watermark. This
+	// handles multi-assistant turns (reasoning + agent_message) and
+	// turns that produce multiple agent_message events between
+	// token_count events.
+	var previousTotals tokenUsageTotals
+	var pendingUsageDelta parser.MessageUsage
+	usageWatermark := 0
+
+	// Codex 0.120.0+ rollouts occasionally emit the same user_message
+	// event twice in a row (byte-identical payload, identical
+	// timestamp) as part of resume/replay. Track the last seen one so
+	// we can drop immediate duplicates — if we don't, the session
+	// page shows the same prompt twice at the top before anything
+	// else renders and users think the UI is broken.
+	var lastUserMessageText string
+	var lastUserMessageTS time.Time
+
+	// Watermark into len(messages) at the moment the MOST RECENT
+	// event_msg/web_search_end finished emitting a fresh tool pair.
+	// Used by the response_item/web_search_call handler to detect
+	// that the just-arriving response_item is a redundant echo of
+	// a search we already represented, and skip its emission.
+	// See the long comment on the web_search_end / web_search_call
+	// cases below for the event-order explanation.
+	lastWebSearchClosedAt := -1
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScannerBufferBytes)
@@ -781,6 +811,18 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 				if text == "" {
 					text = "(empty)"
 				}
+				// Drop immediate duplicates: Codex rollouts sometimes
+				// replay the first user message. Matches same text AND
+				// same-or-close timestamp (within 2s) so we only collapse
+				// the replay case, never a user who legitimately pasted
+				// the same thing twice minutes apart.
+				if text == lastUserMessageText && !ts.IsZero() && !lastUserMessageTS.IsZero() &&
+					absDuration(ts.Sub(lastUserMessageTS)) < 2*time.Second {
+					continue
+				}
+				lastUserMessageText = text
+				lastUserMessageTS = ts
+
 				if firstUserSummary == "" {
 					firstUserSummary = text
 				}
@@ -929,6 +971,9 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 					continue
 				}
 				if handledCallIDs[payload.CallID] {
+					// Legacy format: a prior response_item/web_search_call
+					// already registered this call_id. Emit the tool_result
+					// to complete the pair.
 					if tool, ok := pendingTools[payload.CallID]; ok {
 						messages = append(messages, newToolResultMessage(
 							lineNum,
@@ -947,6 +992,15 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 					}
 					continue
 				}
+				// Codex 0.120.0+ event order: event_msg/web_search_end
+				// arrives BEFORE the corresponding response_item/
+				// web_search_call, and the latter carries an empty
+				// call_id, so handledCallIDs never records it. We
+				// become the authoritative source: emit a full
+				// toolPair (tool_use + tool_result) here, and the
+				// subsequent response_item handler will detect a
+				// recent WebSearch completion via lastWebSearchClosedAt
+				// and skip its own orphan emission.
 				stats.ToolCalls++
 				messages = append(messages, toolPairMessages(
 					lineNum,
@@ -962,6 +1016,7 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 					false,
 				)...)
 				completedCallIDs[payload.CallID] = true
+				lastWebSearchClosedAt = len(messages)
 
 			case "mcp_tool_call_end":
 				var payload mcpToolCallEndPayload
@@ -1050,9 +1105,55 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 			case "token_count":
 				var payload tokenCountPayload
 				if err := json.Unmarshal(rollout.Payload, &payload); err == nil && payload.Info != nil {
-					stats.InputTokens = payload.Info.TotalTokenUsage.InputTokens
-					stats.CacheReadTokens = payload.Info.TotalTokenUsage.CachedInputTokens
-					stats.OutputTokens = payload.Info.TotalTokenUsage.OutputTokens
+					total := payload.Info.TotalTokenUsage
+					if pendingUsageDelta.Total() > 0 && usageWatermark <= len(messages) {
+						if hasUntaggedAssistant(messages[usageWatermark:]) {
+							distributeCodexDelta(messages[usageWatermark:], pendingUsageDelta)
+							usageWatermark = len(messages)
+							pendingUsageDelta = parser.MessageUsage{}
+						}
+					}
+					// Session-level aggregate (latest snapshot wins — Codex
+					// always emits running totals, not deltas).
+					stats.InputTokens = total.InputTokens
+					stats.CacheReadTokens = total.CachedInputTokens
+					stats.OutputTokens = total.OutputTokens
+
+					// Per-message attribution: diff this total against the
+					// running previousTotals and distribute the delta
+					// evenly across every untagged assistant message since
+					// the last token_count event.
+					//
+					// Even-split isn't perfectly accurate per-message for
+					// multi-assistant turns (reasoning + agent_message +
+					// another agent_message), but the per-TURN aggregation
+					// the UI displays reassembles correctly because each
+					// turn sums all its messages. Without this fix, only
+					// the latest assistant got tokens and all earlier
+					// ones in the burst showed $0.00.
+					delta := parser.MessageUsage{
+						InputTokens:     clampNonNegative(total.InputTokens - previousTotals.InputTokens),
+						OutputTokens:    clampNonNegative(total.OutputTokens - previousTotals.OutputTokens),
+						CacheReadTokens: clampNonNegative(total.CachedInputTokens - previousTotals.CachedInputTokens),
+						ReasoningTokens: clampNonNegative(total.ReasoningOutputTokens - previousTotals.ReasoningOutputTokens),
+					}
+					if delta.Total() > 0 && usageWatermark <= len(messages) {
+						if hasUntaggedAssistant(messages[usageWatermark:]) {
+							distributeCodexDelta(messages[usageWatermark:], delta)
+							usageWatermark = len(messages)
+						} else {
+							pendingUsageDelta = addUsage(pendingUsageDelta, delta)
+						}
+					}
+					// Use max() as the new floor so a running-total
+					// regression doesn't double-count on recovery:
+					// 100→200→150→250 should emit deltas 100, 0, 50 — not
+					// 100, 0, 100.
+					previousTotals.InputTokens = maxInt(previousTotals.InputTokens, total.InputTokens)
+					previousTotals.OutputTokens = maxInt(previousTotals.OutputTokens, total.OutputTokens)
+					previousTotals.CachedInputTokens = maxInt(previousTotals.CachedInputTokens, total.CachedInputTokens)
+					previousTotals.ReasoningOutputTokens = maxInt(previousTotals.ReasoningOutputTokens, total.ReasoningOutputTokens)
+					previousTotals.TotalTokens = maxInt(previousTotals.TotalTokens, total.TotalTokens)
 				}
 
 			case "thread_name_updated":
@@ -1162,6 +1263,19 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 				if err := json.Unmarshal(rollout.Payload, &payload); err != nil {
 					continue
 				}
+				// Codex 0.120.0+ emits this response_item AFTER the
+				// corresponding event_msg/web_search_end and with an
+				// empty call_id. If we just closed a WebSearch in
+				// the immediately preceding messages, this
+				// response_item is a redundant echo — skip the
+				// emission to avoid the double-count. The
+				// lastWebSearchClosedAt watermark is only bumped
+				// when web_search_end emitted a fresh tool pair
+				// (i.e., it wasn't merging into a prior handled
+				// call_id).
+				if payload.CallID == "" && lastWebSearchClosedAt == len(messages) {
+					continue
+				}
 				stats.ToolCalls++
 				query := ""
 				if payload.Action != nil {
@@ -1232,6 +1346,12 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+	if pendingUsageDelta.Total() > 0 && usageWatermark <= len(messages) {
+		if hasUntaggedAssistant(messages[usageWatermark:]) {
+			distributeCodexDelta(messages[usageWatermark:], pendingUsageDelta)
+		}
+	}
+	stats.CostUSD = sumMessageCosts(messages)
 
 	if firstTime.IsZero() || lastTime.IsZero() {
 		if info, err := os.Stat(filePath); err == nil {
@@ -1508,6 +1628,13 @@ func fallbackToolName(name string) string {
 	return name
 }
 
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
+}
+
 func buildMessageTree(messages []*parser.Message) []*parser.Message {
 	var roots []*parser.Message
 	var currentAnchor *parser.Message
@@ -1533,4 +1660,131 @@ func buildMessageTree(messages []*parser.Message) []*parser.Message {
 	}
 
 	return roots
+}
+
+// latestAssistantWithoutUsage walks messages in reverse and returns
+// the first assistant message without Usage. Kept for tests that
+// already rely on it; new code should prefer distributeCodexDelta.
+func latestAssistantWithoutUsage(messages []*parser.Message) *parser.Message {
+	for i := len(messages) - 1; i >= 0; i-- {
+		m := messages[i]
+		if m == nil || m.Kind != parser.KindAssistant {
+			continue
+		}
+		if m.Usage == nil {
+			return m
+		}
+	}
+	return nil
+}
+
+func hasUntaggedAssistant(messages []*parser.Message) bool {
+	for _, m := range messages {
+		if m == nil || m.Kind != parser.KindAssistant {
+			continue
+		}
+		if m.Usage == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func addUsage(a, b parser.MessageUsage) parser.MessageUsage {
+	return parser.MessageUsage{
+		InputTokens:       a.InputTokens + b.InputTokens,
+		OutputTokens:      a.OutputTokens + b.OutputTokens,
+		CacheReadTokens:   a.CacheReadTokens + b.CacheReadTokens,
+		CacheCreateTokens: a.CacheCreateTokens + b.CacheCreateTokens,
+		ReasoningTokens:   a.ReasoningTokens + b.ReasoningTokens,
+	}
+}
+
+func sumMessageCosts(messages []*parser.Message) float64 {
+	var total float64
+	for _, m := range messages {
+		if m == nil || m.Usage == nil {
+			continue
+		}
+		total += m.Usage.CostUSD
+	}
+	return total
+}
+
+// distributeCodexDelta evenly splits a token delta across every
+// assistant message in `recent` that doesn't already carry Usage.
+// Computes per-message cost via LookupPricing on the target's model.
+//
+// The distribution is even by count, not proportional to individual
+// message output size, because Codex's wire format doesn't expose
+// per-message counts — only running totals at checkpoints. The
+// per-TURN aggregation the UI displays reassembles correctly since
+// each turn sums all its messages, so the approximation is invisible
+// at the turn level.
+//
+// If no untagged assistants exist in `recent`, the delta is silently
+// dropped. This is correct: the delta is already reflected in the
+// session-level stats, and there's no message to attach it to.
+func distributeCodexDelta(recent []*parser.Message, delta parser.MessageUsage) {
+	untagged := make([]*parser.Message, 0, len(recent))
+	for _, m := range recent {
+		if m == nil || m.Kind != parser.KindAssistant {
+			continue
+		}
+		if m.Usage == nil {
+			untagged = append(untagged, m)
+		}
+	}
+	n := len(untagged)
+	if n == 0 {
+		return
+	}
+
+	share := parser.MessageUsage{
+		InputTokens:       delta.InputTokens / n,
+		OutputTokens:      delta.OutputTokens / n,
+		CacheReadTokens:   delta.CacheReadTokens / n,
+		CacheCreateTokens: delta.CacheCreateTokens / n,
+		ReasoningTokens:   delta.ReasoningTokens / n,
+	}
+	// First message absorbs any integer-division remainder so the sum
+	// of per-message usage equals the delta exactly.
+	remainder := parser.MessageUsage{
+		InputTokens:       delta.InputTokens - share.InputTokens*n,
+		OutputTokens:      delta.OutputTokens - share.OutputTokens*n,
+		CacheReadTokens:   delta.CacheReadTokens - share.CacheReadTokens*n,
+		CacheCreateTokens: delta.CacheCreateTokens - share.CacheCreateTokens*n,
+		ReasoningTokens:   delta.ReasoningTokens - share.ReasoningTokens*n,
+	}
+	for i, m := range untagged {
+		per := share
+		if i == 0 {
+			per.InputTokens += remainder.InputTokens
+			per.OutputTokens += remainder.OutputTokens
+			per.CacheReadTokens += remainder.CacheReadTokens
+			per.CacheCreateTokens += remainder.CacheCreateTokens
+			per.ReasoningTokens += remainder.ReasoningTokens
+		}
+		per.CostUSD = parser.ComputeCost(&per, parser.LookupPricing(m.Model))
+		m.Usage = &per
+	}
+}
+
+// clampNonNegative returns v if v >= 0, else 0. Used when diffing
+// Codex token totals — a running-total event that reset or regressed
+// would otherwise produce negative deltas.
+func clampNonNegative(v int) int {
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
+// maxInt returns the larger of a and b. Go stdlib adds this in 1.21
+// but the codebase targets a lower floor. Tiny helper, kept local.
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

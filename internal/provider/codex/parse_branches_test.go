@@ -297,6 +297,7 @@ func TestParseSessionTokenCountFromEventMsg(t *testing.T) {
 
 	rolloutPath := filepath.Join(sessionsDir, "2026", "04", "02", "rollout-20260402T200000-thread-tok.jsonl")
 	writeRollout(t, rolloutPath, `{"timestamp":"2026-04-02T20:00:00Z","type":"session_meta","payload":{"id":"thread-tok","timestamp":"2026-04-02T20:00:00Z","cwd":"/tmp/test-tokens","originator":"codex_cli_rs","cli_version":"0.116.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-04-02T20:00:00Z","type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/tmp/test-tokens","approval_policy":"never","sandbox_policy":"danger_full_access","model":"gpt-5"}}
 {"timestamp":"2026-04-02T20:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"token test","images":[],"local_images":[],"text_elements":[]}}
 {"timestamp":"2026-04-02T20:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":50,"total_tokens":700},"last_token_usage":{"input_tokens":500,"cached_input_tokens":100,"output_tokens":200,"reasoning_output_tokens":50,"total_tokens":700},"model_context_window":128000},"rate_limits":null}}
 {"timestamp":"2026-04-02T20:00:03Z","type":"event_msg","payload":{"type":"agent_message","message":"done"}}
@@ -316,6 +317,34 @@ func TestParseSessionTokenCountFromEventMsg(t *testing.T) {
 	}
 	if session.Stats.OutputTokens != 200 {
 		t.Fatalf("OutputTokens = %d, want 200", session.Stats.OutputTokens)
+	}
+	if len(session.RootMessages) != 1 {
+		t.Fatalf("len(session.RootMessages) = %d, want 1", len(session.RootMessages))
+	}
+	if len(session.RootMessages[0].Children) != 1 {
+		t.Fatalf("len(root.Children) = %d, want 1", len(session.RootMessages[0].Children))
+	}
+	assistant := session.RootMessages[0].Children[0]
+	if assistant.Usage == nil {
+		t.Fatal("assistant.Usage is nil, want attributed token delta")
+	}
+	if assistant.Usage.InputTokens != 500 {
+		t.Fatalf("assistant.Usage.InputTokens = %d, want 500", assistant.Usage.InputTokens)
+	}
+	if assistant.Usage.CacheReadTokens != 100 {
+		t.Fatalf("assistant.Usage.CacheReadTokens = %d, want 100", assistant.Usage.CacheReadTokens)
+	}
+	if assistant.Usage.OutputTokens != 200 {
+		t.Fatalf("assistant.Usage.OutputTokens = %d, want 200", assistant.Usage.OutputTokens)
+	}
+	if assistant.Usage.ReasoningTokens != 50 {
+		t.Fatalf("assistant.Usage.ReasoningTokens = %d, want 50", assistant.Usage.ReasoningTokens)
+	}
+	if assistant.Usage.CostUSD <= 0 {
+		t.Fatalf("assistant.Usage.CostUSD = %v, want > 0", assistant.Usage.CostUSD)
+	}
+	if session.Stats.CostUSD != assistant.Usage.CostUSD {
+		t.Fatalf("session.Stats.CostUSD = %v, want %v", session.Stats.CostUSD, assistant.Usage.CostUSD)
 	}
 }
 
@@ -500,10 +529,10 @@ func TestIDAndHomes(t *testing.T) {
 
 func TestProjectInfoForCWD(t *testing.T) {
 	tests := []struct {
-		cwd          string
-		wantEncoded  string
-		wantDisplay  string
-		wantPath     string
+		cwd         string
+		wantEncoded string
+		wantDisplay string
+		wantPath    string
 	}{
 		{"/home/dev/project", "home-dev-project", "project", "/home/dev/project"},
 		{"", "unknown", "(unknown cwd)", ""},
