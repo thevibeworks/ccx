@@ -7,6 +7,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-29
+
+### Added
+- **Docker support**: Multi-stage Dockerfile (distroless nonroot runtime), docker-compose.yml with read-only agent config mounts, and GitHub Actions workflow for automated multi-arch (amd64/arm64) image publishing to `ghcr.io/thevibeworks/ccx`. Default host port 2299 (C=2, C=2, X=9 on phone keypad).
+- **Exchange + Step data model**: Replaces the older TurnStats vocabulary. An Exchange is one user request plus everything the agent did in response — including sub-agent dispatches, skill invocations, and tool calls. Steps enumerate sub-events inside each Exchange so the timeline rail can paint satellite markers (sub-agents, skills, tools, compaction boundaries).
+- **Workspace as first-class object**: Parser and provider layers now surface workspace metadata (project path, git branch, CWD, CLI version) extracted from session JSONL headers.
+- **Export `--shape` flag**: Splits export shape (`trace`, `brief`, `exec`) from output format (`json`, `html`, `md`, `org`, `txt`). Previously `--format exec` conflated shape and format.
+- **Sub-agent sidechain discovery**: Parser now finds and loads sub-agent transcripts from `<uuid>/subagents/agent-*.jsonl` files alongside the main session JSONL. Sidechain messages contribute to stats (AgentSidechains, MessageCount, Exchange.HasSidechain) and are available for cost computation.
+- **Sub-agent tool classification**: TaskCreate and Agent tool_use blocks are now classified as StepSubagent (previously fell through to StepToolUse). Timeline rail sub-agent satellites and tooltip badge counts are now accurate.
+- **Friendly 404 pages**: Missing projects, sessions, and routes now render a styled page with the failing URL and a pre-filled GitHub issue link for one-click bug reporting.
+- **Real-session test fixtures**: Captured fixtures from Claude Code 2.1.104 and Codex sessions with comprehensive assertions for message counts, content block types, tool distribution, and sidechain discovery.
+
+### Fixed
+- **Sidechain messages polluting main conversation**: Sub-agent transcripts loaded from sidechain files were rendered as separate thread sections in the main view and appeared as spurious entries in the outline sidebar. Root cause: rendering code never filtered on IsSidechain — it only used the flag for CSS styling. Fix: `filterMainConversation()` strips sidechain messages before thread grouping in `renderMessages`, `renderMessagesProgressive`, and `renderConversationNav`. Search results also filter sidechains so scroll-to-message anchors are always present in the rendered HTML.
+- **Codex web_search double-counting**: web_search_call and web_search_end events were both incrementing tool counts. Now deduped.
+- **Codex session rendering**: Fixed floating fold-toggle design, spinner icon position pinned, Codex accent color applied to CX sessions.
+- **Cross-agent merged URL resolution**: `Multi.FindSession` now resolves session IDs correctly when the same project exists in both Claude Code and Codex providers.
+- **O(n^2) digest computation**: Fixed quadratic behavior in session digest. Also fixed merge-key collisions, sidechain step bleed into parent exchanges, markdown-to-HTML rendering edge cases, and APFS case-sensitivity issues.
+- **Exchange-first outline**: Split outline sidebar now groups by Exchange boundaries with separate click targets for "jump to message" and "toggle children". Stable fold button replaces the conflicting details/summary approach.
+- **Spinner verbs**: Loading spinner now cycles through contextual verbs instead of a static indicator.
+
+### Changed
+- **Default Docker port**: 2299 (was 3773). Derived from "ccx" on phone keypad: C=2, C=2, X=9.
+- **Makefile**: Added `dev` and `devweb` targets for fast build+run web loop.
+
 ## [0.4.0] - 2026-04-14
 
 ### Added
@@ -169,7 +194,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Dark/light theme toggle with persistence
 - Keyboard navigation (j/k scroll, gg/G jump, / search, t theme, z collapse)
 
-[Unreleased]: https://github.com/thevibeworks/ccx/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/ccx/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/thevibeworks/ccx/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/thevibeworks/ccx/compare/v0.3.2...v0.4.0
 [0.2.5]: https://github.com/thevibeworks/ccx/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/thevibeworks/ccx/compare/v0.2.3...v0.2.4

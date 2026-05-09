@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thevibeworks/ccx/internal/db"
+	"github.com/thevibeworks/ccx/internal/parser"
 	"github.com/thevibeworks/ccx/internal/provider/claude"
 )
 
@@ -68,6 +70,169 @@ func TestHandleIndex_NotFoundForOtherPaths(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("handleIndex for /nonexistent returned %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+// TestHandleIndex_NotFoundRendersReportBugPage — when the handler
+// returns a 404 to a human-facing route, the body should be the
+// styled "report a bug" page, not net/http's plain text default.
+// The page must include the failing URL AND a pre-filled GitHub
+// issue link so users can report breakage in one click.
+func TestHandleIndex_NotFoundRendersReportBugPage(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/totally-not-a-route", nil)
+	w := httptest.NewRecorder()
+	handleIndex(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	body := w.Body.String()
+
+	// Must be the styled page, not net/http's default "404 page not found\n".
+	if !strings.Contains(body, "nf-box") {
+		t.Error("response missing styled .nf-box container")
+	}
+	if !strings.Contains(body, "Report this bug") {
+		t.Error("response missing 'Report this bug' CTA")
+	}
+	// The pre-filled issue URL must point at the ccx repo.
+	if !strings.Contains(body, "github.com/thevibeworks/ccx/issues/new") {
+		t.Error("response missing github issue link")
+	}
+	// The failing URL must be visible so the user (and the maintainer
+	// reading the bug report) can see what was attempted.
+	if !strings.Contains(body, "/totally-not-a-route") {
+		t.Error("response missing the failing URL in the body")
+	}
+	// The issue title/body parameters must include the failing URL
+	// URL-encoded. %2F = "/" means the path shows up in the query
+	// string.
+	if !strings.Contains(body, "totally-not-a-route") {
+		t.Error("issue body missing failing path")
+	}
+}
+
+// TestHandleSession_NotFoundRendersReportBugPageWithSessionDetail —
+// when a session lookup fails, the 404 page's detail line should
+// mention the session and project so users (and maintainers reading
+// a bug report) know what was being looked for.
+func TestHandleSession_NotFoundRendersReportBugPageWithSessionDetail(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/session/-no-such-project/019d8f43-8d53-7263-8e70-7729495e2b95", nil)
+	w := httptest.NewRecorder()
+	handleSession(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Can't find this session") {
+		t.Errorf("missing session headline, got: %s", truncateForLog(body))
+	}
+	if !strings.Contains(body, "019d8f43-8d5") {
+		t.Errorf("detail line should include truncated session id, got: %s", truncateForLog(body))
+	}
+	if !strings.Contains(body, "-no-such-project") {
+		t.Errorf("detail line should include project name, got: %s", truncateForLog(body))
+	}
+	if !strings.Contains(body, "github.com/thevibeworks/ccx/issues/new") {
+		t.Error("response missing github issue link")
+	}
+}
+
+func truncateForLog(s string) string {
+	if len(s) > 400 {
+		return s[:400] + "…"
+	}
+	return s
+}
+
+// TestFoldToggle_FloatsOnThreadLine asserts the fold-toggle CSS
+// positions the button as a sticky, sliding pill on the thread's
+// vertical line — not as a static chip at the top of the responses
+// column. Guards against the CSS regressing back to the old
+// inline-flex chip that sat in the content flow.
+func TestFoldToggle_FloatsOnThreadLine(t *testing.T) {
+	css := cssStyles()
+	if !strings.Contains(css, ".fold-toggle {\n  position: sticky;") {
+		t.Error("fold-toggle must be position:sticky so it floats on the thread's vertical line")
+	}
+	if !strings.Contains(css, "margin: 0 0 8px -20px;") {
+		t.Error("fold-toggle negative left margin must pull the button over the vertical line")
+	}
+	// Must have the slide-out max-width transition so the button
+	// reveals its label on hover.
+	if !strings.Contains(css, "transition: max-width") {
+		t.Error("fold-toggle should animate max-width for the slide-out reveal")
+	}
+	if !strings.Contains(css, ".fold-toggle:hover") || !strings.Contains(css, "max-width: 220px;") {
+		t.Error("fold-toggle:hover must expand max-width to reveal the full label")
+	}
+	// Folded-thread class should brighten the vertical line so the
+	// thread reads as "something collapsed here".
+	if !strings.Contains(css, ".thread.folded > .thread-responses") || !strings.Contains(css, "border-left-color: var(--primary);") {
+		t.Error("folded thread should tint the vertical line with --primary")
+	}
+}
+
+// TestCliSpinnerLayout_FixedWidth asserts the spinner CSS pins the
+// icon to a stable screen position — icon absolute-positioned at
+// left, block with a fixed width — so rotating the verb doesn't make
+// the icon jitter horizontally.
+func TestCliSpinnerLayout_FixedWidth(t *testing.T) {
+	css := cssStyles()
+	if !strings.Contains(css, ".cli-spinner-char {\n  position: absolute;") {
+		t.Error("cli-spinner-char must be position:absolute (otherwise icon jitters as verb changes)")
+	}
+	if !strings.Contains(css, ".cli-spinner {") || !strings.Contains(css, "width: 220px;") {
+		t.Error("cli-spinner must have a fixed width so the centered overlay doesn't re-center with each verb")
+	}
+	if !strings.Contains(css, `body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }`) {
+		t.Error("codex sessions should swap the spinner color to the Codex accent")
+	}
+}
+
+// TestRenderSessionPage_EmitsProviderDataAttribute verifies that a
+// Codex session page sets body.dataset.ccxProvider = "codex" so the
+// CSS rule above actually fires. Claude Code sessions should set it
+// to "claude-code", and anything with an empty provider should
+// simply omit the hint.
+func TestRenderSessionPage_EmitsProviderDataAttribute(t *testing.T) {
+	session := &parser.Session{
+		ID:        "019d8f43-8d53",
+		Provider:  "codex",
+		StartTime: time.Now(),
+	}
+	html := renderSessionPage(session, "test-project", nil, 0, false, false, false, "light")
+	if !strings.Contains(html, `document.body.dataset.ccxProvider="codex"`) {
+		t.Error("expected codex provider hint in body dataset, got: ", truncateForLog(html))
+	}
+
+	sessionCC := &parser.Session{
+		ID:        "abcdef",
+		Provider:  "claude-code",
+		StartTime: time.Now(),
+	}
+	htmlCC := renderSessionPage(sessionCC, "test-project", nil, 0, false, false, false, "light")
+	if !strings.Contains(htmlCC, `document.body.dataset.ccxProvider="claude-code"`) {
+		t.Error("expected claude-code provider hint in body dataset")
+	}
+
+	sessionNoProvider := &parser.Session{
+		ID:        "abcdef",
+		StartTime: time.Now(),
+	}
+	htmlNone := renderSessionPage(sessionNoProvider, "test-project", nil, 0, false, false, false, "light")
+	if strings.Contains(htmlNone, "dataset.ccxProvider") {
+		t.Error("empty provider should NOT emit the hint")
 	}
 }
 

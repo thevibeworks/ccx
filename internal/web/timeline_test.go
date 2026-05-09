@@ -117,10 +117,57 @@ func TestComputeTimelineTicks_LongIdleGapDoesntDistort(t *testing.T) {
 	}
 }
 
-func TestComputeTimelineTicks_EmitsSubagentAndSkillTicks(t *testing.T) {
+func TestEnrichTicks_PopulatesClockAndDuration(t *testing.T) {
+	start := time.Date(2026, 4, 14, 10, 3, 0, 0, time.UTC)
+	end := start.Add(2 * time.Minute)
+	assistant := &parser.Message{
+		UUID: "a1", Kind: parser.KindAssistant, Timestamp: end,
+		Content: []parser.ContentBlock{{Type: "text", Text: "ok"}},
+	}
+	user := &parser.Message{
+		UUID: "u1", Kind: parser.KindUserPrompt, Timestamp: start,
+		Content:  []parser.ContentBlock{{Type: "text", Text: "build it"}},
+		Children: []*parser.Message{assistant},
+	}
+	session := &parser.Session{
+		StartTime:    start,
+		EndTime:      end,
+		RootMessages: []*parser.Message{user},
+	}
+	ticks := enrichTicksWithCost(computeTimelineTicks(session), session)
+	if len(ticks) != 1 {
+		t.Fatalf("want 1 tick, got %d", len(ticks))
+	}
+	if ticks[0].Duration != 2*time.Minute {
+		t.Errorf("Duration = %v, want 2m", ticks[0].Duration)
+	}
+	if ticks[0].Timestamp.IsZero() {
+		t.Error("Timestamp should be set on tick")
+	}
+	// Render check: data-duration must be present in HTML
+	var b strings.Builder
+	renderTimelineRail(&b, session)
+	out := b.String()
+	if !strings.Contains(out, `data-duration="`) {
+		t.Error("rendered rail missing data-duration attribute")
+	}
+	if !strings.Contains(out, `data-clock="`) {
+		t.Error("rendered rail missing data-clock attribute")
+	}
+	if !strings.Contains(out, `tt-badges`) {
+		t.Error("tooltip should include badges slot")
+	}
+	if !strings.Contains(out, `tt-clock`) {
+		t.Error("tooltip should include clock slot")
+	}
+}
+
+func TestComputeTimelineTicks_SubagentAndSkillBecomeSatellites(t *testing.T) {
 	// A single user turn whose assistant dispatches a Task (sub-agent)
-	// and calls a Skill tool should produce 3 ticks: the user turn
-	// (major) and two sub-event ticks (minor).
+	// and calls a Skill tool should produce exactly ONE exchange tick
+	// with sub-agent/skill rendered as Satellites hanging off the
+	// primary notch — not as extra rail-notches that dilute the
+	// one-per-exchange ruler.
 	start := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
 	assistant := &parser.Message{
 		UUID:      "a1",
@@ -144,6 +191,11 @@ func TestComputeTimelineTicks_EmitsSubagentAndSkillTicks(t *testing.T) {
 					"skill": "commit",
 				},
 			},
+			{
+				Type:     "tool_use",
+				ToolName: "Read",
+				ToolID:   "t3",
+			},
 		},
 	}
 	user := &parser.Message{
@@ -159,44 +211,43 @@ func TestComputeTimelineTicks_EmitsSubagentAndSkillTicks(t *testing.T) {
 		RootMessages: []*parser.Message{user},
 	}
 
-	ticks := computeTimelineTicks(session)
-	if len(ticks) != 3 {
-		t.Fatalf("expected 3 ticks (user + task + skill), got %d", len(ticks))
+	ticks := enrichTicksWithCost(computeTimelineTicks(session), session)
+	if len(ticks) != 1 {
+		t.Fatalf("expected 1 exchange tick (sub-events are satellites), got %d", len(ticks))
 	}
-
-	kinds := make([]tickKind, len(ticks))
-	snippets := make([]string, len(ticks))
-	for i, tk := range ticks {
-		kinds[i] = tk.Kind
-		snippets[i] = tk.Snippet
-	}
-
-	wantKinds := []tickKind{tickUser, tickAgent, tickSkill}
-	for i, want := range wantKinds {
-		if kinds[i] != want {
-			t.Errorf("ticks[%d].Kind = %v, want %v", i, kinds[i], want)
-		}
-	}
-
-	// Snippet for agent tick should contain the subagent_type label
-	if !strings.Contains(snippets[1], "Plan") {
-		t.Errorf("agent tick snippet = %q, want to contain 'Plan'", snippets[1])
-	}
-	// Snippet for skill tick should contain the skill name
-	if !strings.Contains(snippets[2], "commit") {
-		t.Errorf("skill tick snippet = %q, want to contain 'commit'", snippets[2])
-	}
-
-	// All three ticks should carry the parent assistant's UUID for
-	// jump navigation (except user prompt which keeps its own)
 	if ticks[0].UUID != "u1" {
-		t.Errorf("user tick UUID = %q, want u1", ticks[0].UUID)
+		t.Errorf("tick UUID = %q, want u1", ticks[0].UUID)
 	}
-	if ticks[1].UUID != "a1" {
-		t.Errorf("agent tick UUID = %q, want a1 (parent assistant)", ticks[1].UUID)
+	if ticks[0].Kind != tickUser {
+		t.Errorf("tick kind = %v, want tickUser", ticks[0].Kind)
 	}
-	if ticks[2].UUID != "a1" {
-		t.Errorf("skill tick UUID = %q, want a1 (parent assistant)", ticks[2].UUID)
+	if ticks[0].SubagentCount != 1 {
+		t.Errorf("SubagentCount = %d, want 1", ticks[0].SubagentCount)
+	}
+	if ticks[0].SkillCount != 1 {
+		t.Errorf("SkillCount = %d, want 1", ticks[0].SkillCount)
+	}
+	if ticks[0].ToolCount != 1 {
+		t.Errorf("ToolCount = %d, want 1 (Read tool)", ticks[0].ToolCount)
+	}
+	// Satellites are rendered in priority order: subagent, skill, compact, tool.
+	if len(ticks[0].Satellites) != 3 {
+		t.Fatalf("Satellites = %d, want 3", len(ticks[0].Satellites))
+	}
+	if ticks[0].Satellites[0].Kind != satSubagent {
+		t.Errorf("Satellites[0].Kind = %v, want satSubagent", ticks[0].Satellites[0].Kind)
+	}
+	if !strings.Contains(ticks[0].Satellites[0].Label, "Plan") {
+		t.Errorf("Satellites[0].Label = %q, want to contain 'Plan'", ticks[0].Satellites[0].Label)
+	}
+	if ticks[0].Satellites[1].Kind != satSkill {
+		t.Errorf("Satellites[1].Kind = %v, want satSkill", ticks[0].Satellites[1].Kind)
+	}
+	if !strings.Contains(ticks[0].Satellites[1].Label, "commit") {
+		t.Errorf("Satellites[1].Label = %q, want to contain 'commit'", ticks[0].Satellites[1].Label)
+	}
+	if ticks[0].Satellites[2].Kind != satTool {
+		t.Errorf("Satellites[2].Kind = %v, want satTool", ticks[0].Satellites[2].Kind)
 	}
 }
 
