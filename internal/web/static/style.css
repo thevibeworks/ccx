@@ -1374,12 +1374,14 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   border: none;
   transition: width 0.18s ease, padding 0.18s ease;
   cursor: crosshair;
+  display: flex;
+  align-items: center;
 }
-/* Height-adaptive: short sessions get a compact rail instead of
-   stretching 5 ticks across the full viewport. JS sets --tick-count
-   on the spine; the rail clamps to a natural height. */
-.timeline-rail .timeline-spine[data-tick-count] {
-  max-height: calc(var(--tick-count, 100) * 12px);
+.timeline-rail .timeline-spine {
+  position: relative;
+  width: 100%;
+  max-height: 100%;
+  height: calc(var(--tick-count, 100) * 12px);
 }
 .timeline-rail:hover {
   width: 52px;
@@ -1387,11 +1389,6 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 }
 .timeline-rail.has-no-ticks { pointer-events: none; }
 
-.timeline-rail .timeline-spine {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
 /* Faint center guideline — the "ruler's edge" that ticks extend from */
 .timeline-rail .timeline-spine::before {
   content: '';
