@@ -192,7 +192,7 @@ func parseModelCostsMap(path string) (map[string]string, error) {
 		}
 		// Look for a tier constant (may be same line or next)
 		if currentConfig != "" {
-			if m := tierRe.FindStringSubmatch(line); m != nil && m[1] != "" && !strings.HasPrefix(m[1], "COST_") == false {
+			if m := tierRe.FindStringSubmatch(line); m != nil && m[1] != "" && strings.HasPrefix(m[1], "COST_") {
 				// Only accept if it's a tier ref, not the MODEL_COSTS declaration line
 				if !strings.Contains(line, "MODEL_COSTS") {
 					out[currentConfig] = m[1]
