@@ -19,7 +19,7 @@ func ParseSession(filePath string) (*Session, error) {
 	var messages []*Message
 	var summaryFromFile string
 	var totalInputTokens, totalOutputTokens, totalCacheRead, totalCacheCreate int
-	var sessionSlug, sessionVersion, sessionBranch, sessionCWD string
+	var sessionSlug, sessionTitle, sessionVersion, sessionBranch, sessionCWD string
 	logicalParents := make(map[string]string) // compact_boundary UUID -> logical parent UUID
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
@@ -65,6 +65,9 @@ func ParseSession(filePath string) (*Session, error) {
 		if sessionCWD == "" && raw.CWD != "" {
 			sessionCWD = raw.CWD
 		}
+		if sessionTitle == "" && raw.AITitle != "" {
+			sessionTitle = raw.AITitle
+		}
 
 		if raw.Type == "system" && raw.Subtype == "compact_boundary" && raw.UUID != "" {
 			if parent := strings.TrimSpace(raw.LogicalParentUUID); parent != "" {
@@ -87,6 +90,7 @@ func ParseSession(filePath string) (*Session, error) {
 		msg := parseMessage(raw)
 		if msg != nil {
 			msg.RawJSON = line
+			msg.SubAgentResult = parseToolUseResult(raw.ToolUseResult)
 			messages = append(messages, msg)
 		}
 	}
@@ -155,6 +159,7 @@ func ParseSession(filePath string) (*Session, error) {
 		RootMessages: rootMessages,
 		Stats:        stats,
 		Slug:         sessionSlug,
+		Title:        sessionTitle,
 		Version:      sessionVersion,
 		GitBranch:    sessionBranch,
 		CWD:          sessionCWD,
@@ -436,6 +441,20 @@ func extractSummary(messages []*Message) string {
 		}
 	}
 	return "(no summary)"
+}
+
+func parseToolUseResult(raw json.RawMessage) *toolUseResultData {
+	if len(raw) == 0 || raw[0] != '{' {
+		return nil
+	}
+	var result toolUseResultData
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil
+	}
+	if result.AgentID == "" {
+		return nil
+	}
+	return &result
 }
 
 func extractModel(messages []*Message) string {

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -40,6 +41,7 @@ type Session struct {
 	Branches     []Branch // For resume view tree structure
 
 	Slug      string
+	Title     string // AI-generated session title (aiTitle from JSONL)
 	Version   string
 	GitBranch string
 	CWD       string
@@ -126,7 +128,8 @@ type Message struct {
 	Model       string // Model ID (e.g., claude-sonnet-4-5-20250929)
 	Subtype     string // For system messages: compact_boundary, local_command
 
-	Usage *MessageUsage // Per-message API token usage + cost. nil if absent.
+	Usage          *MessageUsage      // Per-message API token usage + cost. nil if absent.
+	SubAgentResult *toolUseResultData // Sub-agent summary from toolUseResult. nil for non-agent tool results.
 
 	RawJSON string // Original JSONL line verbatim
 	raw     rawMessage
@@ -167,6 +170,35 @@ type rawMessage struct {
 	Version   string `json:"version"`   // Claude Code version
 	GitBranch string `json:"gitBranch"` // Git branch at session start
 	CWD       string `json:"cwd"`       // Working directory
+
+	// Fields added in Claude Code 2.1.137+
+	AITitle      string              `json:"aiTitle"`      // AI-generated session title
+	Entrypoint   string              `json:"entrypoint"`   // "cli" or "web"
+	UserType     string              `json:"userType"`     // "external"
+	StopReason   string              `json:"stopReason"`   // Why the turn ended
+	DurationMs   int                 `json:"durationMs"`   // Turn duration in milliseconds
+	URL          string              `json:"url"`          // Bridge/remote URL
+	ToolUseResult json.RawMessage `json:"toolUseResult"` // Sub-agent result metadata (string or object)
+}
+
+type toolUseResultData struct {
+	AgentID           string     `json:"agentId"`
+	AgentType         string     `json:"agentType"`
+	Status            string     `json:"status"`
+	TotalTokens       int        `json:"totalTokens"`
+	TotalToolUseCount int        `json:"totalToolUseCount"`
+	TotalDurationMs   int        `json:"totalDurationMs"`
+	Usage             *usageData `json:"usage"`
+	ToolStats         *toolStats `json:"toolStats"`
+}
+
+type toolStats struct {
+	ReadCount     int `json:"readCount"`
+	SearchCount   int `json:"searchCount"`
+	BashCount     int `json:"bashCount"`
+	EditFileCount int `json:"editFileCount"`
+	LinesAdded    int `json:"linesAdded"`
+	LinesRemoved  int `json:"linesRemoved"`
 }
 
 type usageData struct {
