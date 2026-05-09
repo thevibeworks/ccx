@@ -162,7 +162,9 @@ func TestForkPreservesParentUUIDChain(t *testing.T) {
 	parents := []any{}
 	for scanner.Scan() {
 		var record map[string]any
-		json.Unmarshal([]byte(scanner.Text()), &record)
+		if err := json.Unmarshal([]byte(scanner.Text()), &record); err != nil {
+			t.Fatalf("failed to unmarshal JSONL record: %v", err)
+		}
 		if u, ok := record["uuid"].(string); ok {
 			uuids = append(uuids, u)
 		}
