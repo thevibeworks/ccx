@@ -443,11 +443,11 @@ func extractSummary(messages []*Message) string {
 	return "(no summary)"
 }
 
-func parseToolUseResult(raw json.RawMessage) *toolUseResultData {
+func parseToolUseResult(raw json.RawMessage) *SubAgentResultData {
 	if len(raw) == 0 || raw[0] != '{' {
 		return nil
 	}
-	var result toolUseResultData
+	var result SubAgentResultData
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil
 	}
