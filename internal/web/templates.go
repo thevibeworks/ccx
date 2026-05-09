@@ -705,8 +705,11 @@ func buildToolResultsMap(messages []*parser.Message) map[string]parser.ContentBl
 }
 
 type sidechainGroup struct {
-	AgentID  string
-	Messages []*parser.Message
+	AgentID     string
+	AgentType   string
+	Description string
+	Messages    []*parser.Message
+	Result      *parser.SubAgentResultData // from toolUseResult on the tool_result message
 }
 
 func groupSidechainsByAgent(allMsgs []*parser.Message) []sidechainGroup {
@@ -732,45 +735,93 @@ var subagentToolSet = map[string]bool{
 	"Task": true, "TaskCreate": true, "Agent": true,
 }
 
+type agentDispatch struct {
+	ToolID      string
+	AgentType   string
+	Description string
+}
+
 func matchSidechainsToToolUse(mainMsgs []*parser.Message, groups []sidechainGroup) map[string]sidechainGroup {
 	if len(groups) == 0 {
 		return nil
 	}
-	var dispatchIDs []string
+
+	var dispatches []agentDispatch
+	resultByToolID := make(map[string]*parser.SubAgentResultData)
+
 	for _, msg := range mainMsgs {
 		for _, block := range msg.Content {
 			if block.Type == "tool_use" && subagentToolSet[block.ToolName] {
-				dispatchIDs = append(dispatchIDs, block.ToolID)
+				d := agentDispatch{ToolID: block.ToolID}
+				if m, ok := block.ToolInput.(map[string]any); ok {
+					d.AgentType, _ = m["subagent_type"].(string)
+					d.Description, _ = m["description"].(string)
+				}
+				dispatches = append(dispatches, d)
+			}
+		}
+		if msg.SubAgentResult != nil {
+			for _, block := range msg.Content {
+				if block.Type == "tool_result" {
+					resultByToolID[block.ToolID] = msg.SubAgentResult
+				}
 			}
 		}
 	}
-	result := make(map[string]sidechainGroup, len(groups))
-	for i, id := range dispatchIDs {
+
+	out := make(map[string]sidechainGroup, len(groups))
+	for i, d := range dispatches {
 		if i < len(groups) {
-			result[id] = groups[i]
+			g := groups[i]
+			g.AgentType = d.AgentType
+			g.Description = d.Description
+			g.Result = resultByToolID[d.ToolID]
+			out[d.ToolID] = g
 		}
 	}
-	return result
+	return out
 }
 
 func renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, showTools bool) {
-	snippet := sidechainSnippet(g.Messages)
-	label := "Sub-agent"
-	if snippet != "" {
-		label += ": " + snippet
+	label := "Agent"
+	if g.AgentType != "" {
+		label = g.AgentType
 	}
-	msgCount := len(g.Messages)
-	toolCount := 0
-	for _, m := range g.Messages {
-		for _, block := range m.Content {
-			if block.Type == "tool_use" {
-				toolCount++
+	if g.Description != "" {
+		label += ": " + g.Description
+	}
+
+	var meta strings.Builder
+	if r := g.Result; r != nil {
+		if r.TotalTokens > 0 {
+			fmt.Fprintf(&meta, "%s tokens", formatTokens(r.TotalTokens))
+		}
+		if r.TotalToolUseCount > 0 {
+			if meta.Len() > 0 {
+				meta.WriteString(", ")
 			}
+			fmt.Fprintf(&meta, "%d tools", r.TotalToolUseCount)
+		}
+		if r.TotalDurationMs > 0 {
+			if meta.Len() > 0 {
+				meta.WriteString(", ")
+			}
+			fmt.Fprintf(&meta, "%s", formatDuration(float64(r.TotalDurationMs)/1000))
+		}
+		if r.ToolStats != nil && r.ToolStats.LinesAdded > 0 {
+			if meta.Len() > 0 {
+				meta.WriteString(", ")
+			}
+			fmt.Fprintf(&meta, "+%d lines", r.ToolStats.LinesAdded)
 		}
 	}
+	if meta.Len() == 0 {
+		fmt.Fprintf(&meta, "%d messages", len(g.Messages))
+	}
+
 	b.WriteString(fmt.Sprintf(`<details class="sidechain-group" id="sidechain-%s">`, html.EscapeString(g.AgentID)))
-	b.WriteString(fmt.Sprintf(`<summary class="sidechain-header"><span class="sidechain-icon">◆</span> %s <span class="sidechain-meta">%d messages, %d tools</span></summary>`,
-		html.EscapeString(label), msgCount, toolCount))
+	b.WriteString(fmt.Sprintf(`<summary class="sidechain-header"><span class="sidechain-icon">◆</span> %s <span class="sidechain-meta">%s</span></summary>`,
+		html.EscapeString(label), html.EscapeString(meta.String())))
 	b.WriteString(`<div class="sidechain-body">`)
 
 	toolResults := buildToolResultsMap(g.Messages)
@@ -1925,7 +1976,12 @@ func renderSpendSection(turns []*parser.Exchange, sessionTotal float64) string {
 func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 	flat := flattenMessages(messages)
 	allMsgs := filterMainConversation(flat)
-	sidechains := groupSidechainsByAgent(flat)
+	scGroups := groupSidechainsByAgent(flat)
+	scMap := matchSidechainsToToolUse(allMsgs, scGroups)
+	var sidechains []sidechainGroup
+	for _, g := range scMap {
+		sidechains = append(sidechains, g)
+	}
 
 	type navGroup struct {
 		user     *parser.Message
@@ -2036,14 +2092,16 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 		}
 	}
 
-	for i, g := range sidechains {
-		snippet := sidechainSnippet(g.Messages)
-		label := fmt.Sprintf("Sub-agent %d", i+1)
-		if snippet != "" {
-			label = snippet
-			if len(label) > 30 {
-				label = label[:27] + "..."
-			}
+	for _, g := range sidechains {
+		label := g.AgentType
+		if label == "" {
+			label = "Agent"
+		}
+		if g.Description != "" {
+			label += ": " + g.Description
+		}
+		if len(label) > 35 {
+			label = label[:32] + "..."
 		}
 		b.WriteString(fmt.Sprintf(`<a href="#sidechain-%s" class="nav-item nav-sidechain" data-msg="sidechain-%s">`,
 			html.EscapeString(g.AgentID), html.EscapeString(g.AgentID)))
