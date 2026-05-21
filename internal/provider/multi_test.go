@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thevibeworks/ccx/internal/catalog"
+	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
 )
 
@@ -20,6 +22,10 @@ func (m *mockBackend) Homes() []string { return m.homes }
 
 func (m *mockBackend) DiscoverProjects() ([]*parser.Project, error) {
 	return m.projects, nil
+}
+
+func (m *mockBackend) ListSessions(query catalog.SessionQuery) ([]*parser.Session, error) {
+	return catalog.ApplySessionQuery(m.projects, query), nil
 }
 
 func (m *mockBackend) FindProject(name string) (*parser.Project, error) {
@@ -249,6 +255,170 @@ func TestMultiFindSessionFirstBackendWins(t *testing.T) {
 	}
 	if s.Provider != "claude-code" {
 		t.Fatalf("expected first backend to win, got provider %q", s.Provider)
+	}
+}
+
+func TestMultiListSessionsScopesCurrentWorkspaceAcrossProviders(t *testing.T) {
+	now := time.Now()
+	repo := "/home/user/src/repo"
+	other := "/home/user/src/other"
+	claudeSession := &parser.Session{
+		ID:       "cc-repo",
+		Provider: "claude-code",
+		CWD:      repo,
+		EndTime:  now.Add(-time.Minute),
+	}
+	codexSession := &parser.Session{
+		ID:       "cx-repo",
+		Provider: "codex",
+		CWD:      repo,
+		EndTime:  now,
+	}
+	otherSession := &parser.Session{
+		ID:       "cx-other",
+		Provider: "codex",
+		CWD:      other,
+		EndTime:  now.Add(time.Minute),
+	}
+
+	m := NewMulti(
+		&mockBackend{
+			id: "claude-code",
+			projects: []*parser.Project{{
+				Name:         "repo",
+				EncodedName:  "-home-user-src-repo",
+				Path:         repo,
+				Provider:     "claude-code",
+				Sessions:     []*parser.Session{claudeSession},
+				LastModified: claudeSession.EndTime,
+			}},
+		},
+		&mockBackend{
+			id: "codex",
+			projects: []*parser.Project{
+				{
+					Name:         "repo",
+					EncodedName:  "home-user-src-repo",
+					Path:         repo,
+					Provider:     "codex",
+					Sessions:     []*parser.Session{codexSession},
+					LastModified: codexSession.EndTime,
+				},
+				{
+					Name:         "other",
+					EncodedName:  "home-user-src-other",
+					Path:         other,
+					Provider:     "codex",
+					Sessions:     []*parser.Session{otherSession},
+					LastModified: otherSession.EndTime,
+				},
+			},
+		},
+	)
+
+	got, err := m.ListSessions(catalog.SessionQuery{
+		Scope:         catalog.ScopeWorkspace,
+		WorkspacePath: repo,
+		Sort:          catalog.SortTime,
+	})
+	if err != nil {
+		t.Fatalf("ListSessions() error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].ID != "cx-repo" || got[1].ID != "cc-repo" {
+		t.Fatalf("got IDs [%s %s], want [cx-repo cc-repo]", got[0].ID, got[1].ID)
+	}
+}
+
+func TestMultiListSessionsProviderFilterSelectsBackendBeforeDiscovery(t *testing.T) {
+	now := time.Now()
+	repo := "/home/user/src/repo"
+	m := NewMulti(
+		&mockBackend{
+			id: "claude-code",
+			projects: []*parser.Project{{
+				Name:     "repo",
+				Path:     repo,
+				Sessions: []*parser.Session{{ID: "cc-repo", Provider: "claude-code", CWD: repo, EndTime: now}},
+			}},
+		},
+		&mockBackend{
+			id: "codex",
+			projects: []*parser.Project{{
+				Name:     "repo",
+				Path:     repo,
+				Sessions: []*parser.Session{{ID: "cx-repo", Provider: "codex", CWD: repo, EndTime: now.Add(time.Minute)}},
+			}},
+		},
+	)
+
+	got, err := m.ListSessions(catalog.SessionQuery{
+		Scope:         catalog.ScopeWorkspace,
+		WorkspacePath: repo,
+		Filter:        config.SessionFilter{Provider: "codex"},
+	})
+	if err != nil {
+		t.Fatalf("ListSessions() error: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "cx-repo" {
+		t.Fatalf("got %+v, want only codex session", got)
+	}
+}
+
+func TestMultiListSessionsProjectScopeMatchesAlternateEncoding(t *testing.T) {
+	now := time.Now()
+	claudeSession := &parser.Session{
+		ID:          "aaaaaaaa-cc",
+		ProjectName: "-Users-eric-foo-bar",
+		CWD:         "/Users/eric/foo_bar",
+		Provider:    "claude-code",
+		EndTime:     now,
+	}
+	codexSession := &parser.Session{
+		ID:          "019d8f43-cx",
+		ProjectName: "Users-eric-foo_bar",
+		CWD:         "/Users/eric/foo_bar",
+		Provider:    "codex",
+		EndTime:     now.Add(-time.Minute),
+	}
+
+	m := NewMulti(
+		&mockBackend{
+			id: "claude-code",
+			projects: []*parser.Project{{
+				Name:         "foo_bar",
+				EncodedName:  "-Users-eric-foo-bar",
+				Path:         "/Users/eric/foo_bar",
+				Sessions:     []*parser.Session{claudeSession},
+				LastModified: claudeSession.EndTime,
+			}},
+		},
+		&mockBackend{
+			id: "codex",
+			projects: []*parser.Project{{
+				Name:         "foo_bar",
+				EncodedName:  "Users-eric-foo_bar",
+				Path:         "/Users/eric/foo_bar",
+				Sessions:     []*parser.Session{codexSession},
+				LastModified: codexSession.EndTime,
+			}},
+		},
+	)
+
+	got, err := m.ListSessions(catalog.SessionQuery{
+		Scope:       catalog.ScopeProject,
+		ProjectName: "Users-eric-foo_bar",
+	})
+	if err != nil {
+		t.Fatalf("ListSessions() error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].ID != "aaaaaaaa-cc" || got[1].ID != "019d8f43-cx" {
+		t.Fatalf("got IDs [%s %s], want [aaaaaaaa-cc 019d8f43-cx]", got[0].ID, got[1].ID)
 	}
 }
 
