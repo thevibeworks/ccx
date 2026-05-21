@@ -3,6 +3,7 @@ package provider
 import (
 	"os"
 
+	"github.com/thevibeworks/ccx/internal/catalog"
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
 	"github.com/thevibeworks/ccx/internal/provider/claude"
@@ -13,6 +14,7 @@ type Backend interface {
 	ID() string
 	Homes() []string
 	DiscoverProjects() ([]*parser.Project, error)
+	ListSessions(query catalog.SessionQuery) ([]*parser.Session, error)
 	FindProject(name string) (*parser.Project, error)
 	FindSession(projectName, sessionID string) (*parser.Session, error)
 	ParseSession(filePath string) (*parser.Session, error)

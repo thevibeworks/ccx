@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/thevibeworks/ccx/internal/catalog"
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
 	"github.com/thevibeworks/ccx/internal/provider"
@@ -36,11 +37,13 @@ var (
 	viewShowThinking bool
 	viewShowAgents   bool
 	viewFlat         bool
-	viewBrief    bool
+	viewBrief        bool
+	viewAll          bool
 )
 
 func init() {
 	viewCmd.Flags().StringVarP(&viewProject, "project", "p", "", "project name")
+	viewCmd.Flags().BoolVar(&viewAll, "all", false, "search across all projects")
 	viewCmd.Flags().BoolVar(&viewShowThinking, "show-thinking", false, "show thinking blocks expanded")
 	viewCmd.Flags().BoolVar(&viewShowAgents, "show-agents", false, "show agent sidechains")
 	viewCmd.Flags().BoolVar(&viewFlat, "flat", false, "disable tree rendering")
@@ -54,14 +57,18 @@ func runView(cmd *cobra.Command, args []string) error {
 	var err error
 
 	if len(args) == 0 {
-		session, err = selectSession(backend)
+		session, err = selectSession(backend, viewAll)
 	} else {
 		sessionArg := args[0]
 		projectName, sessionID := parseSessionArg(sessionArg)
 		if viewProject != "" {
 			projectName = viewProject
 		}
-		session, err = backend.FindSession(projectName, sessionID)
+		query, qErr := sessionLookupQuery(projectName, viewAll)
+		if qErr != nil {
+			return qErr
+		}
+		session, err = resolveSessionInQuery(backend, query, sessionID)
 	}
 
 	if err != nil {
@@ -90,6 +97,19 @@ func runView(cmd *cobra.Command, args []string) error {
 	return render.Terminal(fullSession, opts)
 }
 
+func sessionLookupQuery(projectName string, all bool) (catalog.SessionQuery, error) {
+	if projectName != "" {
+		return catalog.SessionQuery{
+			Scope:       catalog.ScopeProject,
+			ProjectName: projectName,
+		}, nil
+	}
+	if all {
+		return allSessionsQuery(), nil
+	}
+	return currentWorkspaceQuery()
+}
+
 func parseSessionArg(arg string) (project, session string) {
 	if strings.Contains(arg, ":") {
 		parts := strings.SplitN(arg, ":", 2)
@@ -98,18 +118,25 @@ func parseSessionArg(arg string) (project, session string) {
 	return "", arg
 }
 
-func selectSession(backend provider.Backend) (*parser.Session, error) {
-	projects, err := backend.DiscoverProjects()
-	if err != nil {
-		return nil, err
+func selectSession(backend provider.Backend, all bool) (*parser.Session, error) {
+	query := catalog.SessionQuery{
+		Sort:  catalog.SortTime,
+		Limit: 10,
+	}
+	if all {
+		query.Scope = catalog.ScopeAll
+	} else {
+		current, err := currentWorkspaceQuery()
+		if err != nil {
+			return nil, err
+		}
+		query.Scope = current.Scope
+		query.WorkspacePath = current.WorkspacePath
 	}
 
-	var allSessions []*parser.Session
-	for _, p := range projects {
-		for _, s := range p.Sessions {
-			s.ProjectName = p.Name
-			allSessions = append(allSessions, s)
-		}
+	allSessions, err := backend.ListSessions(query)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(allSessions) == 0 {
@@ -123,12 +150,10 @@ func selectSession(backend provider.Backend) (*parser.Session, error) {
 	}
 
 	for i, s := range allSessions[:limit] {
-		summary := s.Summary
-		if len(summary) > 50 {
-			summary = summary[:47] + "..."
-		}
+		summary := sessionSummaryPreview(s.Summary, 64)
 		tag := providerTag(s.Provider)
-		fmt.Printf("  %d. %s [%s] %s\n", i+1, tag, s.ProjectName, summary)
+		project := truncateDisplay(cleanDisplayText(s.ProjectName), 24)
+		fmt.Printf("  %d. %s [%s] %s\n", i+1, tag, project, summary)
 	}
 
 	fmt.Printf("\nSelect session (1-%d): ", limit)
