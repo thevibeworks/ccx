@@ -65,8 +65,9 @@ cd ccx && make build
 ```bash
 ccx web                          # Start web UI (recommended)
 ccx projects                     # List all projects
-ccx sessions                     # List recent sessions
-ccx sessions --provider=cx       # Codex sessions only
+ccx sessions                     # List recent sessions for this workspace
+ccx sessions --all               # List recent sessions across all projects
+ccx sessions --provider=cx       # Codex sessions in this workspace
 ccx sessions --after=2026-03-01  # Date filtered
 ccx view [session]               # View in terminal
 ccx export -f html --brief       # Export conversation-only HTML

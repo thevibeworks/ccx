@@ -189,10 +189,10 @@ type SubAgentResultData struct {
 	TotalToolUseCount int        `json:"totalToolUseCount"`
 	TotalDurationMs   int        `json:"totalDurationMs"`
 	Usage             *usageData `json:"usage"`
-	ToolStats         *toolStats `json:"toolStats"`
+	ToolStats         *ToolStats `json:"toolStats"`
 }
 
-type toolStats struct {
+type ToolStats struct {
 	ReadCount     int `json:"readCount"`
 	SearchCount   int `json:"searchCount"`
 	BashCount     int `json:"bashCount"`

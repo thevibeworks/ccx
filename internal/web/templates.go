@@ -835,27 +835,6 @@ func renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, s
 	b.WriteString(`</div></details>`)
 }
 
-func sidechainSnippet(msgs []*parser.Message) string {
-	for _, m := range msgs {
-		if m.Kind != parser.KindUserPrompt {
-			continue
-		}
-		for _, block := range m.Content {
-			if block.Type == "text" && block.Text != "" {
-				text := strings.TrimSpace(block.Text)
-				if idx := strings.Index(text, "\n"); idx > 0 {
-					text = text[:idx]
-				}
-				if len(text) > 80 {
-					text = text[:77] + "..."
-				}
-				return text
-			}
-		}
-	}
-	return ""
-}
-
 // renderThread renders a conversation thread anchored by a USER message
 func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock, scMap map[string]sidechainGroup) {
 	if len(thread) == 0 {
@@ -1978,10 +1957,6 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 	allMsgs := filterMainConversation(flat)
 	scGroups := groupSidechainsByAgent(flat)
 	scMap := matchSidechainsToToolUse(allMsgs, scGroups)
-	var sidechains []sidechainGroup
-	for _, g := range scMap {
-		sidechains = append(sidechains, g)
-	}
 
 	type navGroup struct {
 		user     *parser.Message
@@ -2075,24 +2050,40 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 			if total <= maxChildren {
 				for _, child := range g.children {
 					renderNavChild(b, child)
+					renderNavSidechainEntries(b, child, scMap)
 				}
 			} else {
 				head := maxChildren - 1
 				for _, child := range g.children[:head] {
 					renderNavChild(b, child)
+					renderNavSidechainEntries(b, child, scMap)
 				}
 				hidden := total - head - 1
 				if hidden > 0 {
 					b.WriteString(fmt.Sprintf(`<span class="nav-more">+%d more</span>`, hidden))
 				}
 				renderNavChild(b, g.children[total-1])
+				renderNavSidechainEntries(b, g.children[total-1], scMap)
 			}
 			b.WriteString(`</div>`) // .nav-children
 			b.WriteString(`</div>`) // .nav-group
 		}
 	}
 
-	for _, g := range sidechains {
+}
+
+func renderNavSidechainEntries(b *strings.Builder, msg *parser.Message, scMap map[string]sidechainGroup) {
+	if msg == nil || len(scMap) == 0 {
+		return
+	}
+	for _, block := range msg.Content {
+		if block.Type != "tool_use" || !subagentToolSet[block.ToolName] {
+			continue
+		}
+		g, ok := scMap[block.ToolID]
+		if !ok {
+			continue
+		}
 		label := g.AgentType
 		if label == "" {
 			label = "Agent"

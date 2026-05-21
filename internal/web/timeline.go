@@ -412,7 +412,7 @@ func renderTimelineRail(b *strings.Builder, session *parser.Session) {
 	}
 
 	b.WriteString(`<aside class="timeline-rail" id="timeline-rail" aria-label="Session timeline">`)
-	b.WriteString(`<div class="timeline-spine" id="timeline-spine">`)
+	b.WriteString(fmt.Sprintf(`<div class="timeline-spine" id="timeline-spine" data-tick-count="%d" style="--tick-count: %d">`, len(ticks), len(ticks)))
 
 	for _, line := range computeTimelineGridlines(len(ticks)) {
 		class := "timeline-gridline"

@@ -38,12 +38,14 @@ var (
 	exportShape           string
 	exportEnvelope        string
 	exportTemplate        string
+	exportAll             bool
 )
 
 func init() {
 	exportCmd.Flags().StringVarP(&exportFormat, "format", "f", "", "output format: html, md, org, exec (default from config)")
 	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "output file path (default: session.<ext>)")
 	exportCmd.Flags().StringVarP(&exportProject, "project", "p", "", "project name")
+	exportCmd.Flags().BoolVar(&exportAll, "all", false, "search across all projects")
 	exportCmd.Flags().StringVar(&exportTheme, "theme", "", "theme: dark, light (default from config)")
 	exportCmd.Flags().BoolVar(&exportIncludeThinking, "include-thinking", false, "include thinking blocks")
 	exportCmd.Flags().BoolVar(&exportIncludeAgents, "include-agents", false, "include agent sidechains")
@@ -60,14 +62,18 @@ func runExport(cmd *cobra.Command, args []string) error {
 	var err error
 
 	if len(args) == 0 {
-		session, err = selectSession(backend)
+		session, err = selectSession(backend, exportAll)
 	} else {
 		sessionArg := args[0]
 		projectName, sessionID := parseSessionArg(sessionArg)
 		if exportProject != "" {
 			projectName = exportProject
 		}
-		session, err = backend.FindSession(projectName, sessionID)
+		query, qErr := sessionLookupQuery(projectName, exportAll)
+		if qErr != nil {
+			return qErr
+		}
+		session, err = resolveSessionInQuery(backend, query, sessionID)
 	}
 
 	if err != nil {
