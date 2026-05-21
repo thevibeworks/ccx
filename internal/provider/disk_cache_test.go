@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thevibeworks/ccx/internal/catalog"
 	"github.com/thevibeworks/ccx/internal/parser"
 )
 
@@ -22,7 +23,10 @@ type realParseBackend struct {
 func (b *realParseBackend) ID() string                                   { return "real" }
 func (b *realParseBackend) Homes() []string                              { return b.homes }
 func (b *realParseBackend) DiscoverProjects() ([]*parser.Project, error) { return nil, nil }
-func (b *realParseBackend) FindProject(string) (*parser.Project, error)  { return nil, nil }
+func (b *realParseBackend) ListSessions(catalog.SessionQuery) ([]*parser.Session, error) {
+	return nil, nil
+}
+func (b *realParseBackend) FindProject(string) (*parser.Project, error) { return nil, nil }
 func (b *realParseBackend) FindSession(string, string) (*parser.Session, error) {
 	return nil, nil
 }
