@@ -37,11 +37,13 @@ var (
 	foldOutput  string
 	foldProject string
 	foldHTML    bool
+	foldAll     bool
 )
 
 func init() {
 	foldCmd.Flags().StringVarP(&foldOutput, "output", "o", "", "output file (default: stdout)")
 	foldCmd.Flags().StringVarP(&foldProject, "project", "p", "", "project name")
+	foldCmd.Flags().BoolVar(&foldAll, "all", false, "search across all projects")
 	foldCmd.Flags().BoolVar(&foldHTML, "html", false, "also generate HTML review in temp directory")
 }
 
@@ -52,13 +54,17 @@ func runFold(cmd *cobra.Command, args []string) error {
 	var err error
 
 	if len(args) == 0 {
-		session, err = selectSession(backend)
+		session, err = selectSession(backend, foldAll)
 	} else {
 		projectName, sessionID := parseSessionArg(args[0])
 		if foldProject != "" {
 			projectName = foldProject
 		}
-		session, err = backend.FindSession(projectName, sessionID)
+		query, qErr := sessionLookupQuery(projectName, foldAll)
+		if qErr != nil {
+			return qErr
+		}
+		session, err = resolveSessionInQuery(backend, query, sessionID)
 	}
 	if err != nil {
 		return fmt.Errorf("session: %w", err)
