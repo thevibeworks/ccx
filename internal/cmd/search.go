@@ -255,13 +255,6 @@ func searchMemoryDir(home, subdir, query string, filter config.SessionFilter, re
 	}
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-3] + "..."
-}
-
 func truncateID(id string, max int) string {
 	if len(id) <= max {
 		return id
