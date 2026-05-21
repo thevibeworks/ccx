@@ -102,14 +102,30 @@ ccx treats all agent data as **read-only**. Writes only to its own directories:
 - `$XDG_CONFIG_HOME/ccx/` — config
 - `$XDG_DATA_HOME/ccx/` — stars database
 
-## Claude Code skill
+## Claude Code skills
 
-ccx ships as a Claude Code skill. Install alongside the binary:
+ccx ships with two Claude Code skills:
+
+- **ccx** — Session viewer. Browse, search, export sessions from inside Claude Code.
+- **ccx-fold** — Session decision extraction. Fold a session into auditable decisions (HTML for humans) and durable knowledge-base entries (markdown for agents). Tracks decision provenance: who decided, what, why, what was rejected.
+
+Install alongside the binary:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/thevibeworks/ccx/main/install.sh | bash
 ```
 
-Or manually copy `skills/ccx/` to `~/.claude/skills/ccx/`.
+Or manually copy skills to `~/.claude/skills/`:
+```bash
+cp -r skills/ccx/ ~/.claude/skills/ccx/
+cp -r skills/ccx-fold/ ~/.claude/skills/ccx-fold/
+```
+
+Usage:
+```bash
+/ccx-fold                    # Fold most recent session
+/ccx-fold <session-id>       # Fold specific session
+/ccx-fold --dry-run          # Preview without writing
+```
 
 ## Credits
 

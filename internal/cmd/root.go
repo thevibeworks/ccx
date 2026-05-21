@@ -72,6 +72,7 @@ func init() {
 	rootCmd.AddCommand(exportCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(doctorCmd)
+	rootCmd.AddCommand(foldCmd)
 }
 
 func initConfig() {
