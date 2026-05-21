@@ -7,8 +7,9 @@ Session viewer for Claude Code. Browse, inspect, search, and export conversation
 ```bash
 ccx web                   # Start web UI at localhost:8080
 ccx projects              # List all projects
-ccx sessions              # List sessions (interactive picker)
-ccx view                  # View session (interactive picker)
+ccx sessions              # List sessions for this workspace
+ccx sessions --all        # List sessions across all projects
+ccx view                  # View workspace session (interactive picker)
 ccx export --format=html  # Export to HTML
 ```
 

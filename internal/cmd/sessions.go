@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/thevibeworks/ccx/internal/catalog"
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
 	"github.com/thevibeworks/ccx/internal/provider"
@@ -22,7 +22,8 @@ var sessionsCmd = &cobra.Command{
 	Long: `List sessions from the selected provider.
 
 If PROJECT is specified, show sessions for that project only.
-Otherwise, show recent sessions across all projects.`,
+Otherwise, show recent sessions for the current workspace.
+Use --all to show recent sessions across all projects.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runSessions,
 }
@@ -36,6 +37,7 @@ var (
 	sessionsAfter    string
 	sessionsBefore   string
 	sessionsModel    string
+	sessionsAll      bool
 )
 
 func init() {
@@ -47,6 +49,7 @@ func init() {
 	sessionsCmd.Flags().StringVar(&sessionsAfter, "after", "", "sessions after date (YYYY-MM-DD)")
 	sessionsCmd.Flags().StringVar(&sessionsBefore, "before", "", "sessions before date (YYYY-MM-DD)")
 	sessionsCmd.Flags().StringVar(&sessionsModel, "model", "", "filter by model name substring")
+	sessionsCmd.Flags().BoolVar(&sessionsAll, "all", false, "list sessions across all projects")
 }
 
 func runSessions(cmd *cobra.Command, args []string) error {
@@ -68,67 +71,44 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		Model:    sessionsModel,
 	}
 
-	var sessions []*parser.Session
+	query := catalog.SessionQuery{
+		Filter: filter,
+		Sort:   catalog.SessionSort(sessionsSort),
+		Limit:  sessionsLimit,
+	}
+	if err := catalog.ValidateSessionSort(query.Sort); err != nil {
+		return err
+	}
 	var projectName string
-
 	if len(args) > 0 {
 		projectName = args[0]
-		project, err := backend.FindProject(projectName)
-		if err != nil {
-			return fmt.Errorf("failed to find project: %w", err)
-		}
-		if project == nil {
-			return fmt.Errorf("project not found: %s", projectName)
-		}
-		sessions = project.Sessions
+		query.Scope = catalog.ScopeProject
+		query.ProjectName = projectName
+	} else if sessionsAll {
+		query.Scope = catalog.ScopeAll
 	} else {
-		projects, err := backend.DiscoverProjects()
+		current, err := currentWorkspaceQuery()
 		if err != nil {
-			return fmt.Errorf("failed to discover projects: %w", err)
+			return err
 		}
-		for _, p := range projects {
-			for _, s := range p.Sessions {
-				s.ProjectName = p.Name
-				sessions = append(sessions, s)
-			}
-		}
+		query.Scope = current.Scope
+		query.WorkspacePath = current.WorkspacePath
 	}
 
-	if !filter.IsEmpty() {
-		var filtered []*parser.Session
-		for _, s := range sessions {
-			if filter.Match(s) {
-				filtered = append(filtered, s)
-			}
-		}
-		sessions = filtered
+	sessions, err := backend.ListSessions(query)
+	if err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
 	}
-
 	if len(sessions) == 0 {
 		fmt.Println("No sessions found.")
 		return nil
-	}
-
-	switch sessionsSort {
-	case "messages":
-		sort.Slice(sessions, func(i, j int) bool {
-			return sessions[i].Stats.MessageCount > sessions[j].Stats.MessageCount
-		})
-	default: // "time"
-		sort.Slice(sessions, func(i, j int) bool {
-			return sessions[i].EndTime.After(sessions[j].EndTime)
-		})
-	}
-
-	if sessionsLimit > 0 && len(sessions) > sessionsLimit {
-		sessions = sessions[:sessionsLimit]
 	}
 
 	if sessionsJSON {
 		return printSessionsJSON(sessions)
 	}
 
-	return printSessionsTable(sessions, projectName == "")
+	return printSessionsTable(sessions, projectName == "" && sessionsAll)
 }
 
 func providerTag(p string) string {
@@ -157,19 +137,13 @@ func printSessionsTable(sessions []*parser.Session, showProject bool) error {
 			id = id[:8]
 		}
 
-		summary := s.Summary
-		if len(summary) > 50 {
-			summary = summary[:47] + "..."
-		}
+		summary := sessionSummaryPreview(s.Summary, 64)
 
 		age := formatAge(s.StartTime)
 		tag := providerTag(s.Provider)
 
 		if showProject {
-			proj := s.ProjectName
-			if len(proj) > 20 {
-				proj = proj[:17] + "..."
-			}
+			proj := truncateDisplay(cleanDisplayText(s.ProjectName), 24)
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", tag, proj, id, age, summary)
 		} else {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", tag, id, age, summary)

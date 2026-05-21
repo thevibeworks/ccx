@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/thevibeworks/ccx/internal/catalog"
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
 )
@@ -143,6 +144,46 @@ func (m *Multi) DiscoverWorkspaces() ([]*parser.Workspace, error) {
 		return nil, err
 	}
 	return parser.GroupProjectsByWorkspace(projects), nil
+}
+
+func (m *Multi) ListSessions(query catalog.SessionQuery) ([]*parser.Session, error) {
+	if query.Scope == catalog.ScopeProject {
+		project, err := m.FindProject(query.ProjectName)
+		if err != nil || project == nil {
+			return nil, err
+		}
+		projectQuery := query
+		projectQuery.Scope = catalog.ScopeAll
+		projectQuery.ProjectName = ""
+		return catalog.ApplySessionQuery([]*parser.Project{project}, projectQuery), nil
+	}
+
+	var sessions []*parser.Session
+	for _, b := range m.backends {
+		if query.Filter.Provider != "" && query.Filter.Provider != b.ID() {
+			continue
+		}
+		backendQuery := query.WithoutProviderFilter().WithoutLimit()
+		backendSessions, err := b.ListSessions(backendQuery)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, backendSessions...)
+	}
+	if !query.Filter.IsEmpty() {
+		var filtered []*parser.Session
+		for _, session := range sessions {
+			if query.Filter.Match(session) {
+				filtered = append(filtered, session)
+			}
+		}
+		sessions = filtered
+	}
+	catalog.SortSessions(sessions, query.Sort)
+	if query.Limit > 0 && len(sessions) > query.Limit {
+		sessions = sessions[:query.Limit]
+	}
+	return sessions, nil
 }
 
 func (m *Multi) FindProject(name string) (*parser.Project, error) {

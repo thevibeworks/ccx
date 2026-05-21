@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/thevibeworks/ccx/internal/catalog"
+	"github.com/thevibeworks/ccx/internal/config"
 )
 
 func TestDiscoverProjectsGroupsCodexSessionsByCWD(t *testing.T) {
@@ -47,6 +50,69 @@ func TestDiscoverProjectsGroupsCodexSessionsByCWD(t *testing.T) {
 	}
 	if session.Summary != "named thread" {
 		t.Fatalf("session.Summary = %q, want %q", session.Summary, "named thread")
+	}
+}
+
+func TestListSessionsScopesCodexSessionsByWorkspace(t *testing.T) {
+	home := t.TempDir()
+	sessionsDir := filepath.Join(home, "sessions")
+	archivedDir := filepath.Join(home, "archived_sessions")
+
+	writeRollout(t, filepath.Join(sessionsDir, "2026", "05", "21", "rollout-current.jsonl"), `{"timestamp":"2026-05-21T10:00:00Z","type":"session_meta","payload":{"id":"current","timestamp":"2026-05-21T10:00:00Z","cwd":"/tmp/work/current","originator":"codex_cli_rs","cli_version":"0.116.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-05-21T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"current session","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-21T10:00:02Z","type":"turn_context","payload":{"cwd":"/tmp/work/current","model":"gpt-5"}}
+`)
+	writeRollout(t, filepath.Join(sessionsDir, "2026", "05", "21", "rollout-other.jsonl"), `{"timestamp":"2026-05-21T11:00:00Z","type":"session_meta","payload":{"id":"other","timestamp":"2026-05-21T11:00:00Z","cwd":"/tmp/work/other","originator":"codex_cli_rs","cli_version":"0.116.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-05-21T11:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"other session","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-21T11:00:02Z","type":"turn_context","payload":{"cwd":"/tmp/work/other","model":"gpt-5"}}
+`)
+
+	backend := NewWithDirs(home, sessionsDir, archivedDir)
+	got, err := backend.ListSessions(catalog.SessionQuery{
+		Scope:         catalog.ScopeWorkspace,
+		WorkspacePath: "/tmp/work/current",
+	})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "current" {
+		t.Fatalf("got %+v, want only current session", got)
+	}
+}
+
+func TestListSessionsAppliesCodexFiltersSortAndLimit(t *testing.T) {
+	home := t.TempDir()
+	sessionsDir := filepath.Join(home, "sessions")
+	archivedDir := filepath.Join(home, "archived_sessions")
+
+	writeRollout(t, filepath.Join(sessionsDir, "2026", "05", "21", "rollout-small.jsonl"), `{"timestamp":"2026-05-21T10:00:00Z","type":"session_meta","payload":{"id":"small","timestamp":"2026-05-21T10:00:00Z","cwd":"/tmp/work/current","originator":"codex_cli_rs","cli_version":"0.116.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-05-21T10:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"auth session","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-21T10:00:02Z","type":"turn_context","payload":{"cwd":"/tmp/work/current","model":"gpt-5"}}
+`)
+	writeRollout(t, filepath.Join(sessionsDir, "2026", "05", "21", "rollout-big.jsonl"), `{"timestamp":"2026-05-21T11:00:00Z","type":"session_meta","payload":{"id":"big","timestamp":"2026-05-21T11:00:00Z","cwd":"/tmp/work/current","originator":"codex_cli_rs","cli_version":"0.116.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-05-21T11:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"auth session with more messages","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-21T11:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"one"}}
+{"timestamp":"2026-05-21T11:00:03Z","type":"event_msg","payload":{"type":"agent_message","message":"two"}}
+{"timestamp":"2026-05-21T11:00:04Z","type":"turn_context","payload":{"cwd":"/tmp/work/current","model":"gpt-5"}}
+`)
+	writeRollout(t, filepath.Join(sessionsDir, "2026", "05", "21", "rollout-other.jsonl"), `{"timestamp":"2026-05-21T12:00:00Z","type":"session_meta","payload":{"id":"other","timestamp":"2026-05-21T12:00:00Z","cwd":"/tmp/work/current","originator":"codex_cli_rs","cli_version":"0.116.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-05-21T12:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"billing session","images":[],"local_images":[],"text_elements":[]}}
+{"timestamp":"2026-05-21T12:00:02Z","type":"turn_context","payload":{"cwd":"/tmp/work/current","model":"gpt-5"}}
+`)
+
+	backend := NewWithDirs(home, sessionsDir, archivedDir)
+	got, err := backend.ListSessions(catalog.SessionQuery{
+		Scope:         catalog.ScopeWorkspace,
+		WorkspacePath: "/tmp/work/current",
+		Filter:        config.SessionFilter{Query: "auth", Model: "gpt-5"},
+		Sort:          catalog.SortMessages,
+		Limit:         1,
+	})
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "big" {
+		t.Fatalf("got %+v, want big auth session", got)
 	}
 }
 
