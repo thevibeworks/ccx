@@ -835,27 +835,6 @@ func renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, s
 	b.WriteString(`</div></details>`)
 }
 
-func sidechainSnippet(msgs []*parser.Message) string {
-	for _, m := range msgs {
-		if m.Kind != parser.KindUserPrompt {
-			continue
-		}
-		for _, block := range m.Content {
-			if block.Type == "text" && block.Text != "" {
-				text := strings.TrimSpace(block.Text)
-				if idx := strings.Index(text, "\n"); idx > 0 {
-					text = text[:idx]
-				}
-				if len(text) > 80 {
-					text = text[:77] + "..."
-				}
-				return text
-			}
-		}
-	}
-	return ""
-}
-
 // renderThread renders a conversation thread anchored by a USER message
 func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock, scMap map[string]sidechainGroup) {
 	if len(thread) == 0 {
