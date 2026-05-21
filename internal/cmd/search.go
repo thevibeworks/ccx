@@ -133,7 +133,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 					Type:     "session",
 					Project:  projDisplay,
 					Session:  truncateID(s.ID, 8),
-					Summary:  truncate(s.Summary, 60),
+					Summary:  sessionSummaryPreview(s.Summary, 64),
 					Time:     formatAge(s.StartTime),
 					Priority: 0,
 				})
@@ -146,7 +146,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 					Type:     "session",
 					Project:  projDisplay,
 					Session:  truncateID(s.ID, 8),
-					Summary:  truncate(s.Summary, 60),
+					Summary:  sessionSummaryPreview(s.Summary, 64),
 					Time:     formatAge(s.StartTime),
 					Priority: 2,
 				})
@@ -167,10 +167,10 @@ func runSearch(cmd *cobra.Command, args []string) error {
 				}
 				if strings.Contains(strings.ToLower(name), query) {
 					results = append(results, searchResult{
-						Type:    "memory",
-						Project: filepath.Base(home),
-						Summary: name,
-						Time:    "-",
+						Type:     "memory",
+						Project:  filepath.Base(home),
+						Summary:  name,
+						Time:     "-",
 						Priority: 1,
 					})
 				}
@@ -216,7 +216,7 @@ func printSearchResults(results []searchResult) error {
 			time = "-"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			r.Type, truncate(r.Project, 20), session, r.Summary, time)
+			r.Type, truncateDisplay(cleanDisplayText(r.Project), 24), session, cleanDisplayText(r.Summary), time)
 	}
 
 	return w.Flush()
@@ -253,13 +253,6 @@ func searchMemoryDir(home, subdir, query string, filter config.SessionFilter, re
 			}
 		}
 	}
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-3] + "..."
 }
 
 func truncateID(id string, max int) string {

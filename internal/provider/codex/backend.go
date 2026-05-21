@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thevibeworks/ccx/internal/catalog"
 	"github.com/thevibeworks/ccx/internal/parser"
 )
 
@@ -281,6 +282,44 @@ func (b *Backend) DiscoverProjects() ([]*parser.Project, error) {
 	})
 
 	return projects, nil
+}
+
+func (b *Backend) ListSessions(query catalog.SessionQuery) ([]*parser.Session, error) {
+	threadNames, err := b.readThreadNames()
+	if err != nil {
+		return nil, err
+	}
+
+	sessions, err := b.discoverSessions(threadNames)
+	if err != nil {
+		return nil, err
+	}
+
+	var projects []*parser.Project
+	projectsByKey := make(map[string]*parser.Project)
+	for _, session := range sessions {
+		encodedName, displayName, projectPath := projectInfoForCWD(session.CWD)
+		session.ProjectName = encodedName
+		session.Provider = ProviderID
+
+		project := projectsByKey[encodedName]
+		if project == nil {
+			project = &parser.Project{
+				Name:        displayName,
+				EncodedName: encodedName,
+				Path:        projectPath,
+				Provider:    ProviderID,
+			}
+			projectsByKey[encodedName] = project
+			projects = append(projects, project)
+		}
+		project.Sessions = append(project.Sessions, session)
+		if project.LastModified.IsZero() || session.EndTime.After(project.LastModified) {
+			project.LastModified = session.EndTime
+		}
+	}
+
+	return catalog.ApplySessionQuery(projects, query), nil
 }
 
 func (b *Backend) FindProject(name string) (*parser.Project, error) {

@@ -25,7 +25,7 @@ func DiscoverProjects(projectsDir string) ([]*Project, error) {
 		encodedName := entry.Name()
 		projectPath := filepath.Join(projectsDir, encodedName)
 
-		sessions, err := discoverSessions(projectPath)
+		sessions, err := DiscoverProjectSessions(projectPath)
 		if err != nil {
 			continue
 		}
@@ -56,7 +56,7 @@ func DiscoverProjects(projectsDir string) ([]*Project, error) {
 	return projects, nil
 }
 
-func discoverSessions(projectPath string) ([]*Session, error) {
+func DiscoverProjectSessions(projectPath string) ([]*Session, error) {
 	entries, err := os.ReadDir(projectPath)
 	if err != nil {
 		return nil, err
