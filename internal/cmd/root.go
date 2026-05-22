@@ -38,6 +38,7 @@ CLI commands:
   ccx sessions              List sessions
   ccx view                  View session in terminal
   ccx export -f html        Export to HTML/Markdown/Org
+  ccx trace                 Extract evidence for context folding
 
 Supports Claude Code (~/.claude) and Codex (~/.codex) sessions.
 
@@ -72,7 +73,7 @@ func init() {
 	rootCmd.AddCommand(exportCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(doctorCmd)
-	rootCmd.AddCommand(foldCmd)
+	rootCmd.AddCommand(traceCmd)
 }
 
 func initConfig() {

@@ -3,6 +3,8 @@ package cmd
 import (
 	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -104,5 +106,56 @@ func TestResolveSessionInQuerySupportsScopedIndex(t *testing.T) {
 	}
 	if got == nil || got.ID != "new" {
 		t.Fatalf("got %+v, want newest session", got)
+	}
+}
+
+func TestLatestTraceSessionIsNonInteractiveLatest(t *testing.T) {
+	now := time.Now()
+	backend := &scopeBackend{sessions: []*parser.Session{
+		{ID: "old", CWD: "/tmp/repo", EndTime: now.Add(-time.Hour)},
+		{ID: "new", CWD: "/tmp/repo", EndTime: now},
+	}}
+
+	got, err := latestTraceSession(backend, true)
+	if err != nil {
+		t.Fatalf("latestTraceSession() error: %v", err)
+	}
+	if got == nil || got.ID != "new" {
+		t.Fatalf("got %+v, want newest session", got)
+	}
+}
+
+func TestFindGitRootForSessionFallsBackWithWarning(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init")
+
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := filepath.Join(dir, "missing")
+	root, warnings := findGitRootForSession(&parser.Session{CWD: stale})
+	if root != dir {
+		t.Fatalf("root = %q, want %q", root, dir)
+	}
+	if len(warnings) != 1 || warnings[0].Kind != "session_git_root_missing" {
+		t.Fatalf("warnings = %+v, want session_git_root_missing", warnings)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
 }

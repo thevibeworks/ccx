@@ -1,6 +1,7 @@
 # Agent Knowledge Archive
 
-How ccx-fold writes, maintains, and queries the project knowledge base.
+How ccx-context-fold writes, maintains, and queries the project knowledge
+base.
 
 ## Directory structure
 
@@ -8,6 +9,7 @@ How ccx-fold writes, maintains, and queries the project knowledge base.
 .ccx/knowledge/
   index.md                     # catalog of all entries
   log.md                       # append-only fold history
+  traces/                      # optional durable trace manifests
   decisions/
     chose-sse-over-websocket.md
     raw-sql-only-no-orm.md
@@ -30,6 +32,9 @@ Name for the knowledge, not the method or the date.
 
 The date lives in frontmatter. The filename is the knowledge slug.
 
+Archive entries are not session notes. They are reusable constraints for
+future agents.
+
 **Collision handling**: if a file with the same slug already exists
 from a prior fold, append `-2`, `-3`, etc. If the new entry covers
 the same topic as the existing one, use `supersedes` instead of
@@ -47,6 +52,10 @@ attention: high
 tags: [arch, api]
 commits: [abc1234, def5678]
 files: [src/stream.go, src/handler.go]
+confidence: high
+trace:
+  kind: ccx.trace.v1
+  sha256: 5f70bf18...
 supersedes: null
 ---
 
@@ -78,6 +87,7 @@ connections per domain in HTTP/1.1. Acceptable at current scale
 ## Source
 
 Session abc12345, exchanges #8-11.
+Trace hash: `5f70bf18...`.
 ```
 
 ## Entry format: correction
@@ -88,6 +98,10 @@ type: correction
 date: 2026-05-20
 session: abc12345
 tags: [test, data]
+confidence: high
+trace:
+  kind: ccx.trace.v1
+  sha256: 5f70bf18...
 ---
 
 # Don't mock the database in integration tests
@@ -121,6 +135,10 @@ type: discovery
 date: 2026-05-20
 session: abc12345
 tags: [api, ops]
+confidence: medium
+trace:
+  kind: ccx.trace.v1
+  sha256: 5f70bf18...
 ---
 
 # Stripe API rate-limits at 100 req/min on test keys
@@ -134,6 +152,10 @@ API keys. Not documented in their public rate limit page.
 
 Batch operations against Stripe must include exponential backoff.
 Sequential processing of >100 items hits the limit within 60s.
+
+## Source
+
+Session abc12345, exchange #14, tool result `tool:a1:Bash`.
 ```
 
 ## Entry format: pattern
@@ -209,8 +231,8 @@ Last fold: 2026-05-20 | Entries: 14
 Append-only, one line per fold:
 
 ```markdown
-## [2026-05-20] fold | session abc12345 | 5 decisions, 1 discovery, 1 correction
-## [2026-05-19] fold | session def67890 | 3 decisions, 0 discoveries, 0 corrections
+## [2026-05-20] context-fold | session abc12345 | trace ccx.trace.v1 | 5 decisions, 1 discovery, 1 correction
+## [2026-05-19] context-fold | session def67890 | trace ccx.trace.v1 | 3 decisions, 0 discoveries, 0 corrections
 ```
 
 ## Superseding entries
@@ -240,3 +262,27 @@ When invoked with lint mode:
    definitions. Propose CONTEXT.md updates.
 
 Output a report to conversation. Do not auto-fix.
+
+## Write Policy
+
+Default to a proposed patch. Write entries only when one of these is true:
+
+- the user approved the fold plan
+- the user explicitly said to remember or archive the item
+
+Never overwrite an existing entry silently. Supersede instead.
+
+## Trace Provenance
+
+Do not store `/tmp/ccx-trace-...json` paths as durable provenance. Temp paths
+expire. Store:
+
+- session id
+- exchange citations
+- commit SHAs
+- trace kind
+- SHA-256 of the trace JSON used for folding
+
+If the user asks for a durable evidence bundle, copy the trace JSON into
+`.ccx/knowledge/traces/<session-id>-<hash>.json` and reference that relative
+path. Otherwise the hash plus citations are the durable source.
