@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thevibeworks/ccx/internal/catalog"
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/db"
+	"github.com/thevibeworks/ccx/internal/insight"
 	"github.com/thevibeworks/ccx/internal/parser"
 	"github.com/thevibeworks/ccx/internal/provider"
 	"github.com/thevibeworks/ccx/internal/render"
@@ -88,6 +90,7 @@ func Serve(addr string, backend provider.Backend) error {
 	mux.HandleFunc("/settings", handleSettings)
 	mux.HandleFunc("/memory", handleMemory)
 	mux.HandleFunc("/search", handleSearchPage)
+	mux.HandleFunc("/insight", handleInsight)
 
 	// API
 	mux.HandleFunc("/api/projects", handleAPIProjects)
@@ -97,6 +100,7 @@ func Serve(addr string, backend provider.Backend) error {
 	mux.HandleFunc("/api/settings", handleAPISettings)
 	mux.HandleFunc("/api/export/", handleAPIExport)
 	mux.HandleFunc("/api/search", handleAPISearch)
+	mux.HandleFunc("/api/insight", handleAPIInsight)
 
 	// SSE for realtime updates
 	mux.HandleFunc("/api/watch/", handleWatch)
@@ -385,6 +389,16 @@ func handleMemory(w http.ResponseWriter, r *http.Request) {
 	data := loadMemories()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, renderMemoryPage(data))
+}
+
+func handleInsight(w http.ResponseWriter, r *http.Request) {
+	result, err := buildInsightFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, renderInsightPage(result))
 }
 
 func loadMemories() *MemoryData {
@@ -753,6 +767,56 @@ func handleAPIStats(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func handleAPIInsight(w http.ResponseWriter, r *http.Request) {
+	result, err := buildInsightFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func buildInsightFromRequest(r *http.Request) (*insight.Summary, error) {
+	q := r.URL.Query()
+	scope, err := insight.ParseScope(q.Get("scope"))
+	if err != nil {
+		return nil, err
+	}
+	loc, err := insight.LoadLocation(q.Get("tz"))
+	if err != nil {
+		return nil, fmt.Errorf("invalid timezone: %w", err)
+	}
+	now := time.Now()
+	start, end, _ := insight.ScopeWindow(scope, now, loc)
+
+	query := catalog.SessionQuery{
+		Scope: catalog.ScopeAll,
+		Filter: config.SessionFilter{
+			Provider: config.NormalizeProvider(q.Get("provider")),
+			After:    start,
+			Before:   end,
+		},
+		Sort: catalog.SortTime,
+	}
+	if project := strings.TrimSpace(q.Get("project")); project != "" {
+		query.Scope = catalog.ScopeProject
+		query.ProjectName = project
+	}
+	sessions, err := sessionProvider.ListSessions(query)
+	if err != nil {
+		return nil, err
+	}
+	return insight.Analyze(sessions, insight.Options{
+		Scope:    scope,
+		Location: loc,
+		Now:      now,
+		Limit:    10,
+		Provider: config.NormalizeProvider(q.Get("provider")),
+		Project:  strings.TrimSpace(q.Get("project")),
+	}), nil
 }
 
 func handleAPISettings(w http.ResponseWriter, r *http.Request) {

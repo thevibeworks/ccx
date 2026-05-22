@@ -322,6 +322,46 @@ func TestHandleAPIStats(t *testing.T) {
 	}
 }
 
+func TestHandleAPIInsight(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/api/insight?scope=year&tz=UTC", nil)
+	w := httptest.NewRecorder()
+
+	handleAPIInsight(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleAPIInsight returned %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if result["kind"] != "ccx.insight.v1" {
+		t.Fatalf("kind = %v", result["kind"])
+	}
+}
+
+func TestHandleInsightPage(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/insight?scope=year&tz=UTC", nil)
+	w := httptest.NewRecorder()
+
+	handleInsight(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("handleInsight returned %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Insight") || !strings.Contains(body, "insight-controls") {
+		t.Fatalf("insight page missing expected content")
+	}
+}
+
 func TestHandleAPISearch(t *testing.T) {
 	dir := setupTestDir(t)
 	setTestBackend(dir)
