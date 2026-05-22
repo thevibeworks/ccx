@@ -2642,6 +2642,8 @@ func renderInsightProjectTable(projects []insight.ProjectRow) string {
 
 func insightScopeLabel(scope insight.Scope) string {
 	switch scope {
+	case insight.ScopeYesterday:
+		return "Yesterday"
 	case insight.ScopeWeek:
 		return "This week"
 	case insight.ScopeMonth:

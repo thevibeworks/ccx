@@ -71,10 +71,11 @@ ccx sessions                     # List recent sessions for this workspace
 ccx sessions --all               # List recent sessions across all projects
 ccx sessions --provider=cx       # Codex sessions in this workspace
 ccx sessions --after=2026-03-01  # Date filtered
+ccx sessions --scope yesterday --tz +8 --all --json
 ccx view [session]               # View in terminal
 ccx export -f html --brief       # Export conversation-only HTML
 ccx trace [session] -o trace.json # Extract evidence for context folding
-ccx insight week --tz UTC        # Summarize scoped session intelligence
+ccx insight yesterday --tz +8    # Summarize scoped session intelligence
 ccx search "auth bug"            # Search across sessions + memory
 ccx fork abc123                  # Fork session to current project
 ccx doctor                       # Check setup
@@ -112,7 +113,7 @@ ccx ships with Claude Code skills:
 
 - **ccx** — Session viewer. Browse, search, export sessions from inside Claude Code.
 - **ccx-context-fold** — Context Folding. Uses `ccx trace` to turn session evidence into auditable decisions (`fold.html`) and durable project knowledge (`.ccx/knowledge/`).
-- **ccx-insight** — Scoped session intelligence. Uses `ccx insight` to brief what is active, complete, blocked, or emerging across today/week/month/quarter/year.
+- **ccx-insight** — Scoped session intelligence. Uses `ccx insight` to brief what is active, complete, blocked, or emerging across today/yesterday/week/month/quarter/year.
 
 `ccx trace --html` produces trace evidence HTML. It is not the interpreted
 `fold.html` decision trail produced by the skill.
@@ -134,7 +135,7 @@ Usage:
 /ccx-context-fold                    # Fold most recent session
 /ccx-context-fold <session-id>       # Fold specific session
 /ccx-context-fold --dry-run          # Preview without writing
-/ccx-insight week                    # Brief the week from session intelligence
+/ccx-insight yesterday --tz +8       # Brief yesterday from session intelligence
 ```
 
 ## Credits
