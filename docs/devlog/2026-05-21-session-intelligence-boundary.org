@@ -1,0 +1,205 @@
+* [2026-05-21] Session Intelligence Boundary                    :ARCH:WIP:
+
+** Tension
+
+The request sounded like a feature request for =ccx insight=: summarize
+today, this week, this month, this quarter, this year; show what is active,
+what is done, what still needs closure, and make it useful for humans and
+future agents.
+
+The hidden problem was not "add a summary command." The problem was that
+agent work is log-shaped, not session-shaped.
+
+A session can last days, weeks, or months. If a session starts on May 9 and
+ends on May 21, a query for "yesterday" should not automatically treat the
+whole session as yesterday's work. What happened yesterday is a slice through
+the JSONL event stream. The session is only the container. The evidence is in
+the timestamped records inside it.
+
+The first implementation missed that. It bucketed sessions by end time,
+called the newest sessions "currently being worked on," called keyword
+matches "needs closure" or "completed," and exposed that as a programmatic
+truthy object. The skill then consumed that object and amplified the false
+authority.
+
+That produced a concrete bad result: an agent reported that the =amux=
+release was "review done but not published yet." The raw session log showed
+the opposite: =gh repo create thevibeworks/amux= succeeded, =git push -u
+origin main= succeeded after switching to SSH, =git tag -a v0.1.0= and =git
+push origin v0.1.0= succeeded, and CI was running. The summarizer had the
+wrong epistemic posture.
+
+** Observation
+
+Two commits created the wrong shape:
+
+- =7f7fe38 Add scoped session insight summaries=
+- =7033c8a Add calendar scopes to session listing=
+
+The useful parts were real:
+
+- =ccx sessions --scope yesterday --tz +8 --all --json= now exists.
+- Raw offset timezones like =+8=, =+0800=, and =+08:00= work.
+- =sessions --json= now exposes workspace, end time, model, messages,
+  tool calls, tokens, cost, and file path.
+- =--after= / =--before= can use an explicit timezone.
+
+But the conceptual layer was wrong. =internal/insight/analyze.go= constructs:
+
+- =Current= from newest sessions
+- =OpenLoops= from prompt-summary keyword matches
+- =Completed= from completion-language keyword matches
+- =Patterns= from counts such as project concentration, tool intensity, and
+  dominant model
+
+Those are at best candidate signals. They are not facts. The field names and
+UI labels made them sound stronger than the evidence justified.
+
+The follow-up attempt to add =ccx insight --html= repeated the same drift in
+a prettier form. It improved the caveats, but it still kept the wrong
+primitive alive: a programmatic =insight= command that wants to summarize
+work status. Better presentation does not fix a bad evidence boundary.
+
+The important user correction was:
+
+#+begin_quote
+the session could last for months that's why log existing
+#+end_quote
+
+That sentence reframes the product. The time scope needs to cut through log
+records, not select whole sessions.
+
+** Decision
+
+The product boundary should move.
+
+Keep =ccx= as an evidence tool. Do not make it impersonate judgment.
+
+The better stack:
+
+| Layer | Command / Skill | Job |
+|-------+-----------------+-----|
+| Index | =ccx sessions= | List session containers with filters and metadata |
+| Single-session evidence | =ccx trace= | Extract auditable evidence for one session |
+| Time-sliced evidence | =ccx log= | Return timestamped records across sessions for a time range |
+| Interpretation | =/ccx-insight= skill | Read evidence, verify claims, synthesize briefing/report |
+| Human artifact | skill-written HTML | Present facts, inferences, claim checks, and next moves |
+
+The road not taken: keep expanding =ccx insight= with better labels,
+heuristics, and prettier HTML. That was rejected because it preserves the
+wrong mental model. A CLI can provide counts and evidence. It should not tell
+the human what is "currently active" or "completed" unless the evidence
+directly proves that.
+
+The primitive we actually need is something like:
+
+#+begin_src sh
+ccx log --scope yesterday --tz +8 --all --json
+ccx log --since 2026-05-21T00:00:00+08:00 \
+        --until 2026-05-22T00:00:00+08:00 \
+        --all --json
+#+end_src
+
+=ccx log= should return a time-bounded evidence bundle:
+
+- session id, provider, workspace path, source JSONL path
+- event timestamp and event type
+- parent/root session relation
+- whether the record is mainline, sidechain, tool call, tool result,
+  user prompt, assistant message, compaction, or system metadata
+- optional folded/normalized detail for human use
+- scope relation such as =record_in_scope=, =session_overlaps_scope=,
+  =session_started_before_scope=, =session_ended_inside_scope=
+- enough source references for a skill to verify any claim it makes
+
+Then =/ccx-insight= can synthesize. The skill is allowed to say "this looks
+open" or "this appears completed," but it must label the confidence and cite
+the evidence.
+
+** Tradeoff
+
+Moving judgment out of the Go command makes the product feel less magical.
+There is no one command that definitively answers "what did I do yesterday?"
+without an agent reading the evidence.
+
+That is the right cost. The alternative is worse: a command that sounds
+authoritative while quietly flattening months-long sessions into one day and
+turning keyword matches into status.
+
+=ccx sessions --scope= remains useful as a coarse index. But it cannot be the
+primary evidence source for daily retrospectives. It answers "which session
+containers ended in this range?" not "what happened during this range?"
+
+The uncommitted =internal/insight/html.go= direction should be treated as
+experimental and probably removed or demoted unless it is rebuilt on =ccx
+log=. A standalone HTML report is still valuable, but the report should be
+skill-produced from log evidence, not baked into a heuristic summarizer.
+
+** Next
+
+The live wire is =ccx log=.
+
+Design it before adding more =insight= behavior. The next implementation
+should define the log evidence schema and make one exact use case work:
+
+#+begin_src sh
+ccx log --scope yesterday --tz +8 --all --json
+#+end_src
+
+It should include records from sessions that overlap the window, even if the
+session began weeks earlier or ends later. That is the missing primitive.
+
+After that, rewrite =/ccx-insight= to call =ccx log=, not to trust
+=ccx insight= heuristics.
+
+** Artifacts
+
+Commits already made:
+
+- =7f7fe38 Add scoped session insight summaries=
+- =7033c8a Add calendar scopes to session listing=
+
+Useful changes from those commits:
+
+- =internal/cmd/sessions.go=
+- =internal/config/filter.go=
+- =internal/insight/scope.go=
+- =skills/ccx-insight/SKILL.md=
+
+Problematic / likely-to-pivot files:
+
+- =internal/cmd/insight.go=
+- =internal/insight/analyze.go=
+- =internal/insight/types.go=
+- =internal/web/templates.go= insight panels
+- uncommitted =internal/insight/html.go=
+
+Verification and evidence commands used:
+
+#+begin_src sh
+ccx insight yesterday --tz +8 --all --json
+ccx sessions --scope yesterday --tz +8 --all --json --limit 0
+rg -n "repo create|git push|v0\\.1\\.0|published|publish|gh repo|amux" \
+  <local Claude Code session JSONL>
+#+end_src
+
+Observed =amux= evidence:
+
+#+begin_src text
+gh repo create thevibeworks/amux ... -> https://github.com/thevibeworks/amux
+git push -u origin main -> failed over HTTPS auth
+git remote set-url origin git@github.com:thevibeworks/amux.git && git push -u origin main -> succeeded
+git tag -a v0.1.0 ... && git push origin v0.1.0 -> succeeded
+gh run list --repo thevibeworks/amux --limit 3 -> CI in_progress
+#+end_src
+
+Test status before the pivot:
+
+#+begin_src sh
+go test ./...
+go test ./internal/insight ./internal/config ./internal/cmd ./internal/web -cover
+#+end_src
+
+The tests passed, but that is part of the lesson: the implementation was
+mechanically correct and conceptually wrong. Tests checked behavior, not
+epistemology.

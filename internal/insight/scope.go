@@ -8,7 +8,16 @@ import (
 	"time"
 )
 
-const Kind = "ccx.insight.v1"
+type Scope string
+
+const (
+	ScopeToday     Scope = "today"
+	ScopeYesterday Scope = "yesterday"
+	ScopeWeek      Scope = "week"
+	ScopeMonth     Scope = "month"
+	ScopeQuarter   Scope = "quarter"
+	ScopeYear      Scope = "year"
+)
 
 var fixedOffsetPattern = regexp.MustCompile(`^([+-])(\d{1,2})(?::?(\d{2}))?$`)
 

@@ -1,93 +1,142 @@
 ---
 name: ccx-insight
 description: >
-  Generate rich scoped intelligence summaries from ccx session data. Use when
-  the human asks what happened today/this week/this month, what is active,
-  what still needs closure, what was achieved, or what patterns are emerging
-  across agent sessions.
+  Generate scoped intelligence summaries and human audit reports from ccx
+  time-sliced session logs. Use when the human asks what happened today,
+  yesterday, this week, this month, what still needs closure, what was
+  achieved, or what patterns are emerging across agent work.
 ---
 
 # ccx-insight
 
-`ccx insight` is deterministic session intelligence. This skill is the
-interpretive layer: it turns the JSON into a crisp human briefing with
-judgment, caveats, and next actions.
+Session intelligence is not a session list. Agent sessions can last days or
+months, so a scope like "yesterday" must slice the JSONL records by timestamp.
 
-Use this skill when the human asks:
+Use `ccx log` as the evidence layer. Use this skill as the interpretation
+layer.
 
-- "what are we working on?"
-- "summarize today / yesterday / this week / this month"
-- "what still needs to be closed?"
-- "what did the agents achieve?"
-- "what patterns or blockers are emerging?"
+- `ccx sessions` tells you which containers exist.
+- `ccx log` tells you what happened inside a time window.
+- `ccx trace` gives deeper evidence for a single session.
+- This skill synthesizes, checks claims, and writes the human report.
 
 ## Modes
 
-| Trigger | Command |
+| Trigger | Evidence command |
 |---|---|
-| `/ccx-insight` | `ccx insight --json` |
-| `/ccx-insight yesterday --tz +8` | `ccx insight yesterday --tz +8 --json` |
-| `/ccx-insight week` | `ccx insight week --json` |
-| `/ccx-insight month --tz Asia/Shanghai` | `ccx insight month --tz Asia/Shanghai --json` |
-| "deep insight" | run `ccx insight --json`, then inspect selected sessions/traces |
+| `/ccx-insight` | `ccx log --scope today --all --json` |
+| `/ccx-insight yesterday --tz +8` | `ccx log --scope yesterday --tz +8 --all --json` |
+| `/ccx-insight week --all` | `ccx log --scope week --all --json` |
+| `/ccx-insight --since 2026-05-21 --until 2026-05-22 --tz +8` | `ccx log --since 2026-05-21 --until 2026-05-22 --tz +8 --all --json` |
+| "deep insight" | run `ccx log --json`, then `ccx trace` key sessions |
+| "HTML report" | write a standalone HTML report from the evidence bundle |
+
+Use `--all` by default for broad questions like "what did I do yesterday?".
+Use current-workspace scope only when the human names or implies the current
+repo. The report header must state either "all projects" or "current workspace".
 
 ## Process
 
-1. Pick the scope:
-   - default: `today`
-   - accepted: `today`, `yesterday`, `week`, `month`, `quarter`, `year`
-2. Preserve timezone. If the user names one, pass `--tz <IANA name or offset>`.
-   Offset forms like `+8`, `+08:00`, and `UTC` are valid. If they do not, use `--tz local`.
-3. Run:
+1. Pick the exact scope and timezone.
+   - Default scope: `today`
+   - Accepted scopes: `today`, `yesterday`, `week`, `month`, `quarter`, `year`
+   - Preserve user timezone. Offset forms like `+8`, `+08:00`, and `UTC` are valid.
+2. Collect log evidence:
    ```bash
-   ccx insight <scope> --tz <timezone> --json
+   ccx log --scope <scope> --tz <timezone> --all --json
    ```
-   Add `--all` for cross-project summaries or `--project <name>` for one
-   project.
-4. Read the JSON. Treat it as evidence, not the final story.
-5. For deep mode, inspect the top current/open sessions:
+   Drop `--all` only for an explicitly workspace-scoped request. Use a
+   project/path argument for one workspace, or `--provider cc|cx` when needed.
+3. For custom ranges:
    ```bash
-   ccx trace <session-id> --output "$TMPDIR/ccx-trace-<id>.json"
+   ccx log --since <start> --until <exclusive-end> --tz <timezone> --all --json
    ```
-6. Write a concise briefing.
+4. Inspect `sessions[].relation` first. If `started_before_scope` or
+   `ended_after_scope` is true, treat that session as a long-running container,
+   not as work that began or ended in the scope.
+5. Read records by kind:
+   - `user_prompt`: human intent, corrections, requirements
+   - `assistant_message`: agent claims and proposed status
+   - `tool_call` / `tool_result`: execution evidence
+   - `compaction` / `summary`: lossy memory, not proof
+   - `reasoning`: signal, not auditable evidence
+6. Verify important claims with `ccx trace <session-id>` or direct repo/git
+   inspection before calling something complete, blocked, published, merged,
+   or still open.
+7. Produce the briefing or report.
+
+## Claim Ledger
+
+Every important claim should be tagged:
+
+- `observed`: tool output, git state, or transcript record directly shows it
+- `agent-claimed`: an assistant said it, but no independent evidence was checked
+- `human-stated`: the human said it
+- `inferred`: reasoned from multiple weak signals
+- `unverified`: plausible but not checked
+- `contradicted`: evidence conflicts
+
+"Completed / achieved" may include only `observed` or clearly cited
+`human-stated` items. Assistant statements alone are not completion evidence.
 
 ## Briefing Shape
 
-Use this structure:
-
 ```text
-Scope: Today, America/Los_Angeles
+Scope: Yesterday (2026-05-21), +08:00
+Evidence: <N> records across <M> sessions, <K> long-running containers
 
-Currently active
-- ...
-
-Needs closure
+What was worked on
 - ...
 
 Completed / achieved
 - ...
 
-Emerging signals
+Needs closure
+- ...
+
+Signals
 - ...
 
 Next move
 - ...
+
+Caveats
+- ...
 ```
+
+## HTML Report
+
+When the human asks for a report, create a self-contained HTML file in the temp
+dir. Follow [HTML-REPORT.md](HTML-REPORT.md).
+
+Required sections:
+
+- Header: scope, timezone, generated time, evidence command
+- TL;DR: one concise paragraph, with confidence
+- Metrics: records, sessions, long-running sessions, workspaces, tool results
+- Workstreams: grouped by workspace/project with evidence references
+- Timeline: important timestamped events
+- Decisions / corrections: who decided, what changed, why it matters
+- Completed / achieved: only with tool/git/transcript evidence
+- Needs closure: open loops with cited records
+- Caveats: missing logs, heuristic labels, ambiguous session boundaries
+
+Evidence references should include provider, session prefix, source JSONL path,
+line number, and timestamp. Do not paste full transcripts.
 
 ## Rules
 
-- Do not invent project status beyond the evidence.
-- Separate deterministic metrics from judgment.
-- Label weak signals as weak.
-- Use exact time scope and timezone in the first line.
-- If no sessions exist in scope, say that directly and suggest the nearest
-  broader scope.
-- Keep the final briefing short unless the human asked for deep detail.
+- Do not equate "latest" with "active".
+- Do not equate completion keywords with completed work.
+- Do not summarize a month-long session as one day's work.
+- Do not hide evidence gaps. They are part of the answer.
+- Separate facts, inferences, and recommendations.
+- Attribute human corrections exactly.
+- Keep the conversational briefing short unless the human asked for deep detail.
 
 ## Mental Model
 
-Insight is not a report card. It is a steering surface.
+Insight is a steering surface, not a report card.
 
-Agents are tiny taskmasters: nudging, prodding, and occasionally cracking the
-whip when humans drift. The briefing should help the human decide what to do
-next, not admire what the agents wrote.
+The point is to help the human decide where to push next: what changed, what is
+stuck, what can be trusted, and what needs another look.
