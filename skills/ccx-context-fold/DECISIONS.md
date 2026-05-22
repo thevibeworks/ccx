@@ -1,12 +1,14 @@
 # Decision Extraction
 
-How ccx-fold detects, classifies, and filters decisions from a session.
+How ccx-context-fold detects, classifies, and filters decisions from a
+`ccx trace` evidence bundle.
 
 ## Detection heuristics
 
-Not every exchange contains a decision. Most are mechanical execution.
-A decision exists when the conversation's direction changed or a
-choice was made between alternatives.
+Not every exchange contains a decision. Most exchanges are mechanical
+execution. A decision exists when direction changed, a choice was made
+between alternatives, or an agent silently chose an approach that future
+agents would otherwise repeat or undo.
 
 ### Human direction
 
@@ -25,10 +27,10 @@ Provenance: **joint**.
 
 ### Agent autonomous action
 
-Agent modifies files (Edit, Write, Bash with side effects) without
-prior explicit instruction for that specific choice. Detected by:
-tool_use blocks that change state, preceded by assistant reasoning
-but no user prompt requesting it.
+Agent modifies files (`tool_calls[].mutates_workspace == true`) without
+prior explicit instruction for that specific choice. The trace `mutation`
+signal is only a hint; classify as a decision only when there was a real
+choice, not every edit.
 
 Provenance: **agent**. These are the highest-value decisions to
 surface — invisible without the fold.
@@ -40,6 +42,9 @@ User contradicts, redirects, or negates the previous agent action:
 
 Provenance: **correction**. Always high attention.
 
+The trace `correction` signal is lexical. Verify the surrounding exchange
+before treating it as a rule.
+
 ### Design discussion
 
 Extended back-and-forth (3+ exchanges on the same topic) about
@@ -50,14 +55,16 @@ Provenance: **joint**.
 
 ## Discovery detection
 
-A discovery is a fact uncovered during the session — not a choice,
-but a constraint or behavior learned. Signals:
+A discovery is a fact uncovered during the session — not a choice, but a
+constraint or behavior learned. Signals:
 
 - Tool result contains an error that changed the approach
 - Assistant text after an error: "turns out", "the issue was",
   "this means", "found that", "gotcha"
 - A measurement (benchmark, test, API response) that informed a
   subsequent decision
+- A `warnings[]` gap that changed confidence or scope
+- Dirty git state that shows work not captured by commits
 
 ## Provenance labels
 
@@ -68,6 +75,14 @@ but a constraint or behavior learned. Signals:
 | `joint` | Proposal + acceptance, or iterative discussion |
 | `correction` | Human overrode agent behavior |
 | `inferred` | Unclear from transcript; mark confidence low |
+
+## Confidence Labels
+
+| Label | Meaning |
+|---|---|
+| `high` | Direct user statement, explicit agent proposal, or verified tool output |
+| `medium` | Supported by adjacent evidence but not stated directly |
+| `low` | Plausible inference; needs human confirmation |
 
 ## Attention tiers
 
@@ -102,6 +117,10 @@ correction is "fix the typo," it fails gate 1 and gets skipped.
 Decisions that fail any gate still appear in fold.html for human
 review. They just don't enter the knowledge base.
 
+Evidence gaps lower confidence. A high-attention decision with missing
+evidence can appear in fold.html, but do not archive it until the human
+confirms the rationale.
+
 ## Deletion test
 
 After drafting a KB entry, ask: "If this entry didn't exist, would
@@ -112,7 +131,7 @@ persist knowledge that prevents dead-end re-exploration.
 ## Scene reconstruction
 
 For high-attention decisions, reconstruct the moment using the
-reflect model. Don't just log the fact — write the scene:
+reflect model. Do not just log the fact; write the scene:
 
 - **Tension**: What was broken, stuck, or wrong?
 - **Observation**: What was actually seen (error, benchmark, code)?

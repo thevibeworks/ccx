@@ -1,6 +1,7 @@
 # HTML Report
 
-Specification for fold.html — the human review surface.
+Specification for `fold.html` — the human review surface for Context
+Folding.
 
 ## Design principles
 
@@ -10,6 +11,8 @@ Specification for fold.html — the human review surface.
   the session's decisions in under 5 minutes.
 - **Spatial**: attention tiers, color-coded provenance badges,
   collapsible excerpts. Leverage visual processing.
+- **Audit-first**: every high-attention card must show provenance,
+  confidence, citations, and whether it will be archived.
 
 ## Output location
 
@@ -17,7 +20,7 @@ Always write to the OS temp directory, never the repo:
 
 ```bash
 TMPDIR="${TMPDIR:-/tmp}"
-FOLD_HTML="$TMPDIR/ccx-fold-$(date +%Y%m%d-%H%M%S)-${SESSION_SLUG}.html"
+FOLD_HTML="$TMPDIR/ccx-context-fold-$(date +%Y%m%d-%H%M%S)-${SESSION_SLUG}.html"
 ```
 
 After writing, open in the default browser (`open` on macOS,
@@ -33,8 +36,8 @@ Structure:
 2. For each decision, render a card using the appropriate template
    (high-attention scene card, mid-attention compact row, correction
    warning, discovery callout)
-3. Populate the header stats, summary paragraph, diff summary, and
-   metadata footer from the evidence graph data
+3. Populate the header stats, summary paragraph, evidence gaps, diff
+   summary, and metadata footer from the evidence graph data
 
 Do not use external templating libraries. The output is a single
 string written to a file. CSS follows ccx's palette:
@@ -55,18 +58,19 @@ Dark theme default. Light toggle via `data-theme` attribute on
 
 ## Page sections (in order)
 
-1. **Header**: session slug, date, duration, model, commit count,
-   decision count, token cost
-2. **Summary**: 1 paragraph — what happened, what shipped, what's
+1. **Header**: session slug, date, duration, model, exchange count,
+   commit count, decision count, warning count, token cost
+2. **Evidence gaps**: trace warnings and missing context docs
+3. **Summary**: 1 paragraph — what happened, what shipped, what's
    open. Scene style (tension, not changelog).
-3. **High-attention decisions**: full cards with scene reconstruction
-4. **Corrections**: warning-styled cards
-5. **Discoveries**: callout boxes
-6. **Mid-attention decisions**: compact expandable rows
-7. **Open questions**: the live wires
-8. **Low-attention**: collapsed `<details>` list
-9. **Diff summary**: files changed by directory, lines +/-
-10. **Metadata**: tokens, cost, compactions, sidechains, session ID
+4. **High-attention decisions**: full cards with scene reconstruction
+5. **Corrections**: warning-styled cards
+6. **Discoveries**: callout boxes
+7. **Mid-attention decisions**: compact expandable rows
+8. **Open questions**: the live wires
+9. **Not archived**: decisions that failed the three-gate bar
+10. **Diff summary**: commits, dirty files, files changed by directory
+11. **Metadata**: trace path, tokens, cost, compactions, sidechains, session ID
 
 ## Card templates
 
@@ -77,6 +81,7 @@ Dark theme default. Light toggle via `data-theme` attribute on
   <header>
     <span class="badge joint">joint</span>
     <span class="badge high">high</span>
+    <span class="badge confidence">confidence: high</span>
     <span class="badge">arch</span>
     <h3><!-- decision summary --></h3>
   </header>
@@ -90,7 +95,7 @@ Dark theme default. Light toggle via `data-theme` attribute on
     <summary>Conversation (exchanges #N-M)</summary>
     <div class="exchange"><!-- 2-3 key messages --></div>
   </details>
-  <footer><!-- linked commit SHAs --></footer>
+  <footer><!-- citations, linked commit SHAs, archive status --></footer>
 </article>
 ```
 
@@ -106,6 +111,7 @@ Dark theme default. Light toggle via `data-theme` attribute on
     <p><strong>Agent tried:</strong> <!-- what agent did --></p>
     <p><strong>Human directed:</strong> <!-- user's correction --></p>
     <p><strong>Rule:</strong> <!-- the constraint --></p>
+    <p><strong>Archive:</strong> <!-- yes/no + gate result --></p>
   </section>
 </article>
 ```
@@ -143,3 +149,15 @@ expandable on click.
 Do not include the full exchange. If the exchange has 15 messages,
 show only the decision moment. The user can find the full session
 via the session ID in the metadata footer.
+
+## Evidence Gap Template
+
+```html
+<aside class="evidence-gap">
+  <span class="badge warning">warning</span>
+  <h4><!-- warning kind --></h4>
+  <p><!-- effect on confidence --></p>
+</aside>
+```
+
+Warnings are not failures. They are part of the audit trail.
