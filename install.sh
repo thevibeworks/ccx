@@ -199,8 +199,8 @@ ensure_skill_binary_compatible() {
     return
   fi
 
-  if ! "$ccx_path" insight --help >/dev/null 2>&1; then
-    echo "Installed ccx binary does not support 'ccx insight'."
+  if ! "$ccx_path" log --help >/dev/null 2>&1; then
+    echo "Installed ccx binary does not support 'ccx log'."
     echo "Skipping ccx-insight skill; upgrade ccx or install from source."
     SKILL_NAMES=("ccx" "ccx-context-fold")
     return

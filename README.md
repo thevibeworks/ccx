@@ -37,7 +37,7 @@ ccx reads session files from `~/.claude/` and `~/.codex/` and gives you a fast, 
 - **Brief export** — Conversation-only mode strips tool noise
 - **Export** — HTML, Markdown, Org-mode, JSON
 - **Context trace** — `ccx trace` emits evidence for Context Folding
-- **Insight** — `ccx insight` summarizes scoped session intelligence
+- **Time-sliced logs** — `ccx log` cuts through long-running session JSONL by timestamp
 - **Provider filter** — `--provider cc` or `--provider cx` on any command
 - **Date filter** — `--after 2026-03-01 --before 2026-04-01`
 - **Keyboard shortcuts** — `j/k` scroll, `/` search, `z` fold, `r` refresh, `d` theme
@@ -71,11 +71,11 @@ ccx sessions                     # List recent sessions for this workspace
 ccx sessions --all               # List recent sessions across all projects
 ccx sessions --provider=cx       # Codex sessions in this workspace
 ccx sessions --after=2026-03-01  # Date filtered
-ccx sessions --scope yesterday --tz +8 --all --json
+ccx sessions --scope yesterday --tz +8 --all --json # Session containers by end time
 ccx view [session]               # View in terminal
 ccx export -f html --brief       # Export conversation-only HTML
 ccx trace [session] -o trace.json # Extract evidence for context folding
-ccx insight yesterday --tz +8    # Summarize scoped session intelligence
+ccx log --scope yesterday --tz +8 --all --json # Time-sliced log evidence
 ccx search "auth bug"            # Search across sessions + memory
 ccx fork abc123                  # Fork session to current project
 ccx doctor                       # Check setup
@@ -113,7 +113,7 @@ ccx ships with Claude Code skills:
 
 - **ccx** — Session viewer. Browse, search, export sessions from inside Claude Code.
 - **ccx-context-fold** — Context Folding. Uses `ccx trace` to turn session evidence into auditable decisions (`fold.html`) and durable project knowledge (`.ccx/knowledge/`).
-- **ccx-insight** — Scoped session intelligence. Uses `ccx insight` to brief what is active, complete, blocked, or emerging across today/yesterday/week/month/quarter/year.
+- **ccx-insight** — Scoped session intelligence. Uses `ccx log` to slice timestamped records across long-running sessions, then briefs what was worked on, achieved, blocked-looking, or emerging across today/yesterday/week/month/quarter/year. The skill can write a standalone HTML audit report for human review.
 
 `ccx trace --html` produces trace evidence HTML. It is not the interpreted
 `fold.html` decision trail produced by the skill.
