@@ -5,11 +5,12 @@ import "time"
 type Scope string
 
 const (
-	ScopeToday   Scope = "today"
-	ScopeWeek    Scope = "week"
-	ScopeMonth   Scope = "month"
-	ScopeQuarter Scope = "quarter"
-	ScopeYear    Scope = "year"
+	ScopeToday     Scope = "today"
+	ScopeYesterday Scope = "yesterday"
+	ScopeWeek      Scope = "week"
+	ScopeMonth     Scope = "month"
+	ScopeQuarter   Scope = "quarter"
+	ScopeYear      Scope = "year"
 )
 
 type Options struct {

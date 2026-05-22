@@ -17,7 +17,7 @@ import (
 )
 
 var insightCmd = &cobra.Command{
-	Use:   "insight [today|week|month|quarter|year]",
+	Use:   "insight [today|yesterday|week|month|quarter|year]",
 	Short: "Summarize session intelligence for a time scope",
 	Long: `Summarize coding-agent session intelligence for a chosen time scope.
 
@@ -28,6 +28,7 @@ agent-authored synthesis over the JSON output.
 
 Examples:
   ccx insight
+  ccx insight yesterday --tz +8
   ccx insight week --tz America/Los_Angeles
   ccx insight month --all --json
   ccx insight quarter --provider cx --limit 12`,
@@ -46,8 +47,8 @@ var (
 )
 
 func init() {
-	insightCmd.Flags().StringVar(&insightScope, "scope", "", "scope: today, week, month, quarter, year")
-	insightCmd.Flags().StringVar(&insightTZ, "tz", "local", "IANA timezone, UTC, or local")
+	insightCmd.Flags().StringVar(&insightScope, "scope", "", "scope: today, yesterday, week, month, quarter, year")
+	insightCmd.Flags().StringVar(&insightTZ, "tz", "local", "IANA timezone, UTC, local, or offset like +8")
 	insightCmd.Flags().BoolVar(&insightJSON, "json", false, "output as JSON")
 	insightCmd.Flags().BoolVar(&insightAll, "all", false, "summarize sessions across all projects")
 	insightCmd.Flags().StringVarP(&insightProject, "project", "p", "", "project name or path")

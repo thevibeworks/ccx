@@ -16,7 +16,7 @@ judgment, caveats, and next actions.
 Use this skill when the human asks:
 
 - "what are we working on?"
-- "summarize today / this week / this month"
+- "summarize today / yesterday / this week / this month"
 - "what still needs to be closed?"
 - "what did the agents achieve?"
 - "what patterns or blockers are emerging?"
@@ -26,6 +26,7 @@ Use this skill when the human asks:
 | Trigger | Command |
 |---|---|
 | `/ccx-insight` | `ccx insight --json` |
+| `/ccx-insight yesterday --tz +8` | `ccx insight yesterday --tz +8 --json` |
 | `/ccx-insight week` | `ccx insight week --json` |
 | `/ccx-insight month --tz Asia/Shanghai` | `ccx insight month --tz Asia/Shanghai --json` |
 | "deep insight" | run `ccx insight --json`, then inspect selected sessions/traces |
@@ -34,9 +35,9 @@ Use this skill when the human asks:
 
 1. Pick the scope:
    - default: `today`
-   - accepted: `today`, `week`, `month`, `quarter`, `year`
-2. Preserve timezone. If the user names one, pass `--tz <IANA name>`.
-   If they do not, use `--tz local`.
+   - accepted: `today`, `yesterday`, `week`, `month`, `quarter`, `year`
+2. Preserve timezone. If the user names one, pass `--tz <IANA name or offset>`.
+   Offset forms like `+8`, `+08:00`, and `UTC` are valid. If they do not, use `--tz local`.
 3. Run:
    ```bash
    ccx insight <scope> --tz <timezone> --json

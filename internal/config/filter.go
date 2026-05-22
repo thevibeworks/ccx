@@ -33,19 +33,33 @@ func NormalizeProvider(raw string) string {
 }
 
 func ParseDate(s string) (time.Time, error) {
+	return ParseDateInLocation(s, time.Local)
+}
+
+func ParseDateInLocation(s string, loc *time.Location) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
 	}
-	return time.ParseInLocation("2006-01-02", s, time.Local)
+	if loc == nil {
+		loc = time.Local
+	}
+	return time.ParseInLocation("2006-01-02", s, loc)
 }
 
 // ParseBeforeDate parses a date for --before filtering.
 // Returns end-of-day (next day midnight local) so --before 2026-03-01 includes the full day.
 func ParseBeforeDate(s string) (time.Time, error) {
+	return ParseBeforeDateInLocation(s, time.Local)
+}
+
+func ParseBeforeDateInLocation(s string, loc *time.Location) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
 	}
-	t, err := time.ParseInLocation("2006-01-02", s, time.Local)
+	if loc == nil {
+		loc = time.Local
+	}
+	t, err := time.ParseInLocation("2006-01-02", s, loc)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -68,7 +82,7 @@ func (f SessionFilter) Match(item Filterable) bool {
 	if !f.After.IsZero() && item.GetEndTime().Before(f.After) {
 		return false
 	}
-	if !f.Before.IsZero() && item.GetStartTime().After(f.Before) {
+	if !f.Before.IsZero() && !item.GetEndTime().Before(f.Before) {
 		return false
 	}
 	if f.Query != "" && !strings.Contains(strings.ToLower(item.GetSummary()), strings.ToLower(f.Query)) {

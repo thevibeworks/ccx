@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -45,6 +46,55 @@ func TestPrintSessionsTableKeepsEachSessionOnOneLine(t *testing.T) {
 	}
 	if !strings.Contains(lines[2], "Second review pass for the scoped-session") {
 		t.Fatalf("second row summary not normalized: %q", lines[2])
+	}
+}
+
+func TestPrintSessionsJSONIncludesWorkspaceEndAndMetrics(t *testing.T) {
+	start := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	sessions := []*parser.Session{
+		{
+			ID:          "session-1",
+			Provider:    "codex",
+			ProjectName: "repo",
+			CWD:         "/tmp/repo",
+			FilePath:    "/tmp/session.jsonl",
+			Summary:     "worked on scoped sessions",
+			StartTime:   start,
+			EndTime:     end,
+			Model:       "gpt-5.4",
+			Stats: parser.SessionStats{
+				MessageCount:      12,
+				ToolCalls:         7,
+				AgentSidechains:   2,
+				InputTokens:       100,
+				OutputTokens:      50,
+				CacheReadTokens:   25,
+				CacheCreateTokens: 5,
+				CostUSD:           0.12,
+			},
+		},
+	}
+
+	out := captureStdout(t, func() {
+		if err := printSessionsJSON(sessions); err != nil {
+			t.Fatalf("printSessionsJSON() error: %v", err)
+		}
+	})
+
+	var items []sessionJSON
+	if err := json.Unmarshal([]byte(out), &items); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len = %d, want 1", len(items))
+	}
+	item := items[0]
+	if item.Workspace != "/tmp/repo" || item.EndTime == "" || item.FilePath == "" {
+		t.Fatalf("missing rich session fields: %+v", item)
+	}
+	if item.Tokens != 180 || item.Messages != 12 || item.ToolCalls != 7 || item.Sidechains != 2 {
+		t.Fatalf("metrics = %+v", item)
 	}
 }
 

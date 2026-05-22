@@ -11,6 +11,7 @@ import (
 
 	"github.com/thevibeworks/ccx/internal/catalog"
 	"github.com/thevibeworks/ccx/internal/config"
+	"github.com/thevibeworks/ccx/internal/insight"
 	"github.com/thevibeworks/ccx/internal/parser"
 	"github.com/thevibeworks/ccx/internal/provider"
 )
@@ -36,6 +37,8 @@ var (
 	sessionsSearch   string
 	sessionsAfter    string
 	sessionsBefore   string
+	sessionsScope    string
+	sessionsTZ       string
 	sessionsModel    string
 	sessionsAll      bool
 )
@@ -48,6 +51,8 @@ func init() {
 	sessionsCmd.Flags().StringVarP(&sessionsSearch, "search", "s", "", "search in session summaries")
 	sessionsCmd.Flags().StringVar(&sessionsAfter, "after", "", "sessions after date (YYYY-MM-DD)")
 	sessionsCmd.Flags().StringVar(&sessionsBefore, "before", "", "sessions before date (YYYY-MM-DD)")
+	sessionsCmd.Flags().StringVar(&sessionsScope, "scope", "", "calendar scope: today, yesterday, week, month, quarter, year")
+	sessionsCmd.Flags().StringVar(&sessionsTZ, "tz", "local", "timezone for --scope/--after/--before: IANA name, UTC, local, or offset like +8")
 	sessionsCmd.Flags().StringVar(&sessionsModel, "model", "", "filter by model name substring")
 	sessionsCmd.Flags().BoolVar(&sessionsAll, "all", false, "list sessions across all projects")
 }
@@ -55,13 +60,27 @@ func init() {
 func runSessions(cmd *cobra.Command, args []string) error {
 	backend := provider.Default()
 
-	after, err := config.ParseDate(sessionsAfter)
+	loc, err := insight.LoadLocation(sessionsTZ)
+	if err != nil {
+		return fmt.Errorf("invalid --tz %q: %w", sessionsTZ, err)
+	}
+	after, err := config.ParseDateInLocation(sessionsAfter, loc)
 	if err != nil {
 		return fmt.Errorf("invalid --after date: %w", err)
 	}
-	before, err := config.ParseBeforeDate(sessionsBefore)
+	before, err := config.ParseBeforeDateInLocation(sessionsBefore, loc)
 	if err != nil {
 		return fmt.Errorf("invalid --before date: %w", err)
+	}
+	if sessionsScope != "" {
+		if sessionsAfter != "" || sessionsBefore != "" {
+			return fmt.Errorf("--scope cannot be combined with --after or --before")
+		}
+		scope, err := insight.ParseScope(sessionsScope)
+		if err != nil {
+			return err
+		}
+		after, before, _ = insight.ScopeWindow(scope, time.Now(), loc)
 	}
 	filter := config.SessionFilter{
 		Provider: config.NormalizeProvider(sessionsProvider),
@@ -154,22 +173,41 @@ func printSessionsTable(sessions []*parser.Session, showProject bool) error {
 }
 
 type sessionJSON struct {
-	ID        string `json:"id"`
-	Provider  string `json:"provider"`
-	Project   string `json:"project"`
-	Summary   string `json:"summary"`
-	StartTime string `json:"start_time"`
+	ID         string  `json:"id"`
+	Provider   string  `json:"provider"`
+	Project    string  `json:"project"`
+	Workspace  string  `json:"workspace,omitempty"`
+	Summary    string  `json:"summary"`
+	StartTime  string  `json:"start_time"`
+	EndTime    string  `json:"end_time"`
+	Model      string  `json:"model,omitempty"`
+	Messages   int     `json:"messages"`
+	ToolCalls  int     `json:"tool_calls"`
+	Sidechains int     `json:"sidechains"`
+	Tokens     int     `json:"tokens"`
+	CostUSD    float64 `json:"cost_usd,omitempty"`
+	FilePath   string  `json:"file_path,omitempty"`
 }
 
 func printSessionsJSON(sessions []*parser.Session) error {
 	items := make([]sessionJSON, len(sessions))
 	for i, s := range sessions {
+		cacheTokens := s.Stats.CacheReadTokens + s.Stats.CacheCreateTokens
 		items[i] = sessionJSON{
-			ID:        s.ID,
-			Provider:  s.Provider,
-			Project:   s.ProjectName,
-			Summary:   s.Summary,
-			StartTime: s.StartTime.Format(time.RFC3339),
+			ID:         s.ID,
+			Provider:   s.Provider,
+			Project:    s.ProjectName,
+			Workspace:  s.CWD,
+			Summary:    s.Summary,
+			StartTime:  s.StartTime.Format(time.RFC3339),
+			EndTime:    s.EndTime.Format(time.RFC3339),
+			Model:      s.Model,
+			Messages:   s.Stats.MessageCount,
+			ToolCalls:  s.Stats.ToolCalls,
+			Sidechains: s.Stats.AgentSidechains,
+			Tokens:     s.Stats.InputTokens + s.Stats.OutputTokens + cacheTokens,
+			CostUSD:    s.Stats.CostUSD,
+			FilePath:   s.FilePath,
 		}
 	}
 	enc := json.NewEncoder(os.Stdout)

@@ -2,16 +2,22 @@ package insight
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const Kind = "ccx.insight.v1"
 
+var fixedOffsetPattern = regexp.MustCompile(`^([+-])(\d{1,2})(?::?(\d{2}))?$`)
+
 func ParseScope(raw string) (Scope, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "today", "day", "daily":
 		return ScopeToday, nil
+	case "yesterday":
+		return ScopeYesterday, nil
 	case "week", "this-week", "weekly":
 		return ScopeWeek, nil
 	case "month", "this-month", "monthly":
@@ -21,7 +27,7 @@ func ParseScope(raw string) (Scope, error) {
 	case "year", "this-year", "yearly":
 		return ScopeYear, nil
 	default:
-		return "", fmt.Errorf("invalid scope %q (want today, week, month, quarter, year)", raw)
+		return "", fmt.Errorf("invalid scope %q (want today, yesterday, week, month, quarter, year)", raw)
 	}
 }
 
@@ -33,7 +39,37 @@ func LoadLocation(raw string) (*time.Location, error) {
 	if strings.EqualFold(raw, "utc") {
 		return time.UTC, nil
 	}
+	if loc, ok, err := parseFixedOffsetLocation(raw); ok || err != nil {
+		return loc, err
+	}
 	return time.LoadLocation(raw)
+}
+
+func parseFixedOffsetLocation(raw string) (*time.Location, bool, error) {
+	m := fixedOffsetPattern.FindStringSubmatch(raw)
+	if m == nil {
+		return nil, false, nil
+	}
+	hours, err := strconv.Atoi(m[2])
+	if err != nil {
+		return nil, true, err
+	}
+	minutes := 0
+	if m[3] != "" {
+		minutes, err = strconv.Atoi(m[3])
+		if err != nil {
+			return nil, true, err
+		}
+	}
+	if hours > 14 || minutes > 59 {
+		return nil, true, fmt.Errorf("invalid UTC offset %q", raw)
+	}
+	offset := hours*3600 + minutes*60
+	if m[1] == "-" {
+		offset = -offset
+	}
+	name := fmt.Sprintf("%s%02d:%02d", m[1], hours, minutes)
+	return time.FixedZone(name, offset), true, nil
 }
 
 func ScopeWindow(scope Scope, now time.Time, loc *time.Location) (time.Time, time.Time, string) {
@@ -47,6 +83,9 @@ func ScopeWindow(scope Scope, now time.Time, loc *time.Location) (time.Time, tim
 	startOfDay := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
 
 	switch scope {
+	case ScopeYesterday:
+		start := startOfDay.AddDate(0, 0, -1)
+		return start, startOfDay, "Yesterday"
 	case ScopeWeek:
 		weekday := int(startOfDay.Weekday())
 		if weekday == 0 {
@@ -71,5 +110,5 @@ func ScopeWindow(scope Scope, now time.Time, loc *time.Location) (time.Time, tim
 }
 
 func ScopeAliases() []Scope {
-	return []Scope{ScopeToday, ScopeWeek, ScopeMonth, ScopeQuarter, ScopeYear}
+	return []Scope{ScopeToday, ScopeYesterday, ScopeWeek, ScopeMonth, ScopeQuarter, ScopeYear}
 }
