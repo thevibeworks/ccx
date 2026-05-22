@@ -1,0 +1,190 @@
+* [2026-05-21] Context Folding                                  :FEAT:ARCH:
+
+** Tension
+
+The original request was not "summarize a chat." It was sharper: given an
+agent session JSONL, the working tree, commits, project docs, and whatever
+local context can be gathered, produce something that helps humans audit what
+actually happened and helps future agents avoid relearning the same decisions.
+
+The existing pieces each had only part of the truth:
+
+- =ccx= could read session logs, but the logs were still raw evidence.
+- Git could show what changed, but not why the path was chosen.
+- ADRs and devlogs could preserve rationale, but only if somebody wrote them.
+- Agent memory could help future sessions, but without provenance it can turn
+  into unsourced lore.
+
+The core risk was overclaiming. A deterministic CLI can extract facts; it
+cannot honestly decide which moments mattered. If those two layers are mixed,
+the tool starts presenting interpretation as evidence.
+
+** Observation
+
+Reading the local references changed the shape of the feature.
+
+The =reflect= skill framed the durable artifact as a reconstructed scene:
+tension, observation, decision, tradeoff, next. That is the right model for
+high-attention decisions, because future agents need to re-enter the mental
+state, not just see a bullet list.
+
+The =dev-log-writer= style reinforced a second point: decision records need
+provenance and names that describe the knowledge, not the session mechanics.
+
+The HTML-effectiveness reference pushed the human surface away from long
+Markdown. A fold report needs hierarchy, badges, collapsible excerpts, and
+visible evidence gaps so a person can audit quickly.
+
+The Karpathy LLM-wiki idea pushed the agent surface away from raw RAG. Future
+agents need curated, scoped, maintained knowledge entries with superseding and
+deletion pressure, not a growing transcript landfill.
+
+The first implementation tried to preserve =ccx fold= and =/ccx-fold= as
+compatibility aliases. That was wrong for this feature. The user clarified
+that there is no compatibility burden. Keeping the old name would make the
+concept fuzzier exactly where it needs to be crisp.
+
+** Decision
+
+The feature is now named and split by epistemic role:
+
+| Layer | Name | Responsibility |
+|-------+------+----------------|
+| CLI | =ccx trace= | deterministic evidence extraction |
+| Skill | =ccx-context-fold= | interpretive decision and knowledge folding |
+| Human artifact | =fold.html= | auditable decision trail |
+| Agent artifact | =.ccx/knowledge/= | curated reusable project knowledge |
+
+There is no =ccx fold= command and no =/ccx-fold= skill. The old language was
+removed rather than shimmed. This keeps the product vocabulary honest:
+"trace" means facts; "context fold" means judgment over facts.
+
+The trace schema emits =ccx.trace.v1= with:
+
+- session metadata
+- exchange evidence anchored by user prompts or commands
+- tool calls with =mutation_capable=, =mutates_workspace=, read flags, and paths
+- sidechain summaries with bounded tool/file evidence and transcript omission
+- git state, dirty files, and high-confidence commit links by path overlap
+- workspace context metadata, not raw document excerpts
+- warnings for stale CWDs, missing git roots, no commits, or partial evidence
+
+The skill owns the decision layer:
+
+- classify human, agent, joint, correction, and inferred decisions
+- separate decisions, discoveries, and corrections
+- expose confidence and evidence gaps
+- generate =fold.html= for human audit
+- propose =.ccx/knowledge= entries only when they pass the three-gate bar:
+  hard to reverse, surprising without context, real tradeoff
+- apply the deletion test before archiving: if the next agent can derive it
+  from code, docs, or common sense, do not persist it
+
+** Implementation
+
+The CLI work lives under =internal/cmd/fold.go= and =internal/fold/=.
+
+Important implementation choices:
+
+- No-arg =ccx trace= resolves the latest workspace session non-interactively.
+  The skill needs scriptable output, not a prompt menu on stdout.
+- Session CWD is tried first for git correlation. If it is stale, the trace
+  falls back to the current repo only with an explicit
+  =session_git_root_missing= warning.
+- Commit correlation only links commits when file paths overlap after
+  normalization. Weak temporal-only links were removed.
+- Codex shell redirects inspect =command=, =cmd=, and shell-like =argv=, and
+  honor =workdir= / =cwd= / =working_dir= when turning redirect targets into
+  paths.
+- =Bash= is mutation-capable, but not automatically a workspace mutation.
+  =mutates_workspace= is true only when the trace has write-path evidence.
+- Sidechains stay out of main exchange segmentation, but their agent id,
+  status, counts, tool calls, and touched files are retained.
+- Workspace context is metadata-only by default: path, kind, title, bytes,
+  hash, truncation. =.claude/MEMORY.md= is intentionally not scanned.
+- Generated trace JSON and trace HTML are written =0600=.
+
+The skill work lives in =skills/ccx-context-fold/=:
+
+- =SKILL.md= is the short entry process.
+- =EVIDENCE.md= defines evidence status, graph nodes, edges, citations, and
+  sidechain handling.
+- =DECISIONS.md= defines provenance, confidence, attention, and archive gates.
+- =HTML-REPORT.md= specifies the self-contained human review surface.
+- =ARCHIVE.md= specifies =.ccx/knowledge= structure, entry frontmatter,
+  superseding, index/log behavior, and lint rules.
+
+The installer now installs only =ccx= and =ccx-context-fold= skills. For
+=--skill-only= it pins skill download to the installed binary version when
+possible, and refuses ambiguous installs instead of silently pairing a release
+binary with unreleased skill instructions.
+
+** Tradeoff
+
+The clean naming removes a soft migration path. That is acceptable because the
+feature is still being formed, and the cost of carrying a confusing alias is
+higher than the cost of breaking an unshipped name.
+
+The trace intentionally avoids full workspace excerpts and sidechain
+transcripts. This makes the evidence bundle less complete than "dump
+everything," but safer and easier to audit. The fold skill can inspect source
+files explicitly when a warning or decision needs more evidence.
+
+Decision extraction remains in the skill, not the Go binary. That means there
+is no fully deterministic end-to-end fold yet. The benefit is epistemic
+honesty: the machine-readable trace is fact-like; the fold is judgment-like
+and must remain reviewable.
+
+** Next
+
+The live wire is the boundary between skill-produced =fold.html= and future
+automation. The next useful step is not to add more extraction; it is to define
+a small machine-readable fold-plan format that the skill can emit before HTML
+and knowledge writes. That would let humans audit the plan, let tests validate
+shape, and still keep judgment outside =ccx trace=.
+
+** Artifacts
+
+Key files:
+
+- =internal/cmd/fold.go=
+- =internal/cmd/root.go=
+- =internal/fold/types.go=
+- =internal/fold/analysis.go=
+- =internal/fold/context.go=
+- =internal/fold/git.go=
+- =internal/fold/html.go=
+- =skills/ccx-context-fold/SKILL.md=
+- =skills/ccx-context-fold/EVIDENCE.md=
+- =skills/ccx-context-fold/DECISIONS.md=
+- =skills/ccx-context-fold/HTML-REPORT.md=
+- =skills/ccx-context-fold/ARCHIVE.md=
+- =docs/design/0001-context-folding.md=
+- =README.md=
+- =install.sh=
+
+Verification run:
+
+#+begin_src sh
+go test ./...
+bash -n install.sh
+go run ./cmd/ccx --claude-home testdata/test-session/claude \
+  --codex-home testdata/test-session/codex \
+  trace --all de4b5d69 -o /tmp/ccx-claude-trace-clean.json
+jq '{kind, schema_version, has_turns:has("turns"),
+     has_turn_commit_links:(.git|has("turn_commit_links")),
+     exchanges:(.exchanges|length), stats:.stats}' \
+  /tmp/ccx-claude-trace-clean.json
+#+end_src
+
+Observed trace shape after removing compatibility:
+
+#+begin_src json
+{
+  "kind": "ccx.trace.v1",
+  "schema_version": "1",
+  "has_turns": false,
+  "has_turn_commit_links": false,
+  "exchanges": 1
+}
+#+end_src
