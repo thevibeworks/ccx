@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="thevibeworks/ccx"
 BINARY="ccx"
-SKILL_NAMES=("ccx" "ccx-context-fold")
+SKILL_NAMES=("ccx" "ccx-context-fold" "ccx-insight")
 
 BIN_DIR="${HOME}/.local/bin"
 SKILL_BASE_DIR="${HOME}/.claude/skills"
@@ -194,8 +194,16 @@ ensure_skill_binary_compatible() {
 
   if ! "$ccx_path" trace --help >/dev/null 2>&1; then
     echo "Installed ccx binary does not support 'ccx trace'."
-    echo "Skipping ccx-context-fold skill; upgrade ccx or install from source."
+    echo "Skipping ccx-context-fold and ccx-insight skills; upgrade ccx or install from source."
     SKILL_NAMES=("ccx")
+    return
+  fi
+
+  if ! "$ccx_path" insight --help >/dev/null 2>&1; then
+    echo "Installed ccx binary does not support 'ccx insight'."
+    echo "Skipping ccx-insight skill; upgrade ccx or install from source."
+    SKILL_NAMES=("ccx" "ccx-context-fold")
+    return
   fi
 }
 

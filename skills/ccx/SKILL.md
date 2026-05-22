@@ -29,6 +29,9 @@ ccx
 │   └── --provider cc|cx          # Filter by provider
 │   └── --after / --before DATE   # Date range
 │   └── --model MODEL             # Filter by model
+├── insight [scope]               # Summarize scoped session intelligence
+│   └── --tz ZONE                 # IANA timezone, UTC, or local
+│   └── --json                    # Machine-readable insight bundle
 ├── web                           # Start web UI
 │   └── --port --host --no-open
 ├── fork <session-id>             # Fork session to current project
@@ -45,6 +48,7 @@ ccx sessions              # List recent sessions
 ccx sessions -p cx        # Codex sessions only
 ccx view abc123           # View by session ID (prefix match)
 ccx export -f html        # Export to HTML
+ccx insight week --tz UTC # Summarize session intelligence
 ccx web                   # Start web UI at localhost:8080
 ```
 
