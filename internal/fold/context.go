@@ -126,9 +126,6 @@ func readContextDocument(repoDir, relPath, kind string, maxBytes int) (ContextDo
 		SHA256:    fmt.Sprintf("%x", sum),
 		Truncated: len(data) > maxBytes,
 	}
-	if len(data) > maxBytes {
-		data = data[:maxBytes]
-	}
 	return doc, nil
 }
 

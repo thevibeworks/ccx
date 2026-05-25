@@ -236,9 +236,7 @@ func Collect(sources []Source, opts Options) (*Bundle, error) {
 			Relation:    relationFor(scan.Start, scan.End, opts.Start, opts.End),
 		}
 		bundle.Sessions = append(bundle.Sessions, session)
-		for _, record := range scan.Records {
-			bundle.Records = append(bundle.Records, record)
-		}
+		bundle.Records = append(bundle.Records, scan.Records...)
 	}
 	sort.SliceStable(bundle.Records, func(i, j int) bool {
 		if bundle.Records[i].Timestamp.Equal(bundle.Records[j].Timestamp) {
