@@ -248,11 +248,3 @@ func gitOutput(repoDir string, args ...string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
-
-func parseTimestamp(ts string) time.Time {
-	t, err := time.Parse(time.RFC3339, ts)
-	if err != nil {
-		return time.Time{}
-	}
-	return t
-}
