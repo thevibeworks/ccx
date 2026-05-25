@@ -36,6 +36,8 @@ ccx reads session files from `~/.claude/` and `~/.codex/` and gives you a fast, 
 - **Memory inspector** — View CLAUDE.md, MEMORY.md, AGENTS.md per project
 - **Brief export** — Conversation-only mode strips tool noise
 - **Export** — HTML, Markdown, Org-mode, JSON
+- **Context trace** — `ccx trace` emits evidence for Context Folding
+- **Time-sliced logs** — `ccx log` cuts through long-running session JSONL by timestamp
 - **Provider filter** — `--provider cc` or `--provider cx` on any command
 - **Date filter** — `--after 2026-03-01 --before 2026-04-01`
 - **Keyboard shortcuts** — `j/k` scroll, `/` search, `z` fold, `r` refresh, `d` theme
@@ -69,8 +71,11 @@ ccx sessions                     # List recent sessions for this workspace
 ccx sessions --all               # List recent sessions across all projects
 ccx sessions --provider=cx       # Codex sessions in this workspace
 ccx sessions --after=2026-03-01  # Date filtered
+ccx sessions --scope yesterday --tz +8 --all --json # Session containers by end time
 ccx view [session]               # View in terminal
 ccx export -f html --brief       # Export conversation-only HTML
+ccx trace [session] -o trace.json # Extract evidence for context folding
+ccx log --scope yesterday --tz +8 --all --json # Time-sliced log evidence
 ccx search "auth bug"            # Search across sessions + memory
 ccx fork abc123                  # Fork session to current project
 ccx doctor                       # Check setup
@@ -104,10 +109,14 @@ ccx treats all agent data as **read-only**. Writes only to its own directories:
 
 ## Claude Code skills
 
-ccx ships with two Claude Code skills:
+ccx ships with Claude Code skills:
 
 - **ccx** — Session viewer. Browse, search, export sessions from inside Claude Code.
-- **ccx-fold** — Session decision extraction. Fold a session into auditable decisions (HTML for humans) and durable knowledge-base entries (markdown for agents). Tracks decision provenance: who decided, what, why, what was rejected.
+- **ccx-context-fold** — Context Folding. Uses `ccx trace` to turn session evidence into auditable decisions (`fold.html`) and durable project knowledge (`.ccx/knowledge/`).
+- **ccx-insight** — Scoped session intelligence. Uses `ccx log` to slice timestamped records across long-running sessions, then briefs what was worked on, achieved, blocked-looking, or emerging across today/yesterday/week/month/quarter/year. The skill can write a standalone HTML audit report for human review.
+
+`ccx trace --html` produces trace evidence HTML. It is not the interpreted
+`fold.html` decision trail produced by the skill.
 
 Install alongside the binary:
 ```bash
@@ -117,14 +126,16 @@ curl -fsSL https://raw.githubusercontent.com/thevibeworks/ccx/main/install.sh | 
 Or manually copy skills to `~/.claude/skills/`:
 ```bash
 cp -r skills/ccx/ ~/.claude/skills/ccx/
-cp -r skills/ccx-fold/ ~/.claude/skills/ccx-fold/
+cp -r skills/ccx-context-fold/ ~/.claude/skills/ccx-context-fold/
+cp -r skills/ccx-insight/ ~/.claude/skills/ccx-insight/
 ```
 
 Usage:
 ```bash
-/ccx-fold                    # Fold most recent session
-/ccx-fold <session-id>       # Fold specific session
-/ccx-fold --dry-run          # Preview without writing
+/ccx-context-fold                    # Fold most recent session
+/ccx-context-fold <session-id>       # Fold specific session
+/ccx-context-fold --dry-run          # Preview without writing
+/ccx-insight yesterday --tz +8       # Brief yesterday from session intelligence
 ```
 
 ## Credits

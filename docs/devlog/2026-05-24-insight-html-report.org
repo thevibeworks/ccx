@@ -1,0 +1,197 @@
+* [2026-05-24] Insight HTML Report                            :ARCH:FEAT:
+
+** Tension
+
+The previous pivot fixed the core product boundary: =ccx log= should provide
+time-sliced evidence, and =/ccx-insight= should interpret it. But the skill
+still had a weak human artifact contract.
+
+It said "write a standalone HTML report" and listed sections. That was not
+enough. A future agent could still produce a pretty narrative that repeated
+the original mistake: making source log files look like clean sessions,
+treating assistant prose as proof, and hiding provider-specific caveats under
+polished status labels.
+
+The release risk was concrete. We had already seen a false claim from the old
+shape: =amux= was reported as "review done but not published yet" even though
+raw evidence showed repo creation, push, tag, and CI activity. If the HTML
+report is vague, it will make wrong summaries feel more trustworthy.
+
+** Observation
+
+We checked the actual worktree and the real data shape before changing the
+skill.
+
+Current branch:
+
+#+begin_src text
+feat/ccx-insight
+#+end_src
+
+Relevant recent commits:
+
+#+begin_src text
+bbe2678 Add time-sliced session log evidence
+7033c8a Add calendar scopes to session listing
+7f7fe38 Add scoped session insight summaries
+cb0e8c8 Add context trace folding workflow
+#+end_src
+
+The useful primitive now exists: =ccx log= emits a =ccx.log.v1= evidence
+bundle with =scope=, =metrics=, =sessions[]=, and =records[]=. The schema
+exposes the details the report must respect:
+
+- =metrics.sessions= is a count of source log files, not necessarily clean
+  logical sessions.
+- =sessions[].relation= marks long-running containers.
+- =records[].kind= separates =user_prompt=, =assistant_message=,
+  =tool_call=, =tool_result=, =reasoning=, =summary=, and =compaction=.
+- =records[].is_subagent= and source paths under =/subagents/= expose Claude
+  Code sidechain evidence.
+- =source_file= and =line= give reportable provenance.
+
+We regenerated the May 21 +08:00 evidence bundle locally:
+
+#+begin_src sh
+./bin/ccx log --since 2026-05-21 --until 2026-05-22 \
+  --tz +8 --all --json > /tmp/ccx-insight-evidence.json
+#+end_src
+
+Observed shape:
+
+#+begin_src text
+scope: 2026-05-21 00:00 to 2026-05-22 00:00, +08:00
+source log files: 52
+long-running containers: 15
+workspaces: 13
+records: 17,314
+user prompts: 260
+assistant messages: 2,369
+tool calls: 4,811
+tool results: 5,249
+reasoning records: 866
+sidechains: 877
+truncated: false
+#+end_src
+
+The examples were not abstract:
+
+- Codex sessions can emit duplicate-looking user and assistant records from
+  both =event_msg= and =response_item=. Counts are useful, but meaning must be
+  deduplicated semantically.
+- Claude Code sessions can carry sidechain/subagent JSONL files under the
+  parent session. Those are evidence lanes, not separate human workstreams by
+  default.
+- Compaction and continuation summaries are useful context, but they are
+  lossy. They cannot prove completion.
+- Tool results, git output, file diffs, tests, builds, and explicit human
+  statements carry more weight than assistant summaries.
+
+We also compared the local =reference/html-effectiveness= examples. The useful
+references were not their decoration. They showed how a single HTML file can
+act as a serious review surface: dense metric rhythm, strong TL;DR band,
+sticky controls, compact boards, collapsible evidence, and research-style
+hierarchy.
+
+** Decision
+
+We turned the HTML report into an explicit audit cockpit contract.
+
+Changed =skills/ccx-insight/HTML-REPORT.md= from a short section list into a
+full product spec for a self-contained, file-openable report over
+=ccx.log.v1=.
+
+The report now has a clear information architecture:
+
+| Section | Purpose |
+|---------+---------|
+| Scope header | Make the time boundary, timezone, project scope, command, schema, and truncation state impossible to miss |
+| TL;DR judgment band | One synthesis paragraph with confidence and the strongest correction to naive reading |
+| Data quality panel | Surface long-running containers, provider caveats, sidechains, duplicates, compactions, and truncation before narrative |
+| Metrics strip | Show precise counts with precise labels, especially "source log files" |
+| Workstream board | Group human-reviewable work by status: in motion, needs closure, done/achieved, watch |
+| Timeline | Curated important events, not every record |
+| Claim ledger | Classify consequential claims as observed, human-stated, agent-claimed, inferred, unverified, or contradicted |
+| Decisions and corrections | Preserve who changed direction and why |
+| Evidence drawer | Keep source paths, line numbers, snippets, and raw details available without flooding the report |
+| Needs closure | Make open loops actionable without inventing owners |
+
+We also updated =skills/ccx-insight/SKILL.md= so the top-level skill describes
+HTML output as a standalone audit cockpit, not a decorative summary. Before
+writing HTML, the skill must inspect provider/data-quality shape: source log
+files, long-running containers, workspace split, Codex duplicate-looking
+records, Claude sidechains/subagents, compaction records, and truncation.
+
+The road not taken: add a new programmatic =ccx insight --html= or revive the
+old =ccx insight= summary object. That was rejected again. The CLI should
+emit evidence. The skill can interpret, but it must show its work.
+
+The other road not taken: generate a durable repo report by default. The skill
+now writes HTML to the OS temp directory by default and writes into =reports/=
+only when the human asks for a durable artifact. That keeps normal use from
+dirtying the release branch.
+
+** Tradeoff
+
+This makes the skill heavier. A future agent has more rules to follow before
+it can produce an HTML report.
+
+That cost is intentional. The feature is not trying to produce a fast pretty
+page. It is trying to prevent a human from trusting a compressed status story
+that the logs do not support.
+
+The report spec still does not implement an automatic renderer. It defines
+the contract for skill-generated reports. That keeps the release focused on
+the evidence primitive and the agent workflow, but it means consistency
+depends on agents following the skill until a renderer exists.
+
+The report may feel less magical because it labels uncertainty. That is the
+right product feel for this feature. The HTML should be useful because it is
+exact, not because it pretends to know more than it knows.
+
+** Next
+
+The release live wire is consistency between installed skill behavior and the
+repo skill contract.
+
+Before release, verify:
+
+1. The latest =ccx-insight= skill is installed in both =~/.claude/skills= and
+   =~/.agent/skills= if that is still the intended distribution path.
+2. A fresh agent can run the skill against =ccx log --scope yesterday --tz +8
+   --all --json= and produce an HTML report that labels source log files,
+   long-running containers, claim status, and evidence refs correctly.
+3. The untracked =<local prototype HTML artifact>= is either
+   intentionally kept as a prototype artifact or left out of the release
+   commit.
+
+** Artifacts
+
+Files changed:
+
+- =skills/ccx-insight/HTML-REPORT.md=
+- =skills/ccx-insight/SKILL.md=
+- =docs/devlog/2026-05-24-insight-html-report.org=
+
+Commands / checks used:
+
+#+begin_src sh
+git status --short --branch
+git log --oneline -5
+git diff --stat
+git diff --check
+./bin/ccx log --since 2026-05-21 --until 2026-05-22 --tz +8 --all --json
+#+end_src
+
+Current working tree at the time of this entry:
+
+#+begin_src text
+ M skills/ccx-insight/HTML-REPORT.md
+ M skills/ccx-insight/SKILL.md
+?? docs/devlog/2026-05-24-insight-html-report.org
+?? reports/
+#+end_src
+
+The =reports/= directory contains =<local prototype HTML artifact>= from
+the earlier prototype pass. It was intentionally not folded into the skill
+contract as a required release artifact.

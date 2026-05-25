@@ -158,8 +158,8 @@ func TestParseBeforeDate(t *testing.T) {
 
 	t.Run("before filter includes the full day", func(t *testing.T) {
 		before, _ := ParseBeforeDate("2026-03-01")
-		sessionStart := time.Date(2026, 3, 1, 15, 0, 0, 0, time.UTC)
-		if sessionStart.After(before) {
+		sessionEnd := time.Date(2026, 3, 1, 15, 0, 0, 0, time.UTC)
+		if !sessionEnd.Before(before) {
 			t.Error("session at 2026-03-01 15:00 should pass --before 2026-03-01 filter")
 		}
 	})
@@ -208,6 +208,8 @@ func TestSessionFilterMatch(t *testing.T) {
 		{"after before session", SessionFilter{After: baseTime.Add(2 * time.Hour)}, false},
 		{"after during session", SessionFilter{After: baseTime.Add(-time.Hour)}, true},
 		{"before after session", SessionFilter{Before: baseTime.Add(-time.Hour)}, false},
+		{"before at session start still passes by end time", SessionFilter{Before: baseTime}, false},
+		{"before after session end passes", SessionFilter{Before: baseTime.Add(2 * time.Hour)}, true},
 		{"min messages met", SessionFilter{MinMessages: 5}, true},
 		{"min messages not met", SessionFilter{MinMessages: 20}, false},
 		{"combined filters pass", SessionFilter{Provider: "claude-code", Query: "auth", MinMessages: 5}, true},
