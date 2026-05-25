@@ -181,7 +181,7 @@ func printLogTable(bundle *sessionlog.Bundle) error {
 	if bundle.Metrics.RecordsReturned != bundle.Metrics.Records {
 		recordsLabel = fmt.Sprintf("records %d · showing %d", bundle.Metrics.Records, bundle.Metrics.RecordsReturned)
 	}
-	fmt.Printf("%s to %s · sessions %d · %s\n\n",
+	fmt.Printf("%s to %s · source log files %d · %s\n\n",
 		bundle.Scope.Start.Format("2006-01-02 15:04"),
 		bundle.Scope.End.Format("2006-01-02 15:04"),
 		bundle.Metrics.Sessions,

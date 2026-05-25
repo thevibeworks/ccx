@@ -29,7 +29,7 @@ layer.
 | `/ccx-insight week --all` | `ccx log --scope week --all --json` |
 | `/ccx-insight --since 2026-05-21 --until 2026-05-22 --tz +8` | `ccx log --since 2026-05-21 --until 2026-05-22 --tz +8 --all --json` |
 | "deep insight" | run `ccx log --json`, then `ccx trace` key sessions |
-| "HTML report" | write a standalone HTML report from the evidence bundle |
+| "HTML report" | write a standalone HTML audit cockpit from the evidence bundle |
 
 Use `--all` by default for broad questions like "what did I do yesterday?".
 Use current-workspace scope only when the human names or implies the current
@@ -63,7 +63,10 @@ repo. The report header must state either "all projects" or "current workspace".
 6. Verify important claims with `ccx trace <session-id>` or direct repo/git
    inspection before calling something complete, blocked, published, merged,
    or still open.
-7. Produce the briefing or report.
+7. Before writing HTML, inspect provider/data-quality shape: source log files,
+   long-running containers, workspace split, Codex duplicate-looking records,
+   Claude sidechains/subagents, compaction records, and truncation.
+8. Produce the briefing or report.
 
 ## Claim Ledger
 
@@ -83,7 +86,7 @@ Every important claim should be tagged:
 
 ```text
 Scope: Yesterday (2026-05-21), +08:00
-Evidence: <N> records across <M> sessions, <K> long-running containers
+Evidence: <N> records across <M> source log files, <K> long-running containers
 
 What was worked on
 - ...
@@ -106,23 +109,41 @@ Caveats
 
 ## HTML Report
 
-When the human asks for a report, create a self-contained HTML file in the temp
-dir. Follow [HTML-REPORT.md](HTML-REPORT.md).
+When the human asks for a report, HTML report, human review surface, or
+something inspired by `reference/html-effectiveness`, create a self-contained
+HTML file. Write to the OS temp directory by default, and write into the repo
+only when the human asks for a durable artifact. Follow
+[HTML-REPORT.md](HTML-REPORT.md).
+
+The HTML report is an audit cockpit over `ccx.log.v1`, not a decorative summary.
+It should help the human review workstreams, claims, evidence, caveats, and open
+loops without reading raw JSONL.
 
 Required sections:
 
-- Header: scope, timezone, generated time, evidence command
-- TL;DR: one concise paragraph, with confidence
-- Metrics: records, sessions, long-running sessions, workspaces, tool results
-- Workstreams: grouped by workspace/project with evidence references
-- Timeline: important timestamped events
+- Scope header: exact range, timezone, project scope, generated time, evidence command
+- TL;DR judgment band: one concise paragraph with confidence
+- Data quality panel: truncation, long-running containers, provider caveats
+- Metrics: source log files, records, workspaces, prompts, tool calls/results
+- Workstream board: in motion, needs closure, done/achieved, watch
+- Timeline: curated timestamped events, not every record
+- Claim ledger: status, confidence, who made the claim, evidence refs
 - Decisions / corrections: who decided, what changed, why it matters
-- Completed / achieved: only with tool/git/transcript evidence
-- Needs closure: open loops with cited records
+- Evidence drawer: compact cited records with source paths and line numbers
+- Needs closure: open loops with cited records and next action
 - Caveats: missing logs, heuristic labels, ambiguous session boundaries
 
 Evidence references should include provider, session prefix, source JSONL path,
 line number, and timestamp. Do not paste full transcripts.
+
+Use optional inline JavaScript only for filtering, searching, copying evidence
+refs, and expanding details. The report must remain readable without JavaScript.
+Do not use remote assets, CDNs, gradients, decorative blobs, marketing heroes,
+or cards inside cards.
+
+Call `metrics.sessions` "source log files" unless you have derived a separate
+logical-session model. A time-scoped report is a slice through records; it is
+not proof that those containers began or ended inside the scope.
 
 ## Rules
 
