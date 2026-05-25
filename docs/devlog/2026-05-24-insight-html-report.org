@@ -161,9 +161,8 @@ Before release, verify:
 2. A fresh agent can run the skill against =ccx log --scope yesterday --tz +8
    --all --json= and produce an HTML report that labels source log files,
    long-running containers, claim status, and evidence refs correctly.
-3. The untracked =<local prototype HTML artifact>= is either
-   intentionally kept as a prototype artifact or left out of the release
-   commit.
+3. Any untracked prototype HTML artifact is either intentionally kept locally
+   or left out of the release commit.
 
 ** Artifacts
 
@@ -189,9 +188,9 @@ Current working tree at the time of this entry:
  M skills/ccx-insight/HTML-REPORT.md
  M skills/ccx-insight/SKILL.md
 ?? docs/devlog/2026-05-24-insight-html-report.org
-?? reports/
+?? <local prototype report directory>
 #+end_src
 
-The =reports/= directory contains =<local prototype HTML artifact>= from
-the earlier prototype pass. It was intentionally not folded into the skill
-contract as a required release artifact.
+A local prototype HTML artifact existed during the earlier prototype pass. It
+was intentionally not folded into the skill contract as a required release
+artifact.
