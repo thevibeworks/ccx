@@ -7,6 +7,39 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-25
+
+### Added
+- **ccx-insight skill**: Time-sliced session intelligence — uses `ccx log` to slice timestamped records across long-running sessions, then briefs what was worked on, achieved, blocked, or emerging across today/yesterday/week/month/quarter/year. Writes standalone HTML audit reports for human review.
+- **ccx-context-fold skill**: Session decision extraction — folds a ccx trace into auditable decisions and durable project knowledge. Use after coding-agent sessions, before context compaction, or during PR review.
+- **Workspace-scoped session listing**: `ccx ls` and `ccx sessions` now scope to the current workspace by default. `--all` flag for cross-project listing.
+- **Calendar-scoped session listing**: Session list supports time-range filters for day/week/month/quarter/year slicing.
+
+### Changed
+- **Security: sanitized test fixtures**: Real Anthropic API `requestId` values in testdata JSONL replaced with synthetic IDs across entire git history via `git-filter-repo`. No API-traceable identifiers remain in the repository.
+
+### Fixed
+- **Devlog artifact scrub**: Removed local machine artifact references from published devlog entries.
+
+## [0.6.0] - 2026-05-21
+
+### Added
+- **ccx fold command**: Session turn analysis with git correlation — `ccx fold` analyzes session turns, correlates with git history, and extracts decision chains.
+- **Workspace-scoped sessions**: Session listing scoped to current workspace directory.
+- **Agent nav entries inline**: Sub-agent entries in the outline sidebar now appear inside their parent exchange group, not bottom-appended.
+- **Agent names and stats in sidechain headers**: Sidechain groups show agent type (Explore, linus-rants, etc.), description, token count, tool count, and lines changed from `toolUseResult`.
+- **Semantic color tokens**: `--event-subagent`, `--event-skill`, etc. — single source of truth for event-kind colors across nav, timeline, and sidechain groups.
+- **Adaptive timeline rail**: Spine height computed from tick count with vertical centering. Satellites enlarged to 5x5px.
+
+### Changed
+- **CSS extracted to embedded file**: All CSS moved from inline Go string to `internal/web/static/style.css` via `embed.FS`. Templates.go reduced from 7693 to 5094 lines.
+- **Schema audit as dev tool**: `cmd/ccx-audit-schema` for detecting JSONL schema drift — separate dev binary, not integrated into ccx CLI.
+
+### Fixed
+- **All CI lint failures**: Resolved errcheck, gosimple, unused variable warnings across the codebase.
+- **Timeline rail vertical centering**: Rail uses `display:flex; align-items:center` with computed spine height.
+- **Session metadata parsing**: `aiTitle`, `toolUseResult` (handles string vs object), Model, and Provider now extracted from JSONL and displayed in info panel.
+
 ## [0.5.0] - 2026-04-29
 
 ### Added
