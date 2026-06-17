@@ -1,0 +1,137 @@
+#+TITLE: ccx insight — Manual Test Report
+#+DATE: 2026-05-27
+#+SCOPE: reference/ccx insight subcommand, full manual test matrix
+#+BUILD: go build -o bin/ccx ./cmd/ccx (clean build, no errors)
+
+* Summary
+
+7/9 PASS, 2 FAIL. Core logic (report engine, HTML generation, JSON
+serialization, web server, empty-data handling) all work correctly.
+Both failures are in the CLI wiring layer.
+
+* Results
+
+| # | Test                                  | Status | Notes                                          |
+|---+---------------------------------------+--------+------------------------------------------------|
+| 1 | Generate reports (today/week/yesterday) | PASS   | Files at ~/.local/share/ccx/insights/          |
+| 2 | JSON mode (--json)                    | PASS   | Valid JSON; keys: metrics, sessions, records    |
+| 3 | Custom output path (-o)               | PASS   | Wrote to /tmp/test-insight.html (16,695 bytes)  |
+| 4 | Reports accumulate                    | PASS   | 6 files in insights dir after all tests         |
+| 5 | ccx web serves insights               | PASS   | Listings, inline render, start/stop all work    |
+| 6 | Help text shows =report= alias        | FAIL   | Only =insight= listed; =report= not registered |
+| 7a | Provider filter (--provider cc)       | PASS   | Claude Code only, no Codex leak                 |
+| 7b | Custom date range (--since/--until)   | FAIL   | Blocked by --scope default                      |
+| 8 | Edge: no sessions                     | PASS   | Exit 0, zero metrics, empty tables, no crash    |
+
+* Bugs
+
+** BUG-1: =report= alias not discoverable in --help
+
+=ccx --help= lists =insight= but not =report=. If =report= is meant
+to be a user-facing alias, cobra needs explicit alias registration:
+
+#+begin_src go
+Aliases: []string{"report"},
+#+end_src
+
+Severity: cosmetic / discoverability.
+
+** BUG-2: --since/--until blocked by --scope default
+
+=internal/cmd/log.go:130= guards with =logScope != ""=, but =--scope=
+defaults to ="today"= (set in =insight.go:46=), so the condition is
+always true. Using =--since= or =--until= without explicitly clearing
+scope errors with:
+
+: ccx: --scope cannot be combined with --since or --until
+
+Fix: replace =logScope != ""= with =cmd.Flags().Changed("scope")= so
+cobra distinguishes explicit user intent from the default value.
+
+Workaround: =--scope "" --since 2026-05-20 --until 2026-05-25= works.
+
+Severity: functional — blocks the documented =--since/--until= flow.
+
+* Test Details
+
+** Test 1: Generate reports
+
+#+begin_example
+./bin/ccx insight --scope today --tz +8 --all
+Report saved: ~/.local/share/ccx/insights/2026-05-28-today.html     (16,695 bytes)
+
+./bin/ccx insight --scope week --tz +8 --all
+Report saved: ~/.local/share/ccx/insights/2026-05-28-week.html      (127,081 bytes)
+
+./bin/ccx insight --scope yesterday --tz +8 --all
+Report saved: ~/.local/share/ccx/insights/2026-05-28-yesterday.html (57,048 bytes)
+#+end_example
+
+Filenames use 2026-05-28 due to --tz +8 offset (correct).
+
+** Test 2: JSON mode
+
+#+begin_example
+./bin/ccx insight --scope today --tz +8 --all --json | python3 -m json.tool > /dev/null
+#+end_example
+
+Valid JSON. Top-level keys: kind, scope, generated_at, metrics,
+sessions, records. Schema version: =ccx.log.v1=.
+
+** Test 3: Custom output path
+
+#+begin_example
+./bin/ccx insight --scope today --tz +8 --all -o /tmp/test-insight.html
+Report saved: /tmp/test-insight.html (16,695 bytes)
+#+end_example
+
+** Test 5: ccx web serves insights
+
+Tested on port 2301 (2299 occupied by stale process).
+
+- GET /insights -> HTML page with <title>Insights</title>, lists 6 reports
+- Each report is a clickable link (/insights/<filename>)
+- GET /insights/2026-05-27-month.html -> full standalone HTML, title "Session Intelligence -- May 2026"
+- Server start/stop clean
+
+** Test 7a: Provider filter
+
+#+begin_example
+./bin/ccx insight --scope month --provider cc --all
+Report saved: ~/.local/share/ccx/insights/2026-05-27-month.html (402 KB)
+#+end_example
+
+All session badges use =b-cc= class. No Codex sessions in data rows.
+"Codex" appears only in user message content and project names (correct
+— those are content strings, not provider labels).
+
+** Test 7b: Custom date range (FAIL)
+
+#+begin_example
+./bin/ccx insight --since 2026-05-20 --until 2026-05-25 --tz +8 --all
+Error: ccx: --scope cannot be combined with --since or --until
+
+# Workaround:
+./bin/ccx insight --scope "" --since 2026-05-20 --until 2026-05-25 --tz +8 --all
+Report saved: ~/.local/share/ccx/insights/2026-05-28-custom.html
+#+end_example
+
+Root cause: =log.go:130= — see BUG-2 above.
+
+** Test 8: Edge — no sessions
+
+#+begin_example
+mkdir -p /tmp/empty-ws && cd /tmp/empty-ws
+/path/to/ccx insight --scope today
+Report saved: ~/.local/share/ccx/insights/2026-05-27-today.html
+#+end_example
+
+Exit code 0. Metrics: all zeros. Tables: headers only, no rows.
+Data quality line: "0 source log files, 0 records."
+
+* Environment
+
+- Platform: Linux (Ubuntu 24.04 LTS, Docker)
+- Go: system go in PATH
+- Session data: standard ccx provider directories
+- Tests run: 2026-05-27

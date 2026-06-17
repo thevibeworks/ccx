@@ -1,0 +1,118 @@
+* [2026-06-17] SPA frontend decision: embedded Vite in the Go binary :ARCH:
+
+Based on a multi-day survey of Go web stacks (10 reference repos) and
+the ShipAny template family (5 Node SaaS starters), cross-read against
+ccx's own frontend constraints. Full evidence at
+=shipany-ai/research/260610-go-web-stacks/go-web-stacks-agent-era.html=
+and =shipany-ai/research/260610-build-recommendations.md=.
+
+** Tension
+
+=templates.go= is 5,144 lines of Go-template strings with inline JS;
+=style.css= is 2,612 lines of hand-rolled CSS. No typed API boundary:
+=parser.Session= in =types.go:31-136= has no JSON tags, so the API ships
+accidental PascalCase, doubles every payload with =RawJSON=, and leaks
+=FilePath=. Renaming one Go struct field breaks the UI silently.
+Adding a panel means editing the monolith. Frontend has zero tests.
+
+The Go backend is in good shape: clean JSON API + SSE, 943-line
+=server_test.go= with injected mocks, async ops via =202+op_id=. The
+problem is purely the view layer, and it is getting worse — features
+like insights, search, and live tail add more inline =<script>= blocks
+every release.
+
+** Observation
+
+The survey named two shapes for Go+web: (A) templ+HTMX for dashboards
+and CRUD, (B) embedded Vite SPA for editor-grade interactive surfaces.
+ccx needs virtualized lists (transcripts run to thousands of messages),
+rich client-side folding, keyboard-driven tree navigation, live SSE
+tailing with client state. These push hard against HTMX's ceiling —
+ccx is shape B.
+
+PocketBase proves the pattern: React SPA built to =dist/=, embedded via
+=//go:embed all:dist=, still a single binary. The distribution promise
+(=curl|bash=, no Node on user machines) is preserved because Node lives
+in CI only.
+
+While reading =server.go= for this analysis, found that the "clean JSON
+API" claim needs qualification — handlers inline ad-hoc DTOs, no
+consistent response shape, =http.Error= returns =text/plain= not JSON.
+This is a phase-0 issue independent of the frontend choice.
+
+** Decision
+
+Committed stack: Vite 6 + React 19 + TanStack Router (SPA mode) +
+Query v5 + Virtual · Tailwind v4 CSS-first =@theme= mapping the existing
+terracotta =#da7756= and accent palette from =style.css:2-47= · shadcn
+copy-in for exactly Dialog, DropdownMenu, Tooltip, Command — hand-
+rolled Tailwind for the dense transcript/list surfaces · marked +
+DOMPurify for markdown; highlight.js core with ~15 registered languages
+in a lazy chunk. NOT shiki: 1MB+ grammars in an embedded binary violates
+the size budget.
+
+No ={code,message,data}= envelope. ccx is a localhost single-user read-
+only tool; HTTP status is the envelope. Normalize errors to
+={"error":"..."}= JSON. Generate TS types via tygo pointed at a new
+=internal/web/dto.go= — not at =parser= directly (the DTOs need snake
+case, RawJSON exclusion, and FilePath redaction).
+
+Migration strategy: strangler, route by route. The Go mux makes this
+trivial — SPA takes a route, Go handler dies. Sequence:
+1. PR 1: =web/= scaffold + Vite/embed wiring + =dto.go= + tygo + =/search=
+   (already 100% client-rendered; proves the loop end-to-end)
+2. =/= + =/project/= (list pages, pure Query reads)
+3. =/session/= static view (the 80% page; ship behind =--legacy= flag +
+   golden-fixture parity checklist against =testdata/=)
+4. =/session/= live tail (SSE writes into Query cache via =setQueryData=
+   for append; anything weird -> =invalidateQueries=)
+5. =/settings= + =/memory=
+6. Delete =templates.go= + =style.css=; HTML export moves to
+   =internal/render= as a plain document renderer; =/insights= stays Go
+
+Rejected alternatives:
+- templ + HTMX (shape A): transcript rendering needs virtualization,
+  keyboard-driven folding, and real client state. HTMX fights every one.
+- Full React rewrite, big-bang: months-long branch while =templates.go=
+  ships fixes. Strangler costs ~150 lines of duplicated chrome.
+- Shiki for syntax highlighting: 1MB+ grammar set; highlight.js core
+  + 15 lang registrations lands at ~120KB in a lazy chunk.
+- ={code,message,data}= envelope: ceremony for a localhost tool with one
+  consumer; HTTP status is enough; adopt only if ccx-server ever becomes
+  multi-tenant.
+
+** Tradeoff
+
+- Node enters the CI pipeline and the dev loop. Binary contributors who
+  only touch Go see a placeholder =dist/index.html= ("run make web");
+  acceptable for a dev-tools project but means =go install= from source
+  no longer builds the full binary without Node. Release binaries from
+  GoReleaser are unaffected.
+- Size budget: dist <= 1.5MB raw, binary ceiling 21MB (now 18.5MB).
+  Enforced in CI: fail if =du -s dist= exceeds budget. Without this
+  gate, someone will add shiki or a charting lib and the binary bloats
+  past acceptable for a CLI tool.
+- Two JSONL interpreters: Go parser and TS =normalizeLine=. The TS side
+  handles only the append happy path; everything else invalidates to the
+  server parse. This boundary must stay clean or testing doubles.
+- =--legacy= flag and parity checklist add temporary complexity. The
+  flag exists only during migration (steps 3-5) and dies at step 6.
+
+** Next
+
+PR 1 scope is concrete: =web/= scaffold (package.json, vite.config.ts,
+tailwind @theme from existing tokens), =internal/web/dto.go= with JSON-
+tagged structs + tygo-generated =web/src/api/types.ts=, embed wiring in
+=embed.go= / Makefile / CI, =--legacy= flag, and the =/search= page
+migrated. The live wire: does the vite-proxy -> go-server dev loop feel
+fast enough for daily use, and does the placeholder =dist/index.html=
+path cause friction for Go-only contributors?
+
+** Artifacts
+
+- Prior research: =shipany-ai/devlog/2026-06-10-go-web-stacks-agent-era.org=
+- Full survey report: =shipany-ai/research/260610-go-web-stacks/go-web-stacks-agent-era.html=
+- Build recommendations: =shipany-ai/research/260610-build-recommendations.md=
+- Key code read: =internal/web/server.go= (routes :86-109, SSE :522-627),
+  =internal/web/templates.go= (5,144L), =internal/parser/types.go:31-136=
+  (no JSON tags), =internal/web/static/style.css= (2,612L, palette :2-47)

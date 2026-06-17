@@ -1,0 +1,81 @@
+* [2026-05-28] Tilde Expansion Bug in DataDir()                :BUG:FIX:
+
+** What Happened
+
+=ccx web= and =ccx insight= created literal =~/.local/share/ccx/= directories
+relative to CWD instead of writing to =$HOME/.local/share/ccx/=.
+
+Stars database, session cache, and insight reports all ended up in stray =~/=
+trees inside whatever directory ccx happened to be running from. On a
+bind-mounted workspace, this meant repo directories on the host grew phantom
+home-directory structures that looked alarming and were painful to clean up
+(=rm -rf ~= would nuke the actual home directory).
+
+** Root Cause
+
+Two-part failure:
+
+1. Container environment set =XDG_DATA_HOME=~/.local/share= as a literal
+   string. Docker ENV does not do shell expansion. The =~= is passed verbatim.
+
+2. =config.DataDir()= trusted =$XDG_DATA_HOME= without expanding it:
+
+   #+begin_src go
+   func DataDir() string {
+       if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+           return filepath.Join(xdg, "ccx")  // "~/.local/share/ccx"
+       }
+       // ...
+   }
+   #+end_src
+
+   Go's =os.MkdirAll= treats =~= as a literal directory name. No expansion.
+
+Meanwhile, =ClaudeHome()= and =CodexHome()= both call =expandPath()= on their
+config values. =DataDir()= did not. Same codebase, inconsistent handling.
+
+** Fix
+
+One line in =config.go=:
+
+#+begin_src go
+if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+    return filepath.Join(expandPath(xdg), "ccx")
+}
+#+end_src
+
+=expandPath()= already existed and handled =~= correctly. It just was not
+called.
+
+** Why This Is Bad
+
+This is not a subtle edge case. It is a basic path-handling error that a code
+review should catch in five seconds:
+
+- Every other path function in the same file calls =expandPath()=.
+- =DataDir()= is the only one that does not.
+- The failure mode is silent: no error, no warning, just files in the wrong
+  place. The program appears to work. Data accumulates in stray directories.
+  The user discovers it when =ls= shows a =~= directory inside their repo.
+
+Cleaning up is dangerous because =rm -rf ~= (without quoting or =./= prefix)
+destroys the home directory. The safe incantation is =rm -rf './~'= -- the
+=./= prefix prevents shell tilde expansion.
+
+** Prevention
+
+- Every function that resolves a path from an environment variable or config
+  value must call =expandPath()=. No exceptions.
+- A running process that writes to the filesystem should never create paths
+  relative to CWD unless that is the explicit intent. =DataDir()= returns an
+  absolute path or it is broken.
+- Container ENV values must use absolute paths. Shell metacharacters (=~=,
+  =$HOME=, globs) do not expand in Docker ENV directives.
+- If =expandPath()= exists in the codebase, grep for every =os.Getenv= call
+  that returns a path and verify it goes through expansion.
+
+** Lesson
+
+Consistency is not style. When five path functions expand tildes and one does
+not, the inconsistency is the bug. The fix was one line. The cleanup cost
+hours and nearly destroyed a home directory.
