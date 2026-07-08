@@ -1,0 +1,80 @@
+* [2026-07-06] Profile Before Rewrite: One Session, Three Fixes   :PERF:ARCH:FIX:
+
+** Tension
+User request, verbatim: "we should refactor and rewrite the web, too
+slow to render a session for now." Plus two vaguer asks: improve
+insight, improve trace ("currently not like good one"). The dangerous
+word was "rewrite" — a big-bang plan justified by a symptom nobody
+had measured yet.
+
+** Observation
+A throwaway probe test (deleted after use) attributed the latency in
+ten minutes and flipped the plan:
+
+- renderSessionPage on a 59MB / 9k-record session: 40ms. The layer
+  the user wanted rewritten was the fastest thing in the pipeline.
+- parser.DiscoverProjects: 9.7s — quickParseSession JSON-decodes
+  every line of every file (2.8GB, 4,244 files) on EVERY call.
+- The web server runs discovery 3-4x per session page (FindSession,
+  FindProject, per-backend fallbacks). 44s pages, fully explained.
+- A two-tier parse cache already existed (memory LRU + gob disk) but
+  only for full session parses — discovery had nothing. The codebase
+  already knew how to cache; it just cached the wrong layer.
+
+Same pattern on trace: the complaint was vibes ("not good"), the
+measurement was concrete — 0.7-2.5MB JSON per session feeding a skill
+whose premise is "hold the trace as your base graph." Byte attribution
+showed the bloat was structural: unbounded exchange text, per-call
+evidence for thousands of reads, sidechain evidence embedded twice.
+
+** Decision
+- Web: NO rewrite. Added a persistent discovery-metadata cache
+  (mtime+size keyed, single gob, negative entries for skipped files).
+  Rejected: SQLite index (heavier machinery for the same win),
+  frontend rewrite (fixes the fast part), threading a cache handle
+  through ~15 call sites (chose a package-global in parser,
+  initialized once in initConfig — discovery funnels through two
+  choke points, and nil-safe globals cost less than the plumbing).
+- Trace: bound the evidence, keep the pointers. Text capped at 2,000
+  runes head+tail with anchor_id drill-down; itemize only mutating/
+  failed tool calls; sidechain evidence stored once. Rejected:
+  --light/--full-evidence flags (config creep; raw JSONL remains the
+  forensic source), summarizing with an LLM (trace must stay
+  deterministic and factual).
+- Insight: put days[]/providers[]/workspaces[] aggregates in the JSON
+  bundle — I had literally just hand-written that Python bucketing to
+  answer the user's own two-week question, which is the strongest
+  possible evidence the bundle was missing it. Rejected: HTML report
+  redesign (report already computes richer tables internally; the gap
+  was machine-consumable output).
+
+** Tradeoff
+- Package-global metacache = hidden coupling; fine for a CLI, would
+  be wrong in a library. Revisit if ccx ever exports parser.
+- Cold discovery pass re-encodes the growing gob per project dir
+  (~2s one-time on 4k files). Accepted; noted in code.
+- Codex thread name deleted from the store lingers on cached entries
+  until the rollout file changes. Renames are always fresh.
+- Trace keeps Bash as "mutation-capable" even for ls/grep — static
+  analysis can't tell. Worst-case trace is still ~1MB when a session
+  genuinely contains 1,300 mutations.
+- detectCorrection keyword matching over-fires (~21 signals where ~5
+  are real). Shipped as-is; it's labeled medium confidence.
+
+** Next
+The live wire: trace has no --since / multi-session support, and the
+ccx-context-fold skill explicitly guards against advertising it. The
+moment someone folds a week of work, that gap becomes the bottleneck.
+Second wire: session pages still ship 10MB of HTML on monster
+sessions — server-side is now 0.4s, but browser DOM cost is unpaid
+debt.
+
+** Artifacts
+- internal/parser/metacache.go (+test), project.go, session.go
+- internal/provider/codex/backend.go (threadName decoupled from parse)
+- internal/fold/{analysis,types}.go (+tests), schema 1.1
+- internal/sessionlog/sessionlog.go aggregates (+test)
+- skills/ccx-context-fold/SKILL.md, skills/ccx-insight/SKILL.md synced
+- CHANGELOG.md, two topic devlogs (discovery cache, trace budget)
+- Verified: index 15s→0.08s, session 44s→0.4s, sessions --all diff
+  byte-identical cached vs cold; full go test green.

@@ -240,6 +240,9 @@ func canonicalize(name string) string {
 	n := strings.ToLower(name)
 	// More specific versions first
 	patterns := []string{
+		"claude-fable-5",
+		"claude-opus-4-8",
+		"claude-opus-4-7",
 		"claude-opus-4-6",
 		"claude-opus-4-5",
 		"claude-opus-4-1",

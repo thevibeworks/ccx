@@ -128,7 +128,7 @@ type Message struct {
 	Model       string // Model ID (e.g., claude-sonnet-4-5-20250929)
 	Subtype     string // For system messages: compact_boundary, local_command
 
-	Usage          *MessageUsage      // Per-message API token usage + cost. nil if absent.
+	Usage          *MessageUsage       // Per-message API token usage + cost. nil if absent.
 	SubAgentResult *SubAgentResultData // Sub-agent summary from toolUseResult. nil for non-agent tool results.
 
 	RawJSON string // Original JSONL line verbatim
@@ -172,12 +172,12 @@ type rawMessage struct {
 	CWD       string `json:"cwd"`       // Working directory
 
 	// Fields added in Claude Code 2.1.137+
-	AITitle      string              `json:"aiTitle"`      // AI-generated session title
-	Entrypoint   string              `json:"entrypoint"`   // "cli" or "web"
-	UserType     string              `json:"userType"`     // "external"
-	StopReason   string              `json:"stopReason"`   // Why the turn ended
-	DurationMs   int                 `json:"durationMs"`   // Turn duration in milliseconds
-	URL          string              `json:"url"`          // Bridge/remote URL
+	AITitle       string          `json:"aiTitle"`       // AI-generated session title
+	Entrypoint    string          `json:"entrypoint"`    // "cli" or "web"
+	UserType      string          `json:"userType"`      // "external"
+	StopReason    string          `json:"stopReason"`    // Why the turn ended
+	DurationMs    int             `json:"durationMs"`    // Turn duration in milliseconds
+	URL           string          `json:"url"`           // Bridge/remote URL
 	ToolUseResult json.RawMessage `json:"toolUseResult"` // Sub-agent result metadata (string or object)
 }
 

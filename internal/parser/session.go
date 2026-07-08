@@ -425,19 +425,27 @@ func computeStats(messages []*Message) SessionStats {
 }
 
 func extractSummary(messages []*Message) string {
-	// Look for actual user prompts only
+	// Look for actual user prompts only. Skip XML-wrapped harness
+	// content (<command-name>, <local-command-stdout>, ...) — the same
+	// rule quickParseSession applies, so list and full-parse summaries
+	// agree.
 	for _, msg := range messages {
-		if msg.Kind == KindUserPrompt {
-			for _, block := range msg.Content {
-				if block.Type == "text" && block.Text != "" {
-					text := strings.TrimSpace(block.Text)
-					// Return first line only (no truncation)
-					if idx := strings.Index(text, "\n"); idx > 0 {
-						return text[:idx]
-					}
-					return text
-				}
+		if msg.Kind != KindUserPrompt {
+			continue
+		}
+		for _, block := range msg.Content {
+			if block.Type != "text" || block.Text == "" {
+				continue
 			}
+			text := strings.TrimSpace(block.Text)
+			if text == "" || strings.HasPrefix(text, "<") {
+				continue
+			}
+			// Return first line only (no truncation)
+			if idx := strings.Index(text, "\n"); idx > 0 {
+				return text[:idx]
+			}
+			return text
 		}
 	}
 	return "(no summary)"

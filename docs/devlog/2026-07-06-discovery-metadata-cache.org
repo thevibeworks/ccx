@@ -1,0 +1,74 @@
+* [2026-07-06] Dev Log: Discovery Metadata Cache                :PERF:WEB:
+
+** Context
+User report: "the web is too slow to render a session, we should
+refactor and rewrite it." Before committing to a rewrite, we profiled.
+
+** Why
+Measured on a real corpus (2.8GB, 4,244 JSONL files, 138 projects):
+
+| Component                        | Time   |
+|----------------------------------+--------|
+| ParseSession (59MB, 9k records)  | 0.38s  |
+| renderSessionPage (progressive)  | 0.04s  |
+| DiscoverProjects (claude)        | 9.7s   |
+
+Rendering was never the problem. =DiscoverProjects= re-read and
+JSON-decoded every line of every session file on every request — and
+the web server runs discovery 3-4x per session page (=FindSession=,
+=FindProject=, per-backend fallbacks). Result: 15-17s index loads,
+44s session pages. A frontend rewrite would have fixed nothing.
+
+** What
+- =FEAT= Persistent session-metadata cache: =internal/parser/metacache.go=
+  - single gob file at =$XDG_DATA_HOME/ccx/meta-cache.gob=, lazy-loaded
+  - key: source path; validity: mtime+size equality
+  - nil-session entries negative-cache skipped files (no summary, warmup)
+  - =MetaLookup= returns copies; =MetaStore= stores copies (no aliasing)
+  - =FlushMetaCache= writes tmp-then-rename, only when dirty
+- =CHANGE= claude discovery (=parser.DiscoverProjectSessions=) consults
+  the cache per file; listability rules extracted to
+  =quickParseListableSession= so skip results are cacheable.
+- =CHANGE= codex discovery (=discoverSessions=) consults the cache via
+  =cachedQuickParse=. =quickParseSession= no longer takes the external
+  =threadNames= map — thread names resolve AFTER cache retrieval on
+  every pass, so renames appear even when rollout files are unchanged.
+  In-file =thread_name_updated= events remain baked in (file-derived,
+  cacheable). Precedence change: the external name store now wins over
+  in-file names (it is the fresher rename state).
+- =CHANGE= =initConfig= wires =parser.InitMetaCache(DataDir()/meta-cache.gob)=.
+
+** Results
+| Path                     | Before | After (warm) |
+|--------------------------+--------+--------------|
+| web index                | 15-17s | 0.08s        |
+| session page (59MB file) | 44s    | 0.4s         |
+| ccx sessions --all       | 16s    | 0.5s         |
+
+Cache file: 1.7MB for 4,244 sources. Cold pass (first run after
+upgrade or cache delete) still pays full parse once.
+
+Correctness check: =ccx sessions --all= output diffed cached vs
+cold-rebuild — byte-identical.
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp |
+|----------+--------------+-----------+-----+-----------|
+| Cache discovery metadata, no rewrite | rewrite web frontend; SQLite index | profiling showed render=40ms; gob map is the smallest fix that fully solves it | eric+claude | 2026-07-06 |
+| Package-global cache in parser | thread cache through 15+ call sites | discovery funnels through 2 choke points; globals initialized once in initConfig; nil-safe for tests | eric+claude | 2026-07-06 |
+| One aggregate gob file | per-source gob files (like session disk cache) | discovery touches all sources per pass — one load beats 4k opens | eric+claude | 2026-07-06 |
+| mtime+size validity | content hash | stat is free; hashing 2.8GB defeats the purpose; matches disk_cache.go convention | eric+claude | 2026-07-06 |
+
+** Notes
+- Known staleness edge: a codex thread name deleted entirely from the
+  name store lingers on cached entries until the rollout file changes.
+  Renames are always fresh.
+- =FlushMetaCache= runs per project dir during a cold full pass —
+  re-encodes the growing map repeatedly. Acceptable (one-time ~2s on
+  4k files); revisit only if cold pass cost ever matters.
+- The full-session disk cache (=session-cache/=, per-file gobs) is
+  unchanged and orthogonal: it caches parsed message trees for viewing;
+  this caches list metadata for discovery.
+- Next perf frontier if needed: the 10MB HTML payload on huge sessions
+  (browser-side DOM cost), and running discovery once per request
+  instead of 3-4x. Both are now sub-second concerns, not user pain.

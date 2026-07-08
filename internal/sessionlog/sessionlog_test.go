@@ -170,3 +170,47 @@ func mustParseTime(t *testing.T, raw string) time.Time {
 	}
 	return parsed
 }
+
+func TestAggregateRecordsBucketsByDayProviderWorkspace(t *testing.T) {
+	loc := time.FixedZone("+08:00", 8*3600)
+	records := []Record{
+		// 2026-01-01 23:30 UTC = 2026-01-02 07:30 +08 — must land on Jan 2 in scope TZ.
+		{Timestamp: mustParseTime(t, "2026-01-01T23:30:00Z"), Provider: "claude-code", SessionID: "s1", Workspace: "/w/a", Kind: "user_prompt"},
+		{Timestamp: mustParseTime(t, "2026-01-02T01:00:00Z"), Provider: "claude-code", SessionID: "s1", Workspace: "/w/a", Kind: "tool_call"},
+		{Timestamp: mustParseTime(t, "2026-01-02T02:00:00Z"), Provider: "codex", SessionID: "s2", Workspace: "/w/b", Kind: "assistant_message", IsSidechain: true},
+		{Timestamp: mustParseTime(t, "2026-01-03T02:00:00Z"), Provider: "codex", SessionID: "s3", Project: "proj-c", Kind: "user_prompt"},
+	}
+
+	days, providers, workspaces := aggregateRecords(records, loc)
+
+	if len(days) != 2 || days[0].Key != "2026-01-02" || days[1].Key != "2026-01-03" {
+		t.Fatalf("days: %+v", days)
+	}
+	if days[0].Records != 3 || days[0].Sessions != 2 || days[0].UserPrompts != 1 || days[0].ToolCalls != 1 || days[0].Sidechains != 1 {
+		t.Fatalf("day[0]: %+v", days[0])
+	}
+
+	if len(providers) != 2 || providers[0].Key != "claude-code" || providers[0].Records != 2 {
+		t.Fatalf("providers: %+v", providers)
+	}
+	if providers[1].Key != "codex" || providers[1].Sessions != 2 {
+		t.Fatalf("providers[1]: %+v", providers[1])
+	}
+
+	if len(workspaces) != 3 {
+		t.Fatalf("workspaces: %+v", workspaces)
+	}
+	if workspaces[0].Key != "/w/a" || workspaces[0].Records != 2 {
+		t.Fatalf("workspaces[0]: %+v", workspaces[0])
+	}
+	// Project name is the fallback key when workspace is absent.
+	found := false
+	for _, w := range workspaces {
+		if w.Key == "proj-c" && w.Records == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing project-fallback workspace: %+v", workspaces)
+	}
+}

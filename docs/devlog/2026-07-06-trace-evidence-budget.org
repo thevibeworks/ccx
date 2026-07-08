@@ -1,0 +1,62 @@
+* [2026-07-06] Dev Log: Trace Evidence Budget                :TRACE:FOLD:
+
+** Context
+User: "improve trace (currently not a good one)". ccx trace feeds the
+ccx-context-fold skill, whose premise is "use the trace as the base
+graph, do not re-parse raw JSONL". Measured real traces: 0.7-2.5MB
+(200-700k tokens). No LLM consumer can hold that; the premise was
+broken from the start.
+
+** Why
+Byte attribution on real sessions showed the bloat was structural:
+
+| Component (worst session)          | Bytes    |
+|------------------------------------+----------|
+| exchange user/assistant text       | ~500KB   |
+| per-exchange tool_calls (2,136)    | ~624KB   |
+| sidechain evidence embedded TWICE  | ~530KB   |
+
+Plus quality noise: session.summary was ANSI-escaped
+=<local-command-stdout>= garbage (full-parse extractSummary lacked the
+XML-skip rule quickparse has), and exchanges carried raw
+=<command-name>= tag soup.
+
+** What
+- =CHANGE= Trace schema 1.1 (kind stays =ccx.trace.v1=, additive):
+  - exchange text bounded: head+tail excerpt, 2,000-rune cap, inline
+    =[... N chars omitted ...]= marker, =user_text_truncated= /
+    =assistant_text_truncated= flags. =anchor_id= is the drill-down.
+  - ANSI escapes stripped; command XML condensed to
+    =command: /name args= + =stdout: ...= lines.
+  - =tool_calls= itemize mutation-capable + failed calls only; new
+    =tool_counts= map summarizes everything; file lists unchanged.
+  - sidechains: full evidence once at top level; per-exchange entries
+    are light references (id, type, summary, counts, cost).
+- =FIX= =parser.extractSummary= skips =<=-prefixed harness XML,
+  aligned with quickparse, keeps scanning for the first real prompt.
+- =CHANGE= ccx-context-fold SKILL.md evidence-node contract updated.
+
+** Results
+| Session                          | Before | After  |
+|----------------------------------+--------+--------|
+| worst case (133 exch, 32 agents) | 2.5MB  | 1.0MB  |
+| typical (49 exch)                | ~700KB | <150KB |
+
+Worst-case remainder is genuine mutation evidence (1,327 Bash/Edit/
+Write calls) — proportional to real work, not duplication.
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp |
+|----------+--------------+-----------+-----+-----------|
+| Bound text, keep pointers | full transcript; separate --light flag | trace is evidence, not transcript; anchor_id already provides drill-down; no flag creep | eric+claude | 2026-07-06 |
+| Itemize mutations+errors only | keep all calls; aggregate all | decisions hang on writes and failures; reads are represented by counts+file lists | eric+claude | 2026-07-06 |
+| No --full-evidence flag | add flag | YAGNI; raw JSONL remains the forensic source | eric+claude | 2026-07-06 |
+
+** Notes
+- =detectCorrection= keyword matching over-triggers ("stop", "no ")
+  — 21 signals on a session with ~5 real corrections. Future: word
+  boundaries + position weighting, or drop confidence to "low".
+- Bash is counted mutation-capable even for read-only commands
+  (ls, grep, go test) — static analysis can't tell; accepted.
+- The skill's multi-session story still needs =ccx trace --since=;
+  SKILL.md already guards against advertising it early.

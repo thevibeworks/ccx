@@ -284,9 +284,9 @@ func TestMatchSession(t *testing.T) {
 
 func TestParseTimestamp(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		isZero  bool
+		name   string
+		input  string
+		isZero bool
 	}{
 		{"RFC3339", "2026-03-24T10:00:00Z", false},
 		{"RFC3339Nano", "2026-03-24T10:00:00.123456789Z", false},

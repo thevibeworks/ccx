@@ -1,4 +1,4 @@
-package fold
+package trace
 
 import (
 	"crypto/sha256"

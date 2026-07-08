@@ -39,13 +39,24 @@ var (
 		InputPer1M: 5.00, OutputPer1M: 25.00,
 		CacheReadPer1M: 0.50, CacheWritePer1M: 6.25,
 	}
-costHaiku_35 = ModelPricing{
+	costHaiku_35 = ModelPricing{
 		InputPer1M: 0.80, OutputPer1M: 4.00,
 		CacheReadPer1M: 0.08, CacheWritePer1M: 1.00,
 	}
 	costHaiku_45 = ModelPricing{
 		InputPer1M: 1.00, OutputPer1M: 5.00,
 		CacheReadPer1M: 0.10, CacheWritePer1M: 1.25,
+	}
+
+	// Fable 5 tier. Input/output ($10/$50 per MTok) are VERIFIED against the
+	// public claude-api model catalog (shared/models.md: "$10/$50 per MTok").
+	// Cache rates follow Anthropic's universal multipliers — cache-read = 10%
+	// of input, 5-minute cache-write = 125% of input — the same ratio every
+	// Claude tier obeys; the catalog publishes no per-model cache rate that
+	// deviates from it, and Fable 5 shares Opus's API surface.
+	costTier_10_50 = ModelPricing{
+		InputPer1M: 10.00, OutputPer1M: 50.00,
+		CacheReadPer1M: 1.00, CacheWritePer1M: 12.50, // 0.1x / 1.25x of input (standard ratio)
 	}
 
 	// Codex / GPT-5.x tiers.
@@ -95,11 +106,16 @@ var pricingTable = map[string]ModelPricing{
 	"claude-sonnet-4-5": costTier_3_15,
 	"claude-sonnet-4-6": costTier_3_15,
 
-	// Opus 4 / 4.1 on tier 15/75; Opus 4.5 / 4.6 dropped to tier 5/25
+	// Opus 4 / 4.1 on tier 15/75; Opus 4.5+ dropped to tier 5/25
 	"claude-opus-4":   costTier_15_75,
 	"claude-opus-4-1": costTier_15_75,
 	"claude-opus-4-5": costTier_5_25,
 	"claude-opus-4-6": costTier_5_25, // Default (non-fast-mode)
+	"claude-opus-4-7": costTier_5_25,
+	"claude-opus-4-8": costTier_5_25,
+
+	// Fable 5 — new tier above Opus ($10/$50). See costTier_10_50.
+	"claude-fable-5": costTier_10_50,
 
 	// Codex / GPT-5.x models — see tier constants above for caveats.
 	"gpt-5":        costGPT54_10_80,
@@ -134,6 +150,9 @@ func LookupPricing(model string) *ModelPricing {
 
 	// Claude family — more specific before less specific
 	for _, key := range []string{
+		"claude-fable-5",
+		"claude-opus-4-8",
+		"claude-opus-4-7",
 		"claude-opus-4-6",
 		"claude-opus-4-5",
 		"claude-opus-4-1",

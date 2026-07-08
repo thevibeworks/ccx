@@ -3,11 +3,13 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/thevibeworks/ccx/internal/config"
+	"github.com/thevibeworks/ccx/internal/parser"
 )
 
 var (
@@ -38,7 +40,7 @@ CLI commands:
   ccx sessions              List sessions
   ccx view                  View session in terminal
   ccx export -f html        Export to HTML/Markdown/Org
-  ccx trace                 Extract evidence for context folding
+  ccx trace                 What the agent did: turn/step outline + drill-down
   ccx log                   Slice raw session logs by time scope
 
 Supports Claude Code (~/.claude) and Codex (~/.codex) sessions.
@@ -76,6 +78,7 @@ func init() {
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(traceCmd)
 	rootCmd.AddCommand(logCmd)
+	rootCmd.AddCommand(insightCmd)
 }
 
 func initConfig() {
@@ -112,4 +115,9 @@ func initConfig() {
 	viper.SetDefault("export.default_format", "html")
 
 	_ = viper.ReadInConfig()
+
+	// Persistent discovery-metadata cache: without it every project or
+	// session listing re-scans the full corpus of session files. Loaded
+	// lazily on first discovery; safe to point at a missing file.
+	parser.InitMetaCache(filepath.Join(config.DataDir(), "meta-cache.gob"))
 }

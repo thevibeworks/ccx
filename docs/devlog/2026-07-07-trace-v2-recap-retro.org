@@ -1,0 +1,76 @@
+* [2026-07-07] Trace v2: Turns, Steps, Recap, Retro          :ARCH:FEAT:
+
+** Tension
+Dogfooding trace on our own session was damning. The user: "totally
+shit html result" and "wtf is fold? this is too like 'too verb'".
+Grounded findings behind the vibes:
+- One autonomous turn (76min, 42 files, 153 tool calls, three shipped
+  features) rendered as ONE exchange row. The decision chain was
+  unrecoverable because the exchange model keeps only the LAST
+  assistant message per user prompt.
+- The Go HTML renderer emitted invalid UTF-8 (byte-sliced CJK) into
+  a 134-row page nobody could read.
+- has_correction flagged the user's "Good work!" as a correction
+  (substring "actually ").
+- Skill names were mechanism words (fold, insight, knowledge patch)
+  answering no human question.
+
+** Observation
+Agents narrate decisions AT THE MOMENT they act — "Root cause
+identified: ...", "The diagnosis is in, it kills the rewrite idea" —
+in text blocks between tool calls. The old trace threw all of them
+away. The story was in the data; the data structure discarded it.
+
+** Decision
+Division of labor made explicit: *ccx is the database, skills are the
+analyst, HTML is written by the analyst.*
+- New primitive: turn (user intent) → steps (say-then-do units
+  anchored on narration blocks). Tool errors attributed to the step
+  that issued the call via tool-result IDs — v1 literally always
+  reported 0 errors because it read IsError off tool_use blocks.
+- Progressive disclosure replaces the blob: `ccx trace` = terminal
+  outline (default; the thing you want should be the default),
+  `--json` outline, `--turn N` drill-down, `--full` bundle.
+- Skills renamed to the user's questions: /ccx-recap ("what did the
+  agent do?") and /ccx-retro ("what went wrong, what should
+  change?"). Retro's output is a proposed patch to CLAUDE.md/AGENTS/
+  skills/memory — the stores agents ALREADY read — behind a human
+  gate. The .ccx/knowledge parallel store is dead: a knowledge base
+  nothing loads automatically is where lessons go to die.
+- Deleted: fold/html.go (~450 lines), --html, signals machinery,
+  keyword correction detection. Package renamed internal/fold →
+  internal/trace.
+- Rejected: keeping a --light flag (outline IS the light mode),
+  LLM-side summarization in the CLI (must stay deterministic),
+  fixing the correction keywords (the analyst reads user text
+  directly and judges better than substring matching ever will).
+
+** Tradeoff
+- Schema break v1 → v2. We own both ends; no external consumers yet.
+- Outline of a 137-turn monster is ~94KB text — fine for skills,
+  bulky for humans; a --last N filter is an obvious future knob.
+- Sidechain internals still summarized (counts + files + mutations),
+  not stepped; sub-agent narration remains unmined.
+- Insight report TZ fix (records .In(loc)) makes HTML agree with the
+  JSON days[] — but "today --tz +8 from a PDT machine" still
+  silently yields a 5-hour window. Correct, human-surprising; recap
+  skill warns, CLI does not yet.
+
+** Next
+The live wire: run /ccx-recap and /ccx-retro against this session
+for real. The outline acceptance test passed (the kill-the-rewrite
+chain is now 25 legible step headlines), but the skills haven't been
+exercised end-to-end by a fresh agent. Second wire: web UI has no
+outline view — the session page still renders full transcripts only;
+a turns/steps sidebar would make the web the human counterpart of
+`ccx trace`.
+
+** Artifacts
+- internal/trace/{types,analysis,outline,git}.go (+tests, all green)
+- internal/cmd/trace.go (outline default, --turn, --full)
+- skills/ccx-recap, skills/ccx-retro (new); ccx-context-fold,
+  ccx-insight (removed)
+- internal/insight/report.go scope-TZ fix
+- Verified: `ccx trace` on session 2ab82055 — turn #133 shows the
+  full profile→cache→verify chain; `--turn 133` = 52KB with 25 steps,
+  17 mutations, error attribution.

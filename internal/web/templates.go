@@ -3029,6 +3029,7 @@ func renderSidebar(active string) string {
 	}{
 		{"/", "Projects", "projects"},
 		{"/search", "Search", "search"},
+		{"/insights", "Insights", "insights"},
 		{"/memory", "Memory", "memory"},
 		{"/settings", "Settings", "settings"},
 	}
