@@ -65,7 +65,7 @@ func DefaultExportFormat() string {
 
 func DataDir() string {
 	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-		return filepath.Join(xdg, "ccx")
+		return filepath.Join(expandPath(xdg), "ccx")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

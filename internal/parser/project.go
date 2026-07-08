@@ -77,36 +77,60 @@ func DiscoverProjectSessions(projectPath string) ([]*Session, error) {
 
 		sessionPath := filepath.Join(projectPath, name)
 
-		summary, startTime, endTime, stats, meta := quickParseSession(sessionPath)
-		if summary == "" || summary == "(no summary)" {
+		info, err := entry.Info()
+		if err != nil {
 			continue
 		}
-		if strings.ToLower(summary) == "warmup" {
+		if cached, hit := MetaLookup(sessionPath, info.ModTime(), info.Size()); hit {
+			if cached != nil {
+				sessions = append(sessions, cached)
+			}
 			continue
 		}
 
-		session := &Session{
-			ID:          strings.TrimSuffix(name, ".jsonl"),
-			FilePath:    sessionPath,
-			ProjectName: filepath.Base(projectPath),
-			Summary:     summary,
-			StartTime:   startTime,
-			EndTime:     endTime,
-			Stats:       stats,
-			Slug:        meta.Slug,
-			Version:     meta.Version,
-			GitBranch:   meta.GitBranch,
-			CWD:         meta.CWD,
-			Model:       meta.Model,
+		session := quickParseListableSession(sessionPath, name, projectPath)
+		MetaStore(sessionPath, info.ModTime(), info.Size(), session)
+		if session != nil {
+			sessions = append(sessions, session)
 		}
-		sessions = append(sessions, session)
 	}
+	FlushMetaCache()
 
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].EndTime.After(sessions[j].EndTime)
 	})
 
 	return sessions, nil
+}
+
+// quickParseListableSession runs the metadata quick-parse and applies
+// the listability rules (skip empty/no-summary/warmup files). Returns
+// nil when the file should not appear in session lists — a result the
+// metadata cache records so skipped files aren't re-scanned every
+// discovery pass.
+func quickParseListableSession(sessionPath, fileName, projectPath string) *Session {
+	summary, startTime, endTime, stats, meta := quickParseSession(sessionPath)
+	if summary == "" || summary == "(no summary)" {
+		return nil
+	}
+	if strings.ToLower(summary) == "warmup" {
+		return nil
+	}
+
+	return &Session{
+		ID:          strings.TrimSuffix(fileName, ".jsonl"),
+		FilePath:    sessionPath,
+		ProjectName: filepath.Base(projectPath),
+		Summary:     summary,
+		StartTime:   startTime,
+		EndTime:     endTime,
+		Stats:       stats,
+		Slug:        meta.Slug,
+		Version:     meta.Version,
+		GitBranch:   meta.GitBranch,
+		CWD:         meta.CWD,
+		Model:       meta.Model,
+	}
 }
 
 func FindProject(projectsDir, name string) (*Project, error) {

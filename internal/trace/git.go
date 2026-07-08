@@ -1,4 +1,4 @@
-package fold
+package trace
 
 import (
 	"bufio"
@@ -14,7 +14,7 @@ func CorrelateGit(result *TraceResult, repoDir string) error {
 	if result == nil || repoDir == "" {
 		return nil
 	}
-	exchanges := result.Exchanges
+	turns := result.Turns
 
 	result.Git.RepoRoot = repoDir
 	result.Git.Branch = gitOutput(repoDir, "branch", "--show-current")
@@ -33,7 +33,7 @@ func CorrelateGit(result *TraceResult, repoDir string) error {
 	result.Git.UncommittedStat = gitOutput(repoDir, "diff", "--stat", "HEAD", "--")
 	result.Stats.UncommittedFiles = len(status)
 
-	if len(exchanges) == 0 {
+	if len(turns) == 0 {
 		return nil
 	}
 
@@ -68,26 +68,26 @@ func CorrelateGit(result *TraceResult, repoDir string) error {
 
 	result.Git.Commits = commits
 
-	editedByExchange := make(map[int]map[string]struct{})
-	for i, exchange := range exchanges {
+	editedByTurn := make(map[int]map[string]struct{})
+	for i, turn := range turns {
 		m := make(map[string]struct{})
-		for _, f := range exchange.FilesEdited {
+		for _, f := range turn.FilesEdited {
 			for _, normalized := range normalizeEvidencePath(repoDir, sessionRoot, f) {
 				m[normalized] = struct{}{}
 			}
 		}
-		editedByExchange[i] = m
+		editedByTurn[i] = m
 	}
 
-	var links []ExchangeCommitLink
+	var links []TurnCommitLink
 	linkedCommits := make(map[string]struct{})
 
 	for _, commit := range commits {
-		bestExchange := -1
+		bestTurn := -1
 		var bestOverlap []string
 
-		for i := range exchanges {
-			edited := editedByExchange[i]
+		for i := range turns {
+			edited := editedByTurn[i]
 			if len(edited) == 0 {
 				continue
 			}
@@ -99,27 +99,27 @@ func CorrelateGit(result *TraceResult, repoDir string) error {
 			}
 			if len(overlap) > len(bestOverlap) {
 				bestOverlap = overlap
-				bestExchange = i
+				bestTurn = i
 			}
 		}
 
-		if bestExchange >= 0 && len(bestOverlap) > 0 {
-			links = append(links, ExchangeCommitLink{
-				ExchangeIndex: exchanges[bestExchange].Index,
-				CommitSHA:     commit.SHA,
-				FileOverlap:   bestOverlap,
-				Confidence:    "high",
+		if bestTurn >= 0 && len(bestOverlap) > 0 {
+			links = append(links, TurnCommitLink{
+				TurnIndex:   turns[bestTurn].Index,
+				CommitSHA:   commit.SHA,
+				FileOverlap: bestOverlap,
+				Confidence:  "high",
 			})
 			linkedCommits[commit.SHA] = struct{}{}
 
-			if len(result.Exchanges) > bestExchange {
-				result.Exchanges[bestExchange].LinkedCommits = append(
-					result.Exchanges[bestExchange].LinkedCommits, commit.SHA)
+			if len(result.Turns) > bestTurn {
+				result.Turns[bestTurn].LinkedCommits = append(
+					result.Turns[bestTurn].LinkedCommits, commit.SHA)
 			}
 		}
 	}
 
-	result.Git.ExchangeCommitLinks = links
+	result.Git.TurnCommitLinks = links
 	result.Stats.CommitsLinked = len(linkedCommits)
 	return nil
 }

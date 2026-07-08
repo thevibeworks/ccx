@@ -40,12 +40,31 @@ type Options struct {
 }
 
 type Bundle struct {
-	Kind        string         `json:"kind"`
-	Scope       ScopeSummary   `json:"scope"`
-	GeneratedAt time.Time      `json:"generated_at"`
-	Metrics     Metrics        `json:"metrics"`
-	Sessions    []SessionSlice `json:"sessions"`
-	Records     []Record       `json:"records"`
+	Kind        string       `json:"kind"`
+	Scope       ScopeSummary `json:"scope"`
+	GeneratedAt time.Time    `json:"generated_at"`
+	Metrics     Metrics      `json:"metrics"`
+	// Days/Providers/Workspaces pre-aggregate the in-scope records so
+	// consumers (insight reports, the ccx-insight skill) can answer
+	// "what happened when/where" without re-bucketing thousands of
+	// records themselves. Computed before any record limit is applied.
+	Days       []Aggregate    `json:"days,omitempty"`
+	Providers  []Aggregate    `json:"providers,omitempty"`
+	Workspaces []Aggregate    `json:"workspaces,omitempty"`
+	Sessions   []SessionSlice `json:"sessions"`
+	Records    []Record       `json:"records"`
+}
+
+// Aggregate is one bucket of activity: a calendar day (in the scope's
+// timezone), a provider, or a workspace, identified by Key.
+type Aggregate struct {
+	Key               string `json:"key"`
+	Sessions          int    `json:"sessions"`
+	Records           int    `json:"records"`
+	UserPrompts       int    `json:"user_prompts"`
+	AssistantMessages int    `json:"assistant_messages"`
+	ToolCalls         int    `json:"tool_calls"`
+	Sidechains        int    `json:"sidechains"`
 }
 
 type ScopeSummary struct {
@@ -247,11 +266,83 @@ func Collect(sources []Source, opts Options) (*Bundle, error) {
 		}
 		return bundle.Records[i].Timestamp.Before(bundle.Records[j].Timestamp)
 	})
+	bundle.Days, bundle.Providers, bundle.Workspaces = aggregateRecords(bundle.Records, now.Location())
 	if opts.Limit > 0 && len(bundle.Records) > opts.Limit {
 		bundle.Records = bundle.Records[:opts.Limit]
 	}
 	bundle.Metrics = metricsFor(bundle.Sessions, len(bundle.Records), opts.Limit, opts.Start, opts.End)
 	return bundle, nil
+}
+
+// aggregateRecords buckets records by calendar day (in loc), provider,
+// and workspace. Days sort chronologically; providers and workspaces
+// sort by record volume, busiest first.
+func aggregateRecords(records []Record, loc *time.Location) (days, providers, workspaces []Aggregate) {
+	type bucket struct {
+		agg      Aggregate
+		sessions map[string]struct{}
+	}
+	tally := func(m map[string]*bucket, key string, r Record) {
+		b := m[key]
+		if b == nil {
+			b = &bucket{agg: Aggregate{Key: key}, sessions: make(map[string]struct{})}
+			m[key] = b
+		}
+		b.sessions[r.SessionID] = struct{}{}
+		b.agg.Records++
+		switch r.Kind {
+		case "user_prompt":
+			b.agg.UserPrompts++
+		case "assistant_message":
+			b.agg.AssistantMessages++
+		case "tool_call":
+			b.agg.ToolCalls++
+		}
+		if r.IsSidechain || r.IsSubagent {
+			b.agg.Sidechains++
+		}
+	}
+
+	dayBuckets := make(map[string]*bucket)
+	providerBuckets := make(map[string]*bucket)
+	workspaceBuckets := make(map[string]*bucket)
+	for _, r := range records {
+		tally(dayBuckets, r.Timestamp.In(loc).Format("2006-01-02"), r)
+		tally(providerBuckets, r.Provider, r)
+		workspace := r.Workspace
+		if workspace == "" {
+			workspace = r.Project
+		}
+		if workspace == "" {
+			workspace = "(unknown)"
+		}
+		tally(workspaceBuckets, workspace, r)
+	}
+
+	collect := func(m map[string]*bucket) []Aggregate {
+		out := make([]Aggregate, 0, len(m))
+		for _, b := range m {
+			b.agg.Sessions = len(b.sessions)
+			out = append(out, b.agg)
+		}
+		return out
+	}
+
+	days = collect(dayBuckets)
+	sort.Slice(days, func(i, j int) bool { return days[i].Key < days[j].Key })
+	providers = collect(providerBuckets)
+	workspaces = collect(workspaceBuckets)
+	byVolume := func(s []Aggregate) func(int, int) bool {
+		return func(i, j int) bool {
+			if s[i].Records != s[j].Records {
+				return s[i].Records > s[j].Records
+			}
+			return s[i].Key < s[j].Key
+		}
+	}
+	sort.Slice(providers, byVolume(providers))
+	sort.Slice(workspaces, byVolume(workspaces))
+	return days, providers, workspaces
 }
 
 func discoverFiles(source Source) ([]string, error) {

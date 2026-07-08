@@ -3,6 +3,7 @@
 
 ### macOS ###
 # General
+.env
 bin/ccx
 /ccx
 .DS_Store

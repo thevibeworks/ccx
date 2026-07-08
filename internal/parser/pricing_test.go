@@ -201,6 +201,40 @@ func TestLookupPricing_OpusMoreSpecificBeforeLess(t *testing.T) {
 	}
 }
 
+func TestLookupPricing_LatestModels(t *testing.T) {
+	// Newest models must resolve to their correct tier. Guards match
+	// order: claude-opus-4-8 / 4-7 must win before claude-opus-4
+	// (tier 5/25, not the legacy 15/75 Opus 4/4.1 tier).
+	cases := []struct {
+		model      string
+		canonical  string
+		wantInput  float64
+		wantOutput float64
+	}{
+		{"claude-opus-4-8", "claude-opus-4-8", 5.00, 25.00},
+		{"claude-opus-4-8-20260101", "claude-opus-4-8", 5.00, 25.00},
+		{"claude-opus-4-7", "claude-opus-4-7", 5.00, 25.00},
+		{"claude-fable-5", "claude-fable-5", 10.00, 50.00},
+		{"claude-fable-5-20260101", "claude-fable-5", 10.00, 50.00},
+	}
+	for _, c := range cases {
+		p := LookupPricing(c.model)
+		if p == nil {
+			t.Errorf("LookupPricing(%q) returned nil, want %q tier", c.model, c.canonical)
+			continue
+		}
+		if p.Model != c.canonical {
+			t.Errorf("LookupPricing(%q).Model = %q, want %q", c.model, p.Model, c.canonical)
+		}
+		if p.InputPer1M != c.wantInput {
+			t.Errorf("LookupPricing(%q).InputPer1M = %v, want %v", c.model, p.InputPer1M, c.wantInput)
+		}
+		if p.OutputPer1M != c.wantOutput {
+			t.Errorf("LookupPricing(%q).OutputPer1M = %v, want %v", c.model, p.OutputPer1M, c.wantOutput)
+		}
+	}
+}
+
 func TestComputeCost_AllCategories(t *testing.T) {
 	pricing := &ModelPricing{
 		InputPer1M: 3.00, OutputPer1M: 15.00, CacheReadPer1M: 0.30, CacheWritePer1M: 3.75,

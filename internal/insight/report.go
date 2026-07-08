@@ -37,9 +37,10 @@ type PromptEvent struct {
 }
 
 func GenerateHTMLReport(bundle *sessionlog.Bundle) []byte {
-	workspaces := aggregateWorkspaces(bundle)
-	daily := aggregateDaily(bundle)
-	prompts := collectPrompts(bundle)
+	loc := scopeLocation(bundle)
+	workspaces := aggregateWorkspaces(bundle, loc)
+	daily := aggregateDaily(bundle, loc)
+	prompts := collectPrompts(bundle, loc)
 	kinds := countKinds(bundle)
 	provCC, provCX := countProviders(bundle)
 	longRunning := countLongRunning(bundle)
@@ -208,7 +209,7 @@ func providerBadges(providers map[string]bool) string {
 	return strings.Join(parts, " ")
 }
 
-func aggregateWorkspaces(bundle *sessionlog.Bundle) []WorkspaceStats {
+func aggregateWorkspaces(bundle *sessionlog.Bundle, loc *time.Location) []WorkspaceStats {
 	m := make(map[string]*WorkspaceStats)
 	for _, r := range bundle.Records {
 		ws, ok := m[r.Project]
@@ -222,7 +223,7 @@ func aggregateWorkspaces(bundle *sessionlog.Bundle) []WorkspaceStats {
 		}
 		ws.Records++
 		ws.Providers[r.Provider] = true
-		ws.Days[r.Timestamp.Format("2006-01-02")] = true
+		ws.Days[r.Timestamp.In(loc).Format("2006-01-02")] = true
 		switch r.Kind {
 		case "user_prompt":
 			ws.Prompts++
@@ -238,11 +239,11 @@ func aggregateWorkspaces(bundle *sessionlog.Bundle) []WorkspaceStats {
 	return result
 }
 
-func aggregateDaily(bundle *sessionlog.Bundle) []DailyStats {
+func aggregateDaily(bundle *sessionlog.Bundle, loc *time.Location) []DailyStats {
 	m := make(map[string]*DailyStats)
 	wsPerDay := make(map[string]map[string]bool)
 	for _, r := range bundle.Records {
-		date := r.Timestamp.Format("2006-01-02")
+		date := r.Timestamp.In(loc).Format("2006-01-02")
 		d, ok := m[date]
 		if !ok {
 			d = &DailyStats{Date: date}
@@ -272,14 +273,14 @@ func aggregateDaily(bundle *sessionlog.Bundle) []DailyStats {
 	return result
 }
 
-func collectPrompts(bundle *sessionlog.Bundle) []PromptEvent {
+func collectPrompts(bundle *sessionlog.Bundle, loc *time.Location) []PromptEvent {
 	var prompts []PromptEvent
 	for _, r := range bundle.Records {
 		if r.Kind != "user_prompt" || r.Text == "" {
 			continue
 		}
 		prompts = append(prompts, PromptEvent{
-			Timestamp: r.Timestamp.Format("2006-01-02 15:04"),
+			Timestamp: r.Timestamp.In(loc).Format("2006-01-02 15:04"),
 			Provider:  r.Provider,
 			Project:   r.Project,
 			Text:      r.Text,
@@ -317,9 +318,18 @@ func countLongRunning(bundle *sessionlog.Bundle) int {
 	return count
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// scopeLocation resolves the timezone the report claims in its header
+// (Scope.TimeZone) so day bucketing and displayed times agree with it.
+// Record timestamps arrive in UTC or source-local offsets; formatting
+// them raw put activity on the wrong calendar day.
+func scopeLocation(bundle *sessionlog.Bundle) *time.Location {
+	if bundle != nil && bundle.Scope.TimeZone != "" {
+		if loc, err := LoadLocation(bundle.Scope.TimeZone); err == nil {
+			return loc
+		}
 	}
-	return b
+	if bundle != nil && !bundle.GeneratedAt.IsZero() {
+		return bundle.GeneratedAt.Location()
+	}
+	return time.Local
 }

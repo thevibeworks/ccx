@@ -13,6 +13,7 @@ import (
 
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/db"
+	"github.com/thevibeworks/ccx/internal/insight"
 	"github.com/thevibeworks/ccx/internal/parser"
 	"github.com/thevibeworks/ccx/internal/provider"
 	"github.com/thevibeworks/ccx/internal/render"
@@ -88,6 +89,8 @@ func Serve(addr string, backend provider.Backend) error {
 	mux.HandleFunc("/settings", handleSettings)
 	mux.HandleFunc("/memory", handleMemory)
 	mux.HandleFunc("/search", handleSearchPage)
+	mux.HandleFunc("/insights", handleInsights)
+	mux.HandleFunc("/insights/", handleInsightView)
 
 	// API
 	mux.HandleFunc("/api/projects", handleAPIProjects)
@@ -1579,4 +1582,69 @@ func formatAge(t time.Time) string {
 	default:
 		return t.Format("2006-01-02")
 	}
+}
+
+func handleInsights(w http.ResponseWriter, r *http.Request) {
+	reports, err := insight.ListReports()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	theme := r.URL.Query().Get("theme")
+	if theme == "" {
+		theme = "light"
+	}
+
+	var b strings.Builder
+	b.WriteString(pageHeader("Insights", theme))
+	b.WriteString(renderTopNav("", ""))
+	b.WriteString(`<div class="layout">`)
+	b.WriteString(renderSidebar("insights"))
+	b.WriteString(`<main class="main-content">`)
+	b.WriteString(`<div class="page-header"><h1>Insights</h1></div>`)
+
+	if len(reports) == 0 {
+		b.WriteString(`<p style="color:#6b7280;padding:24px">No insight reports yet. Generate one with: <code>ccx insight --scope week --all</code></p>`)
+	} else {
+		b.WriteString(`<table style="width:100%;border-collapse:collapse;font-size:13px">`)
+		b.WriteString(`<tr><th style="text-align:left;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280">Report</th>`)
+		b.WriteString(`<th style="text-align:left;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280">Scope</th>`)
+		b.WriteString(`<th style="text-align:right;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280">Size</th>`)
+		b.WriteString(`<th style="text-align:left;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280">Created</th></tr>`)
+		for _, rpt := range reports {
+			size := fmt.Sprintf("%.0fKB", float64(rpt.Size)/1024)
+			b.WriteString(fmt.Sprintf(`<tr style="cursor:pointer" onclick="location='/insights/%s'">`,
+				rpt.Name))
+			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid #e5e5e0"><a href="/insights/%s" style="color:#da7756;text-decoration:none">%s</a></td>`,
+				rpt.Name, rpt.Name))
+			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid #e5e5e0">%s</td>`, rpt.Scope))
+			b.WriteString(fmt.Sprintf(`<td style="text-align:right;padding:6px 8px;border-bottom:1px solid #e5e5e0;font-family:monospace">%s</td>`, size))
+			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid #e5e5e0">%s</td>`, formatAge(rpt.CreatedAt)))
+			b.WriteString(`</tr>`)
+		}
+		b.WriteString(`</table>`)
+	}
+
+	b.WriteString(`</main></div>`)
+	b.WriteString(renderFooter())
+	b.WriteString(`</body></html>`)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, b.String())
+}
+
+func handleInsightView(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/insights/")
+	if name == "" || strings.Contains(name, "..") || strings.Contains(name, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	path := filepath.Join(insight.InsightsDir(), name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(data)
 }

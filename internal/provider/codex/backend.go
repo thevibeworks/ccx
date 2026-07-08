@@ -393,10 +393,14 @@ func (b *Backend) discoverSessions(threadNames map[string]string) ([]*parser.Ses
 
 	sessionsByID := make(map[string]*parser.Session)
 	for _, filePath := range files {
-		session, err := b.quickParseSession(filePath, threadNames)
-		if err != nil || session == nil {
+		session := b.cachedQuickParse(filePath)
+		if session == nil {
 			continue
 		}
+		// Thread names live in a separate mutable store, so they are
+		// applied after the (cacheable) file parse — a rename shows up
+		// on the next discovery even when the rollout file is unchanged.
+		session.Summary = chooseSummary(threadNames[session.ID], session.Summary)
 
 		key := session.ID
 		if key == "" {
@@ -408,6 +412,7 @@ func (b *Backend) discoverSessions(threadNames map[string]string) ([]*parser.Ses
 			sessionsByID[key] = session
 		}
 	}
+	parser.FlushMetaCache()
 
 	sessions := make([]*parser.Session, 0, len(sessionsByID))
 	for _, session := range sessionsByID {
@@ -505,7 +510,27 @@ func (b *Backend) readThreadNames() (map[string]string, error) {
 	return names, nil
 }
 
-func (b *Backend) quickParseSession(filePath string, threadNames map[string]string) (*parser.Session, error) {
+// cachedQuickParse returns discovery metadata for one rollout file,
+// consulting the persistent metadata cache before paying a full-file
+// scan. Cached sessions carry the raw first-user summary; thread-name
+// resolution happens in discoverSessions on every pass.
+func (b *Backend) cachedQuickParse(filePath string) *parser.Session {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return nil
+	}
+	if cached, hit := parser.MetaLookup(filePath, info.ModTime(), info.Size()); hit {
+		return cached
+	}
+	session, err := b.quickParseSession(filePath)
+	if err != nil || session == nil {
+		return nil
+	}
+	parser.MetaStore(filePath, info.ModTime(), info.Size(), session)
+	return session
+}
+
+func (b *Backend) quickParseSession(filePath string) (*parser.Session, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -513,7 +538,7 @@ func (b *Backend) quickParseSession(filePath string, threadNames map[string]stri
 	defer file.Close()
 
 	sessionID := strings.TrimSuffix(filepath.Base(filePath), ".jsonl")
-	threadName := strings.TrimSpace(threadNames[sessionID])
+	threadName := "" // from in-file thread_name_updated events only (cacheable)
 	summary := ""
 	meta := parser.SessionMeta{}
 	stats := parser.SessionStats{}
@@ -558,9 +583,6 @@ func (b *Backend) quickParseSession(filePath string, threadNames map[string]stri
 			}
 			if payload.ID != "" {
 				sessionID = payload.ID
-				if threadName == "" {
-					threadName = strings.TrimSpace(threadNames[payload.ID])
-				}
 			}
 			if meta.CWD == "" && payload.CWD != "" {
 				meta.CWD = payload.CWD
