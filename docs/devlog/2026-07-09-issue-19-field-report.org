@@ -1,0 +1,63 @@
+* [2026-07-09] Dev Log: Issue #19 field report response            :FIX:FEAT:
+
+** Context
+Issue #19 grilled ccx from real usage: a 60-turn / $177 / 35-day
+session recapped through the shipped skills, driven skeptically,
+five receipts filed plus an architecture comment. The bugs were
+individually small; the pattern underneath them was not.
+
+** Why
+Three of the five receipts share one root: the skills version with
+the repo, the binary versions with tags, and nothing enforces
+agreement. The other two (wall-span duration, silent local time) are
+honesty bugs in numbers the skills tell agents to trust ("numbers
+come from the trace, never estimated" — so the trace must not lie).
+
+** What
+- =FEAT= ~ccx skills~ command: skills embedded via go:embed;
+  ~install [--scope user|project]~ + ~list~ with drift detection.
+  install.sh skill step now delegates to the binary.
+- =FEAT= ~active_seconds~ per turn and in stats: sum of
+  inter-message gaps, each capped at 5 min. Outline header and turn
+  badges use it; wall-span stays in ~duration_seconds~.
+- =FIX= Session ID lookup widens workspace miss to all projects
+  (IDs are globally unique); explicit ~-p~ scope errors name the
+  project searched and suggest ~--all~.
+- =FIX= Outline header states rendered timezone (~times UTC-7~).
+- =CHANGE= docs/schema.md: kinds table, versioning policy, semantics.
+- =CHANGE= recap/retro land durable knowledge with
+  ~[ccx:<session-id> #turn.step]~ citations; explicit cross-routing
+  in descriptions; minimum-version preflight.
+
+** How
+- Embed lives in ~skills/embed.go~ (package skills, ~//go:embed
+  */SKILL.md~) — the Go file sits next to the data it embeds.
+  ~TestBundledSkillsMatchRepoFiles~ pins embedded == repo bytes.
+- Fallback lives in ~resolveSessionInQuery~ (shared by
+  trace/view/export) so all three commands widen consistently.
+  ~@N~ index lookups stay scope-relative — an index is only
+  meaningful within the scope that ordered it.
+- Active time: cap semantics (~min(gap, 5m)~ summed) over skip
+  semantics — a sparse-but-real work pattern (events every 8 min)
+  still counts, while an overnight gap adds at most one cap.
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp |
+| Embed skills in binary | version-pinned download (install.sh had it); doc-only contract | The failure already happened once with the downloader in place; embedding makes drift structurally impossible | eric | 2026-07-09 |
+| Widen workspace miss automatically | error-with-hint only | Session IDs are globally unique; making the user retype with --all is ceremony. Explicit -p is respected because the user named a scope | eric | 2026-07-09 |
+| Gap-cap semantics for active time | skip-gaps-over-threshold | Skip creates a cliff (9-min tool run counts, 11-min counts zero); cap degrades gracefully | eric | 2026-07-09 |
+| rc.1 stays in CHANGELOG | fold rc into 0.8.0 | rc.1 tag exists publicly; history is preserved, not rewritten | eric | 2026-07-09 |
+
+** Notes
+- Verified live against this very session: wall-span 28h, active
+  30m, ~times UTC-7~ in header; cross-project lookup tested from
+  /tmp; drift detection caught the user's stale ~/.claude/skills/ccx
+  copy on first run.
+- The maintainer's "four skills, one loop" point is half-resolved:
+  context-fold/insight skills are already gone (rc.1), recap/retro
+  now cross-route. If a third lens ever appears, revisit
+  one-skill-with-lenses.
+- Not done: "session-then vs workspace-now" (the off-map insight in
+  the #19 dig came from grepping the live workspace against the
+  trace). That is a real feature question, not a bug fix — left
+  open in #19 discussion.

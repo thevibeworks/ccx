@@ -7,6 +7,8 @@ description: >
   changes (CLAUDE.md / AGENTS.md / skills / memory) with evidence.
   Use after a frustrating session, when the human asks "what went
   wrong", "why did it do that", "retro", or "turn this into a rule".
+  Routing: this skill answers "what should change"; for a plain
+  "what happened" account, use ccx-recap.
 ---
 
 # ccx-retro
@@ -15,6 +17,10 @@ Recap tells you what happened. Retro makes the next run better. The
 real output is not a report — it is a **proposed patch to the
 instructions the agent already reads** (CLAUDE.md, AGENTS.md, a
 skill, memory), each line justified by evidence from the session.
+
+This skill describes ccx >= 0.8. If a command or flag here is missing,
+upgrade ccx and run `ccx skills install` — the binary embeds skills
+matching its own CLI surface.
 
 ## Process
 
@@ -47,6 +53,14 @@ skill, memory), each line justified by evidence from the session.
 5. **Human gate.** Present findings + proposed patches and STOP.
    Never write to CLAUDE.md / AGENTS.md / skills / memory without
    explicit approval. Rejected proposals are dropped, not stashed.
+6. **Land approved patches with provenance.** When the human
+   approves, apply the patch and carry the citation with the rule —
+   a trailing `(ccx:<session-id> #turn.step)` reference — so the
+   next reader can re-open the receipt with `ccx trace` instead of
+   trusting the rule on faith. The session id is the audit trail;
+   the rule text travels inline. Findings the human read but did not
+   turn into rules may still be worth a devlog/memory entry — offer
+   once, cite the same way.
 
 ## Output shape
 

@@ -109,6 +109,60 @@ func TestResolveSessionInQuerySupportsScopedIndex(t *testing.T) {
 	}
 }
 
+func TestResolveSessionInQueryFallsBackToAllProjects(t *testing.T) {
+	// Session lives in another workspace: the workspace-scoped lookup
+	// misses, and the resolver must widen to all projects instead of
+	// dead-ending (issue #19: "ccx: no session found").
+	backend := &scopeBackend{sessions: []*parser.Session{
+		{ID: "f6f02cc2-elsewhere", CWD: "/tmp/other", EndTime: time.Now()},
+	}}
+
+	got, err := resolveSessionInQuery(backend, catalog.SessionQuery{
+		Scope:         catalog.ScopeWorkspace,
+		WorkspacePath: "/tmp/repo",
+	}, "f6f02cc2")
+	if err != nil {
+		t.Fatalf("expected all-projects fallback to find session, got: %v", err)
+	}
+	if got == nil || got.ID != "f6f02cc2-elsewhere" {
+		t.Fatalf("got %+v, want session found via fallback", got)
+	}
+}
+
+func TestResolveSessionInQueryNotFoundNamesScope(t *testing.T) {
+	backend := &scopeBackend{sessions: nil}
+
+	_, err := resolveSessionInQuery(backend, catalog.SessionQuery{
+		Scope:         catalog.ScopeWorkspace,
+		WorkspacePath: "/tmp/repo",
+	}, "deadbeef")
+	if err == nil {
+		t.Fatal("expected error for missing session")
+	}
+	if !strings.Contains(err.Error(), "deadbeef") || !strings.Contains(err.Error(), "any project") {
+		t.Fatalf("error must name the id and scope searched, got: %v", err)
+	}
+}
+
+func TestResolveSessionInQueryExplicitProjectDoesNotWiden(t *testing.T) {
+	// -p names a project the session isn't in: respect the explicit
+	// scope, but tell the user what was searched and what to try.
+	backend := &scopeBackend{sessions: []*parser.Session{
+		{ID: "f6f02cc2-elsewhere", CWD: "/tmp/other", EndTime: time.Now()},
+	}}
+
+	_, err := resolveSessionInQuery(backend, catalog.SessionQuery{
+		Scope:       catalog.ScopeProject,
+		ProjectName: "wrong-project",
+	}, "f6f02cc2")
+	if err == nil {
+		t.Fatal("explicit -p scope must not silently widen to all projects")
+	}
+	if !strings.Contains(err.Error(), "wrong-project") || !strings.Contains(err.Error(), "--all") {
+		t.Fatalf("error must name the project and suggest --all, got: %v", err)
+	}
+}
+
 func TestLatestTraceSessionIsNonInteractiveLatest(t *testing.T) {
 	now := time.Now()
 	backend := &scopeBackend{sessions: []*parser.Session{

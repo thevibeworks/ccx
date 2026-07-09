@@ -5,6 +5,23 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [0.8.0] - 2026-07-09
+
+All changes below respond to the field report in [#19](https://github.com/thevibeworks/ccx/issues/19) — a real-usage grilling of the trace v2 + skills flow.
+
+### Added
+- **`ccx skills` command — skills are now embedded in the binary** (#19.1). `ccx skills install [--scope user|project]` writes the bundled ccx/ccx-recap/ccx-retro skills so the installed skill text always matches the CLI surface of the running build; `ccx skills list` reports drift between installed copies and the binary. This kills the skills-version-with-repo vs binary-versions-with-tags drift class: an agent following a skill can no longer hit flags the binary doesn't have. `install.sh` now delegates its skill step to `ccx skills install` (the download-by-version ceremony and stale skill names are gone). A test guards that embedded skills stay byte-identical to the repo files.
+- **Active time alongside wall-span** (#19.4). Traces and outlines now carry `active_seconds` per turn and in stats: the sum of inter-message gaps, each capped at 5 minutes. The outline header prints `active 4h07m` next to the wall-span, and turn badges show active time instead of the wall gap — an autonomous turn bleeding into an overnight gap no longer reads as an 18-hour turn.
+- **JSON schema contract documented** (#19.3): `docs/schema.md` covers all emitted kinds (`ccx.outline.v1`, `ccx.turn.v1`, `ccx.trace.v2`, `ccx.log.v1`), the versioning policy (version lives in the `kind` string; additive changes don't bump; breaking changes bump and list removed fields), and semantics consumers must know (UTC in JSON, active vs wall time, evidence budgets, warnings-are-findings).
+
+### Fixed
+- **Session ID lookup no longer dead-ends outside the owning workspace** (#19.2). `ccx trace <id>` (and view/export) now widen a workspace-scoped miss to all projects automatically — session IDs are globally unique, so `ccx trace f6f02cc2` works from any directory. Misses now say what was searched: `session "x" not found in project "y"; try --all` for explicit `-p` scopes, `not found in any project` otherwise.
+- **Outline states its timezone** (#19.5). The text outline renders local times; the header now says so (`times UTC-7`), so citations cross-reference cleanly against the UTC timestamps in JSON and raw JSONL.
+
+### Changed
+- **Skills land durable knowledge, not just chat replies** (#19 architecture comment: "digs are rent, not equity"). ccx-recap ends by offering to write the distillation into the user's existing durable store with `[ccx:<session-id> #turn.step]` citations — the session id is re-verifiable provenance, since ccx can always re-open the receipt. ccx-retro carries the citation into approved rule patches. Both descriptions now state explicit routing ("what happened" → recap; "what should change" → retro), and both declare the minimum ccx version they drive with the upgrade path when the binary is older.
+- The bundled `ccx` skill's command tree caught up with the binary: `trace`/`insight`/`skills`/web deep-link flags were missing — the exact drift #19 documents.
+
 ## [0.8.0-rc.1] - 2026-07-07
 
 ### Added

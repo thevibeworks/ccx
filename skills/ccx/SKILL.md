@@ -29,15 +29,25 @@ ccx
 │   └── --provider cc|cx          # Filter by provider
 │   └── --after / --before DATE   # Date range
 │   └── --model MODEL             # Filter by model
+├── trace [session]               # What the agent did: turn/step outline
+│   └── --json                    # Outline as JSON (ccx.outline.v1)
+│   └── --turn N                  # Full evidence for one turn (ccx.turn.v1)
+│   └── --full                    # Complete trace bundle (ccx.trace.v2, large)
 ├── log [project]                 # Slice raw session logs by time scope
 │   └── --scope today|yesterday|week|month|quarter|year
 │   └── --since / --until TIME    # RFC3339 or YYYY-MM-DD
 │   └── --tz ZONE                 # IANA timezone, UTC, local, or offset like +8
 │   └── --json --raw              # Evidence bundle, optional raw JSONL
+├── insight [project]             # HTML/JSON data report from session logs
+│   └── --scope --tz --since --until --all
+│   └── --json                    # Aggregates: days[]/providers[]/workspaces[]
 ├── web                           # Start web UI
 │   └── --port --host --no-open
+│   └── --project [path] --session ID --latest  # Deep-link into a view
 ├── fork <session-id>             # Fork session to current project
 │   └── --to /path                # Fork to specific directory
+├── skills                        # Manage bundled agent skills
+│   └── install --scope user|project  # Install skills matching this binary
 ├── config                        # Show / init config
 └── doctor                        # Check setup
 ```
@@ -52,8 +62,21 @@ ccx view abc123           # View by session ID (prefix match)
 ccx export -f html        # Export to HTML
 ccx sessions --scope yesterday --tz +8 --all --json # Session containers by end time
 ccx log --scope yesterday --tz +8 --all --json
+ccx trace                 # Outline of the latest workspace session
+ccx trace abc123 --turn 5 # Full evidence for one turn
 ccx web                   # Start web UI at localhost:8080
 ```
+
+## Trace: what the agent did
+
+`ccx trace` prints a terminal-readable outline: every turn (user
+intent) broken into steps (the agent's own narration), with tool,
+edit, error, active-time, and cost rollups. Read the outline whole,
+then drill: `--turn N` for one turn's full evidence, `--full` for the
+complete bundle. JSON kinds and field semantics are documented in
+`docs/schema.md`; header times are local (stated as `times UTC+X`),
+JSON times are UTC. Session IDs resolve across all projects
+automatically; `ccx trace <id>` works from any directory.
 
 ## Multi-Provider
 
@@ -164,6 +187,14 @@ curl -fsSL https://raw.githubusercontent.com/thevibeworks/ccx/main/install.sh | 
 Or via Go:
 ```bash
 go install github.com/thevibeworks/ccx/cmd/ccx@latest
+```
+
+Then install the agent skills that match the binary (this file and
+ccx-recap/ccx-retro are embedded in the binary, so installed skills
+never describe flags the binary doesn't have):
+```bash
+ccx skills install               # -> ~/.claude/skills/
+ccx skills install --scope project  # -> ./.claude/skills/
 ```
 
 ccx treats all agent session data as read-only. It never modifies session files.

@@ -109,34 +109,32 @@ ccx treats all agent data as **read-only**. Writes only to its own directories:
 
 ## Claude Code skills
 
-ccx ships with Claude Code skills:
+ccx ships with Claude Code skills, embedded in the binary:
 
 - **ccx** — Session viewer. Browse, search, export sessions from inside Claude Code.
-- **ccx-context-fold** — Context Folding. Uses `ccx trace` to turn session evidence into auditable decisions (`fold.html`) and durable project knowledge (`.ccx/knowledge/`).
-- **ccx-insight** — Scoped session intelligence. Uses `ccx log` to slice timestamped records across long-running sessions, then briefs what was worked on, achieved, blocked-looking, or emerging across today/yesterday/week/month/quarter/year. The skill can write a standalone HTML audit report for human review.
+- **ccx-recap** — What did the agent actually do? Recaps a session or time window from trace evidence: story, decisions, verified-vs-claimed, cost. Ends by landing the distillation in your durable store with `[ccx:<session-id> #turn.step]` citations.
+- **ccx-retro** — Where did it go wrong and what should change? Mines a session for mistakes, corrections, and saves, then proposes evidence-cited patches to CLAUDE.md/AGENTS.md/skills/memory — behind a human gate.
 
-`ccx trace --html` produces trace evidence HTML. It is not the interpreted
-`fold.html` decision trail produced by the skill.
+Install them from the binary so the skill text always matches the CLI
+surface of the build you are running (skills version with the repo,
+binaries with tags — copying from a checkout invites drift):
 
-Install alongside the binary:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/thevibeworks/ccx/main/install.sh | bash
-```
-
-Or manually copy skills to `~/.claude/skills/`:
-```bash
-cp -r skills/ccx/ ~/.claude/skills/ccx/
-cp -r skills/ccx-context-fold/ ~/.claude/skills/ccx-context-fold/
-cp -r skills/ccx-insight/ ~/.claude/skills/ccx-insight/
+ccx skills install                   # -> ~/.claude/skills/
+ccx skills install --scope project   # -> ./.claude/skills/
+ccx skills list                      # show drift between installed copies and this binary
 ```
 
 Usage:
 ```bash
-/ccx-context-fold                    # Fold most recent session
-/ccx-context-fold <session-id>       # Fold specific session
-/ccx-context-fold --dry-run          # Preview without writing
-/ccx-insight yesterday --tz +8       # Brief yesterday from session intelligence
+/ccx-recap                           # Recap the latest session here
+/ccx-recap <session-id>              # Recap a specific session
+/ccx-retro                           # What went wrong -> proposed rule patches
 ```
+
+The JSON contracts these skills consume (`ccx.outline.v1`,
+`ccx.turn.v1`, `ccx.trace.v2`, `ccx.log.v1`) are documented in
+[docs/schema.md](docs/schema.md).
 
 ## Credits
 
