@@ -27,6 +27,13 @@ var readTools = map[string]bool{
 	"Grep": true,
 }
 
+// activeGapCap bounds what one inter-message gap can contribute to
+// active time. Wall-span lies about long sessions (a 35-day span can
+// hold 4 days of work; one autonomous turn can bleed into an overnight
+// gap): summing gaps capped at this value keeps continuous work
+// counted fully while an idle stretch counts as at most one cap.
+const activeGapCap = 5 * time.Minute
+
 func Analyze(session *parser.Session) *TraceResult {
 	if session == nil {
 		return &TraceResult{
@@ -59,6 +66,7 @@ func Analyze(session *parser.Session) *TraceResult {
 	stepCount := 0
 	toolErrors := 0
 	var totalCost float64
+	var activeSecs float64
 
 	for _, turn := range turns {
 		for _, f := range turn.FilesEdited {
@@ -73,6 +81,7 @@ func Analyze(session *parser.Session) *TraceResult {
 		stepCount += len(turn.Steps)
 		toolErrors += turn.Errors
 		totalCost += turn.CostUSD
+		activeSecs += turn.ActiveSecs
 	}
 
 	dur := session.EndTime.Sub(session.StartTime).Seconds()
@@ -89,6 +98,7 @@ func Analyze(session *parser.Session) *TraceResult {
 		ToolErrors:    toolErrors,
 		TotalCostUSD:  totalCost,
 		DurationSecs:  dur,
+		ActiveSecs:    activeSecs,
 		HasSidechains: session.Stats.AgentSidechains > 0,
 	}
 
@@ -184,9 +194,20 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 		return &steps[len(steps)-1]
 	}
 
+	var active time.Duration
+	prev := anchor.Timestamp
+
 	for _, msg := range messages {
 		if msg == nil {
 			continue
+		}
+		if !msg.Timestamp.IsZero() {
+			if !prev.IsZero() {
+				if gap := msg.Timestamp.Sub(prev); gap > 0 {
+					active += min(gap, activeGapCap)
+				}
+			}
+			prev = msg.Timestamp
 		}
 		if !msg.Timestamp.IsZero() && msg.Timestamp.After(turn.End) {
 			turn.End = msg.Timestamp
@@ -294,6 +315,7 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 	turn.FilesEdited = sortedKeys(editSet)
 	turn.FilesRead = sortedKeys(readSet)
 	turn.ToolCounts = sumToolCounts(steps)
+	turn.ActiveSecs = active.Seconds()
 
 	return turn
 }

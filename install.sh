@@ -3,7 +3,6 @@ set -euo pipefail
 
 REPO="thevibeworks/ccx"
 BINARY="ccx"
-SKILL_NAMES=("ccx" "ccx-context-fold" "ccx-insight")
 
 BIN_DIR="${HOME}/.local/bin"
 SKILL_BASE_DIR="${HOME}/.claude/skills"
@@ -142,104 +141,29 @@ find_ccx_binary() {
   echo "$ccx_path"
 }
 
-installed_ccx_version() {
-  local ccx_path="$1"
-  local output parsed
-  output=$("$ccx_path" --version 2>/dev/null || true)
-  parsed=$(printf '%s\n' "$output" | sed -nE 's/^ccx version v?([^ ]+).*/\1/p')
-  echo "$parsed"
-}
-
-resolve_skill_install_version() {
-  if [[ -n "$INSTALL_VERSION" ]]; then
-    return
-  fi
-
-  local ccx_path version
-  ccx_path=$(find_ccx_binary)
-  if [[ -z "$ccx_path" ]]; then
-    echo "Cannot determine a compatible skill version because ccx is not installed."
-    echo "Install the binary first or pass --version for a specific released skill set."
-    exit 1
-  fi
-
-  version=$(installed_ccx_version "$ccx_path")
-  if [[ "$version" == "dev" || "$version" == "main" ]]; then
-    INSTALL_VERSION="main"
-    echo "Using main skills for development ccx binary"
-    return
-  fi
-  if [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,2}([.-][A-Za-z0-9]+)?$ ]]; then
-    INSTALL_VERSION="$version"
-    echo "Using skills from ccx version v${INSTALL_VERSION}"
-    return
-  fi
-
-  echo "Cannot parse installed ccx version from '$("$ccx_path" --version 2>/dev/null || true)'."
-  echo "Pass --version to install a matching released skill set."
-  exit 1
-}
-
-ensure_skill_binary_compatible() {
-  if [[ "$INSTALL_VERSION" == "main" ]]; then
-    return
-  fi
-
+install_skill() {
+  # Skills are embedded in the ccx binary (ccx skills install), so the
+  # installed skill text always matches the binary's actual CLI surface.
   local ccx_path
   ccx_path=$(find_ccx_binary)
   if [[ -z "$ccx_path" ]]; then
-    echo "Cannot verify ccx binary for skills. Install the binary first or use --bin-only."
+    echo "ccx binary not found; install the binary first (skills ship inside it)."
     exit 1
   fi
 
-  if ! "$ccx_path" trace --help >/dev/null 2>&1; then
-    echo "Installed ccx binary does not support 'ccx trace'."
-    echo "Skipping ccx-context-fold and ccx-insight skills; upgrade ccx or install from source."
-    SKILL_NAMES=("ccx")
-    return
+  if ! "$ccx_path" skills install --help >/dev/null 2>&1; then
+    echo "Installed ccx ($("$ccx_path" --version 2>/dev/null || echo unknown)) predates 'ccx skills install'."
+    echo "Re-run this installer to upgrade the binary, then: ccx skills install"
+    exit 1
   fi
 
-  if ! "$ccx_path" log --help >/dev/null 2>&1; then
-    echo "Installed ccx binary does not support 'ccx log'."
-    echo "Skipping ccx-insight skill; upgrade ccx or install from source."
-    SKILL_NAMES=("ccx" "ccx-context-fold")
-    return
+  if [[ "$SKILL_BASE_DIR" != "${HOME}/.claude/skills" ]]; then
+    # ccx resolves the user skill dir as <claude-home>/skills.
+    export CLAUDE_CODE_HOME="$(dirname "$SKILL_BASE_DIR")"
+    echo "Custom skill dir: installing via CLAUDE_CODE_HOME=${CLAUDE_CODE_HOME}"
   fi
-}
 
-install_skill() {
-  local script_dir
-  script_dir=$(cd "$(dirname "$0")" && pwd)
-
-  mkdir -p "${SKILL_BASE_DIR}"
-
-  for skill_name in "${SKILL_NAMES[@]}"; do
-    local skill_dir="${SKILL_BASE_DIR}/${skill_name}"
-    local ref="${INSTALL_VERSION:-main}"
-    local base_url="https://raw.githubusercontent.com/${REPO}/v${ref}/skills/${skill_name}"
-    if [[ "$ref" == "main" ]]; then
-      base_url="https://raw.githubusercontent.com/${REPO}/main/skills/${skill_name}"
-    fi
-
-    mkdir -p "${skill_dir}"
-    echo "Installing skill ${skill_name} to ${skill_dir}..."
-
-    if [[ -f "${script_dir}/skills/${skill_name}/SKILL.md" ]]; then
-      cp -r "${script_dir}/skills/${skill_name}/"* "${skill_dir}/"
-      echo "Installed ${skill_name} from local repo"
-      continue
-    fi
-
-    curl -fsSL -o "${skill_dir}/SKILL.md" "${base_url}/SKILL.md"
-    for doc in EVIDENCE.md DECISIONS.md HTML-REPORT.md ARCHIVE.md; do
-      if curl -fsSL -o "${skill_dir}/${doc}" "${base_url}/${doc}"; then
-        true
-      else
-        rm -f "${skill_dir}/${doc}"
-      fi
-    done
-    echo "Installed ${skill_name} from GitHub"
-  done
+  "$ccx_path" skills install
 }
 
 main() {
@@ -253,10 +177,6 @@ main() {
   fi
 
   if [[ "$INSTALL_MODE" != "bin" ]]; then
-    if [[ "$INSTALL_MODE" == "skill" ]]; then
-      resolve_skill_install_version
-    fi
-    ensure_skill_binary_compatible
     install_skill
   fi
 

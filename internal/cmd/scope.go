@@ -35,6 +35,39 @@ func resolveSessionInQuery(backend provider.Backend, query catalog.SessionQuery,
 	if strings.HasPrefix(sessionID, "@") {
 		return resolveSessionIndex(sessions, sessionID)
 	}
+	session, err := findSessionByIDDescribed(sessions, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if session != nil {
+		return session, nil
+	}
+
+	// Session IDs are globally unique, so a miss in the default
+	// workspace scope widens to all projects before giving up. An
+	// explicit -p scope is respected: report the miss instead.
+	switch query.Scope {
+	case catalog.ScopeWorkspace:
+		allSessions, err := backend.ListSessions(allSessionsQuery().WithoutLimit())
+		if err != nil {
+			return nil, err
+		}
+		session, err = findSessionByIDDescribed(allSessions, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		if session != nil {
+			return session, nil
+		}
+		return nil, fmt.Errorf("session %q not found in any project", sessionID)
+	case catalog.ScopeProject:
+		return nil, fmt.Errorf("session %q not found in project %q; try --all", sessionID, query.ProjectName)
+	default:
+		return nil, fmt.Errorf("session %q not found in any project", sessionID)
+	}
+}
+
+func findSessionByIDDescribed(sessions []*parser.Session, sessionID string) (*parser.Session, error) {
 	session, err := catalog.FindSessionByID(sessions, sessionID)
 	if err == nil {
 		return session, nil

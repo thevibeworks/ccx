@@ -54,14 +54,18 @@ type Turn struct {
 	Steps []Step `json:"steps,omitempty"`
 
 	// Turn-level rollups across all steps.
-	FilesEdited   []string       `json:"files_edited,omitempty"`
-	FilesRead     []string       `json:"files_read,omitempty"`
-	ToolCounts    map[string]int `json:"tool_counts,omitempty"`
-	Errors        int            `json:"errors,omitempty"`
-	InputTokens   int            `json:"input_tokens,omitempty"`
-	OutputTokens  int            `json:"output_tokens,omitempty"`
-	CostUSD       float64        `json:"cost_usd,omitempty"`
-	LinkedCommits []string       `json:"linked_commits,omitempty"`
+	FilesEdited  []string       `json:"files_edited,omitempty"`
+	FilesRead    []string       `json:"files_read,omitempty"`
+	ToolCounts   map[string]int `json:"tool_counts,omitempty"`
+	Errors       int            `json:"errors,omitempty"`
+	InputTokens  int            `json:"input_tokens,omitempty"`
+	OutputTokens int            `json:"output_tokens,omitempty"`
+	CostUSD      float64        `json:"cost_usd,omitempty"`
+	// ActiveSecs is gap-capped activity time: the sum of inter-message
+	// intervals, each capped at 5 minutes. Wall time (End - Start) can
+	// include overnight gaps; this cannot.
+	ActiveSecs    float64  `json:"active_seconds,omitempty"`
+	LinkedCommits []string `json:"linked_commits,omitempty"`
 }
 
 // Step is the agent's say-then-do unit: one narration block (the
@@ -184,8 +188,12 @@ type TraceStats struct {
 	CommitsLinked    int     `json:"commits_linked"`
 	UncommittedFiles int     `json:"uncommitted_files"`
 	TotalCostUSD     float64 `json:"total_cost_usd"`
-	DurationSecs     float64 `json:"duration_seconds"`
-	HasSidechains    bool    `json:"has_sidechains"`
+	// DurationSecs is wall-span (session end - start), which can dwarf
+	// the work in long-running sessions. ActiveSecs is the gap-capped
+	// activity sum across turns — the honest "time worked" number.
+	DurationSecs  float64 `json:"duration_seconds"`
+	ActiveSecs    float64 `json:"active_seconds"`
+	HasSidechains bool    `json:"has_sidechains"`
 }
 
 // Outline is the always-fits skeleton of a session: every turn and
@@ -207,6 +215,7 @@ type OutlineTurn struct {
 	Index         int           `json:"index"`
 	Start         time.Time     `json:"start"`
 	DurationSecs  float64       `json:"duration_seconds,omitempty"`
+	ActiveSecs    float64       `json:"active_seconds,omitempty"`
 	UserText      string        `json:"user_text"`
 	IsCommand     bool          `json:"is_command,omitempty"`
 	CommandName   string        `json:"command_name,omitempty"`

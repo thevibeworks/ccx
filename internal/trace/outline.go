@@ -38,6 +38,7 @@ func BuildOutline(result *TraceResult) *Outline {
 		if d := turn.End.Sub(turn.Start).Seconds(); d > 0 {
 			ot.DurationSecs = d
 		}
+		ot.ActiveSecs = turn.ActiveSecs
 		for _, n := range turn.ToolCounts {
 			ot.Tools += n
 		}
@@ -110,8 +111,12 @@ func RenderOutlineText(outline *Outline) string {
 		project = filepath.Base(s.CWD)
 	}
 	fmt.Fprintf(&b, "session %s | %s | %s | %s\n", id, s.Provider, project, s.Model)
-	fmt.Fprintf(&b, "%s -> %s | %d turns | %d steps | %d files edited | %d tool errors | $%.2f\n",
-		formatOutlineTime(s.Start), formatOutlineTime(s.End),
+	// Wall-span misleads on long sessions; print active time next to it
+	// and say which timezone the rendered times are in (JSON carries
+	// them in UTC — silent localization breaks cross-referencing).
+	fmt.Fprintf(&b, "%s -> %s (times %s) | active %s | %d turns | %d steps | %d files edited | %d tool errors | $%.2f\n",
+		formatOutlineTime(s.Start), formatOutlineTime(s.End), outlineZone(s.Start),
+		formatActive(outline.Stats.ActiveSecs),
 		outline.Stats.TurnCount, outline.Stats.StepCount,
 		outline.Stats.FilesEdited, outline.Stats.ToolErrors,
 		outline.Stats.TotalCostUSD)
@@ -141,8 +146,10 @@ func RenderOutlineText(outline *Outline) string {
 
 func turnBadges(turn OutlineTurn) string {
 	var parts []string
-	if turn.DurationSecs >= 60 {
-		parts = append(parts, fmt.Sprintf("%dm", int(turn.DurationSecs/60)))
+	// Active time, not wall gap: an autonomous turn bleeding into an
+	// overnight gap would otherwise badge as an 18-hour turn.
+	if turn.ActiveSecs >= 60 {
+		parts = append(parts, formatActive(turn.ActiveSecs))
 	}
 	if turn.Tools > 0 {
 		parts = append(parts, fmt.Sprintf("%d tools", turn.Tools))
@@ -197,4 +204,42 @@ func formatOutlineTime(t time.Time) string {
 		return "?"
 	}
 	return t.Local().Format("2006-01-02 15:04")
+}
+
+// outlineZone names the timezone rendered times are in, as a UTC
+// offset (evaluated at the session's date, so DST resolves correctly).
+func outlineZone(t time.Time) string {
+	if t.IsZero() {
+		t = time.Now()
+	}
+	_, offset := t.Local().Zone()
+	if offset == 0 {
+		return "UTC"
+	}
+	sign := "+"
+	if offset < 0 {
+		sign = "-"
+		offset = -offset
+	}
+	h := offset / 3600
+	m := (offset % 3600) / 60
+	if m == 0 {
+		return fmt.Sprintf("UTC%s%d", sign, h)
+	}
+	return fmt.Sprintf("UTC%s%d:%02d", sign, h, m)
+}
+
+// formatActive renders a duration in seconds compactly: 45s, 12m, 4h07m.
+func formatActive(secs float64) string {
+	d := time.Duration(secs) * time.Second
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		return fmt.Sprintf("%dh%02dm", h, m)
+	}
 }

@@ -42,6 +42,7 @@ CLI commands:
   ccx export -f html        Export to HTML/Markdown/Org
   ccx trace                 What the agent did: turn/step outline + drill-down
   ccx log                   Slice raw session logs by time scope
+  ccx skills install        Install bundled agent skills matching this binary
 
 Supports Claude Code (~/.claude) and Codex (~/.codex) sessions.
 
@@ -79,6 +80,7 @@ func init() {
 	rootCmd.AddCommand(traceCmd)
 	rootCmd.AddCommand(logCmd)
 	rootCmd.AddCommand(insightCmd)
+	rootCmd.AddCommand(skillsCmd)
 }
 
 func initConfig() {

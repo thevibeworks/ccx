@@ -6,7 +6,9 @@ description: >
   verified vs merely claimed, mistakes and cost. Use after stepping
   away from an autonomous run, at end of day, or whenever the human
   asks "what happened", "what did it do", "recap", "summarize the
-  session", or "what did I work on today/this week".
+  session", or "what did I work on today/this week". Routing: this
+  skill answers "what happened"; for "what went wrong / what should
+  change", use ccx-retro.
 ---
 
 # ccx-recap
@@ -25,6 +27,11 @@ evidence — the recap is built from the trace.
 
 Timezone: preserve the user's. Warn when a `--tz` offset makes "today"
 differ from their local day (e.g. `--tz +8` from a US machine).
+
+This skill describes ccx >= 0.8. If a command or flag here is missing
+(`unknown flag: --turn`), the binary is older than the skill: upgrade
+ccx, then run `ccx skills install` — the binary embeds skills matching
+its own CLI surface.
 
 ## Process
 
@@ -45,6 +52,14 @@ differ from their local day (e.g. `--tz +8` from a US machine).
    - `unverified` — plausible, not checked
 5. **Write the recap.** Conversation reply first; offer an HTML
    artifact for sessions worth keeping.
+6. **Land it.** A recap that ends at a chat reply evaporates — the
+   next session re-pays the full archaeology. Offer to write the
+   distillation into whatever durable store the user already runs
+   (devlog, memory file, wiki/vault page; never invent a new store).
+   Keep the claims inline and cite the session as provenance:
+   `[ccx:<session-id> #turn.step]` — anyone can re-open the receipt
+   with `ccx trace <session-id> --turn N`. If the user declines or
+   has no store, the reply is the deliverable.
 
 ## The 60-second test
 
