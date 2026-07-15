@@ -1,0 +1,55 @@
+* [2026-07-13] Dev Log: shape=human — the distillation primitive        :EXPORT:PARSER:
+
+** Context
+The vault-mining pilot (18 sessions, ~2.5M subagent tokens) had every
+distiller agent re-implement the same Python filter: "which type:user
+lines did the human actually type?" Eric's verdict on that approach:
+build the toolchain, not temp scripts. This entry ports the filter
+into ccx where it is tested and reusable.
+
+** Why
+Three measured facts from the corpus:
+- In one session, 33 raw type:user turns contained 9 human turns; the
+  rest were command echoes, task notifications, meta, tool results.
+- classifyMessage's =<command-= prefix check missed
+  =<local-command-stdout/stderr/caveat>=, so command output classified
+  as user_prompt — polluting counts, exchange exports, and any
+  downstream "what did the human say" analysis.
+- Compaction rewinds re-emit identical user turns (same text, same
+  timestamp) at different lines: one restored session measured
+  98 raw prompts -> 73 unique.
+
+** What
+- =FEAT= =export --shape human=: human turns only, verbatim, numbered,
+  anchored =## N · timestamp · uuid8=; replay dedup on
+  (timestamp, text) with drop count in the header; md-only.
+- =FEAT= =sessions --sort prompts=: rank by human-turn count
+  (signal density), replacing raw message-count triage.
+- =FIX= new kinds =command_output= (=<local-command-*=) and
+  =notification= (=<task-notification>=); quick parse now applies the
+  same classification so list and view counts agree.
+
+** How
+classifyUserText(text) helper shared by classifyMessage (block text,
+then raw-string fallback — preserving the pre-existing fallthrough)
+and quickParseSession. exportHuman in internal/render/human.go
+flattens wire order, filters KindUserPrompt && !IsSidechain, dedups
+on (UnixNano, text). Verified end-to-end on the live mining session
+(33 -> 9) and a restored 4,498-line session (98 -> 73).
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp |
+| Exact (ts,text) dedup only | fuzzy text match; codex-style 2s window | prompt-retry dups have different ts + rewrapped text; fuzzy risks eating legit repeats — accuracy over recall | claude | 2026-07-13 |
+| md-only for shape=human | org/html via digest pipeline | turns are arbitrary verbatim text; org/html transforms would mangle — accuracy over features | claude | 2026-07-13 |
+| uuid8 anchor per turn | ordinal-only | ordinals shift if dedup improves; uuid is the stable citation key for vault provenance | claude | 2026-07-13 |
+
+** Notes
+- internal/sessionlog has its own crude classifier (no isMeta /
+  isCompactSummary check) feeding insight/log aggregates — same
+  defect family, still open.
+- Reference points studied for the token strategy around this:
+  headroom (structural turn classification, loop canonicalization,
+  learn-digest; anti-lesson: importance-scored message dropping
+  destroyed cache value) and evot (deterministic memory extraction —
+  file ops from tool args, keyword-gated decision lines — as a
+  zero-LLM fold format). Cloned under reference/ in the vault WIP.

@@ -1,0 +1,119 @@
+* [2026-07-10] The third question: recap, retro — and audit?      :ARCH:SKILL:
+
+** Tension
+A team reviewing a week of agent work asked the question ccx exists
+for: "how did the agent do everything, and why should we believe
+it?" The shipped skill set answers "what happened" (ccx-recap) and
+"what should change" (ccx-retro). Neither answers "can I trust it."
+
+The capability that does answer it — the claim-ledger discipline and
+the HTML audit-cockpit contract — was deleted in 661c4c along with
+ccx-insight, and today survives only as an orphan in one developer's
+=~/.claude/skills/= (installed before the removal; =ccx skills
+install= adds bundled skills but never removes strays). The field
+test that proved the capability this week ran on that orphan. Team
+installs and OSS users get a binary that cannot produce it.
+
+** Observation
+- 661c4c's rationale was correct: mechanism-named skills (fold,
+  insight, knowledge patch) answer no human question, and the rename
+  to recap/retro was right. But the removal conflated the *name*
+  with the *capability*. ccx-recap kept a three-status claim tag
+  (observed / agent-claimed / unverified) inline in its process; the
+  322-line HTML-REPORT.md contract — six-status ledger with
+  human-stated / inferred / contradicted, the cockpit information
+  architecture (TL;DR band, data-quality panel, workstream board,
+  evidence drawer, needs-closure), evidence-ref format — went to git
+  history with no successor.
+- Field test (a week-long autonomous field session: 55 turns,
+  79 files edited): the cockpit caught exactly what a session's own
+  log.md self-reporting cannot. Headline finds: zero =git commit=
+  across the entire week of "landed" work, and a final visual
+  acceptance that existed only as the agent's own judgment. The
+  heavy completion claims (979/979 assembly, 120/120 generated
+  parts, 56-test suite) all verified against raw tool_result lines —
+  the trust question was answerable, cheaply, from data ccx already
+  has.
+- The evidence layer is already project-agnostic: =ccx trace= /
+  =ccx log= work identically whatever the session built. What varies
+  by project type is only the *verification oracle* — which external
+  ground truth an "observed" tag may cite:
+  | project type   | oracle                                        |
+  |----------------+-----------------------------------------------|
+  | code           | git state, test output, CI, exit codes        |
+  | docs / wiki    | files exist, links resolve, indexes updated   |
+  | research       | cited sources exist and say what's claimed    |
+  | ops / infra    | command output, endpoint probes               |
+  | CAD / artifacts | rendered views + human visual acceptance     |
+  The ledger taxonomy and the cockpit IA need no per-domain change.
+- Surface: =ccx web= serves =$XDG_DATA_HOME/ccx/insights/= raw at
+  =/insights/<name>= (no subpaths), so a self-contained report with
+  inline mermaid (~3.5MB UMD, parse-checked headlessly via jsdom)
+  renders with zero infrastructure. Proven today.
+
+** Decision
+Proposed, not yet implemented — recorded here for the next session:
+
+- Restore the capability as a third bundled skill under the
+  question-naming convention: *ccx-audit* — "can I trust what the
+  agent did?" Routing: recap = what happened, retro = what should
+  change, audit = show me the receipts. SKILL.md (evidence process,
+  with the git-drift grep — =git (add|commit|push)= against claimed
+  "landed" work — as a mandatory step, not a footnote) plus
+  HTML-REPORT.md (cockpit contract, generalized with the oracle
+  table above, insights-dir output, mermaid recipe). Register in
+  =skills/embed.go=; =TestBundledSkillsMatchRepoFiles= pins it.
+- Human-in-the-loop, staged so ccx stays read-only until a write
+  path is designed deliberately:
+  1. v1 (now): the cockpit is a review instrument, not a verdict
+     store — every claim carries citations any reviewer can re-open
+     (=ccx trace <id> --turn N=, =sed -n '<line>p' <session.jsonl>=),
+     and needs-closure rows name a human owner and a checkable next
+     action.
+  2. v2 (cheap): review mode in the report itself — per-claim
+     accept / needs-work toggles in localStorage plus an "export
+     verdicts" button emitting a markdown block the reviewer pastes
+     into the store their team already runs (log.md, TODOs, wiki).
+  3. v3 (needs an issue + design): =ccx web= grows a small POST that
+     persists verdicts as a sidecar JSON next to the insight file —
+     a reviewed report becomes a signed-off record with reviewer
+     and timestamp. First ccx write-path outside stars; do not
+     back into it.
+- Rejected: reviving the ccx-insight name (the rename was right);
+  building verdict storage into v1 (write path before design);
+  embedding mermaid in the ccx binary (bloat — skill-asset or a
+  later shared =ccx web= asset endpoint both beat it).
+
+** Tradeoff
+- Inline mermaid costs ~3.5MB per report. Fine for a handful of
+  local reports; ugly at scale. A shared asset served by =ccx web=
+  fixes size but breaks file:// self-containment — deferred until
+  someone actually accumulates enough reports to care.
+- A third bundled skill widens the surface the issue-#19/#20 drift
+  machinery must keep honest. The embed test pins bytes, not
+  behavior; skill claims about CLI flags still rot silently if the
+  CLI moves.
+- localStorage verdicts (v2) are per-browser, invisible to the team.
+  Real sign-off is v3; v2 only removes the copy-paste friction.
+
+** Next
+The live wire: does ccx-audit generalize in practice, or is it
+secretly shaped like this week's CAD session? Before bundling, write
+the skill and run it against a *non-code* session — a research or
+wiki-vault week — and see whether the oracle table holds when there
+are no tests and no exit codes. If it holds, upstream; if it
+doesn't, the generalization claim in this entry is the thing to
+audit.
+
+** Artifacts
+- Removal archaeology: =git show 661c4c --stat -- skills/=
+  (ccx-insight 485 lines + ccx-context-fold deleted; recap/retro
+  added at 161 lines; the HTML cockpit contract not carried over).
+- Field-test report (local, not in repo): an insights-dir audit
+  cockpit over a week-long session; verified rendering via
+  =ccx web --host 0.0.0.0= from a container, mermaid parse-checked
+  with jsdom before shipping.
+- Orphan-skill mechanics: =ccx skills install= output "3 skills now
+  match this binary" while stale ccx-insight / ccx-context-fold
+  remained installed beside them — drift class #19 has a cousin:
+  the binary can't disown skills it no longer ships.

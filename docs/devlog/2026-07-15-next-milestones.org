@@ -1,0 +1,113 @@
+* [2026-07-15] Next milestones: release gate, then Grok, Kiln, Burnish, Runner   :ARCH:ROADMAP:
+
+** Tension
+
+v0.8.0 shipped six days ago and the worktree has since accumulated two
+unreleased feature sets (turn evidence + deep links, staged; human-shape
+export + prompt sorting, unstaged) with no decision on what comes after.
+A deep review session (codex 019f6528, 2026-07-15) was asked two
+questions: can we release what's here, and what are the next milestones.
+This entry records both answers so the coding sessions that follow start
+from a decision, not a re-litigation.
+
+** Observation
+
+The review said: do not commit or release yet. Five blockers, all
+verified against the worktree, none hypothetical:
+
+1. Evidence panel can show "2 errors" while rendering zero failed
+   calls. Trace analysis counts errors from tool_result
+   (internal/trace/analysis.go:302) but the web UI searches tool_use
+   mutations for IsError (internal/web/templates.go:907). The test at
+   internal/web/turn_evidence_test.go:19 fabricates a state the real
+   analyzer never produces, so it passes while the disagreement stands.
+2. main is red in CI; worktree still fails lint (unchecked w.Write in
+   internal/web/server.go:1696). The tag-triggered release workflow
+   does not run lint, so it can publish from a red repo. Linter version
+   floats on latest (.github/workflows/ci.yml:44).
+3. Skills/binary drift is back one release after v0.8.0 claimed to kill
+   the class: bundled SKILL.md documents --sort time|messages only,
+   omits --shape human. README and CHANGELOG omit the staged web work.
+   README also advertises JSON CLI export the renderer does not have.
+4. Exported HTML embeds ?turn=N permalinks that only resolve through
+   the web server; a standalone export cannot honor them.
+5. Privacy gate: the pending devlogs carried internal project
+   identifiers and real session cost figures. Scrubbed before commit:
+   anonymous counts stay (they are the evidence), names and dollar
+   amounts go.
+
+Also observed: everything else is green — go test -race, vet, build,
+fixture smoke tests for both providers, both diff checks. This is a
+packaging-and-correctness gate, not a rewrite.
+
+** Decision
+
+Fix the five blockers, then split into three commits and release
+together as v0.9.0:
+
+1. docs: record the audit cockpit gap (after privacy scrub)
+2. feat(web): trace-aligned turn evidence and deep links
+3. feat(export): human shape and prompt sorting
+
+After the gate, four milestones, in order:
+
+1. *Grok provider parity.* Grok Build stores sessions under
+   ~/.grok/sessions/ (prompts, tool calls, file snapshots) and exposes
+   resume, fork, compaction/context, export/import, agent stdio.
+   Start with sanitized fixtures and a provider-contract spike, then
+   read-only discovery, parse, view, export, trace parity. No Grok
+   cost estimation until exact usage evidence exists.
+   Refs: https://docs.x.ai/build/features/sessions and
+   https://docs.x.ai/build/cli/reference
+2. *Kiln redesign.* Product-shell redesign, not a color refresh.
+   Present UI has three competing navigation rails, excessive bordered
+   surfaces, weak hierarchy, mobile nav that disappears, box-shadow
+   animation without reduced-motion handling
+   (internal/web/static/style.css:2687). Rebuild around
+   Observe -> Inspect -> Verify -> Export: terracotta stays as the
+   identity accent, neutral working surfaces, provider/state colors
+   reserved semantically, motion mechanical and sparse.
+3. *Burnish in two passes.* Repo hygiene now: green CI, pinned
+   tooling, accurate README, fresh multi-provider screenshots, GitHub
+   topics/homepage, llms.txt, reconcile stale issues #2 and #6.
+   Community launch only after Grok and the redesign, when the proof
+   matches the story. No Discord, star charts, or process theater at
+   this scale.
+4. *Runner bridge, not an internal agent loop.* An owned loop breaks
+   ccx's read-only trust boundary and duplicates permissions,
+   sandboxing, streaming, resume, subagent machinery. Ship an explicit
+   adapter first — ccx run <skill> --agent codex|claude|grok — invoking
+   installed CLIs or Grok's stdio protocol, with dry-run, permission
+   disclosure, and a retained session receipt. Native loop only after
+   concrete adapter failures prove it necessary.
+
+Rejected: building the internal agent loop first (trust-boundary
+violation), estimating Grok costs from docs (no usage evidence),
+launching community promotion before the product matches the pitch,
+and treating the redesign as a CSS pass.
+
+** Tradeoff
+
+Ordering Grok before the redesign means the current three-rail UI
+survives one more provider integration and the redesign then has to
+absorb a third provider's semantics. Accepted because provider parity
+is ccx's core promise and the redesign brief already reserves provider
+colors semantically. The runner bridge is deliberately last: it is the
+only milestone that changes ccx's trust posture, and we want the
+read-only story battle-tested through a launch before touching it.
+
+** Next
+
+The live wire is blocker #1: decide whether tool_result or tool_use
+mutation is the single source of truth for per-turn error counts, fix
+whichever side is wrong, and make the test assert against real
+analyzer output instead of a fabricated state. Everything else in the
+gate is mechanical once that lands.
+
+** Artifacts
+
+Review evidence: a single-turn deep review by codex (gpt-5.6-sol,
+26 minutes, 60 tool calls), retrievable locally via ccx trace.
+Worktree at time of writing: staged turn-evidence set (8 files,
++683), unstaged human-shape set (4 new files), all tests green
+except lint. No commit or tag created.

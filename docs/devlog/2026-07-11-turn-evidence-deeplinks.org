@@ -1,0 +1,73 @@
+* [2026-07-11] Dev Log: Turn deep links + per-turn evidence panel    :FEAT:UX:
+
+** Context
+A team reviewing a week-long agent session (79 files edited, a
+979-part deliverable) got an audit report with citations like
+=#54.10=, but
+verifying one meant a terminal round-trip: =ccx trace <id> --turn 54=
+and scrolling. The web session page showed transcripts, yet answered
+neither "jump me to the cited step" nor "what did the agent actually
+do in this turn" without reading the whole thread.
+
+** Why
+Review is the product surface for trust. A citation that a teammate
+cannot open in one click is a citation most teammates will never
+check. And the per-turn question — which files changed, which tools
+ran, which agents were spawned, what failed, what it cost — was
+already answered by trace v2's data model; the web page just never
+rendered it.
+
+** What
+- =FEAT= =?turn=N= / =?turn=N.M= deep links on =/session/= pages.
+  Resolved server-side through trace.Analyze — the SAME segmentation
+  =ccx trace= prints, joined by anchor-message UUID (indexes alone
+  can diverge: trace flushes at compaction and drops empty turns).
+  =N.M= lands on step M's narration message; unknown steps fall back
+  to the turn anchor. A resolved =?turn= forces full load so the
+  target can't hide in a progressively-unloaded section.
+- =FEAT= Per-turn evidence panel under every thread anchor:
+  =#N= permalink badge (ordinal == ccx trace == audit citations),
+  chips (steps / tools / files / agents / errors / cost / active
+  time; zero-valued chips omitted), expandable body listing edited
+  files with numbered jump links into the inline diff blocks
+  (=#tool-<id>=), agents with type/description/status, tool-count
+  chips, and failed calls. Server-rendered from trace turns; works
+  with JS disabled; renders for Codex sessions too (ApplyPatch
+  mutations, normalized Bash).
+- =FEAT= =ccxReveal(id)= in session JS: unfolds the containing
+  thread, opens every enclosing =<details>=, scrolls centered, and
+  flash-highlights. Used by the =?turn= landing and all evidence
+  links.
+
+** How
+- =resolveTurnTarget= in web/server.go; turn map keyed by AnchorID
+  threaded through renderMessages → renderThread; renderTurnEvidence
+  in templates.go; CSS in static/style.css (=.turn-evidence=,
+  =.te-*=, =.msg-target= flash).
+- Verified against the field session (55 turns, 193-tool marathon
+  turn, 3 compactions, sidechains, task notifications) and a Codex
+  session; new tests pin resolution (=N=, =N.M=, fallback, sparse
+  indexes), panel links, zero-chip omission, and the target hint.
+
+** Decisions
+| Decision | Alternatives | Rationale |
+|----------+--------------+-----------|
+| Resolve ?turn via trace segmentation, not web Exchanges | reuse parser.ComputeExchanges ordinals | citations come from ccx trace; only the same code path guarantees the same numbers |
+| Force full load when ?turn resolves | progressive-load section math | review correctness beats first-paint speed; ?all=1 was already the escape hatch |
+| Panel is inline per-thread, not a sticky inspector | scrollspy sidebar | works without JS, survives export, no scroll-sync complexity |
+
+** Notes
+- Gotcha: =requestAnimationFrame= NEVER fires in background tabs —
+  the initial deep-link reveal silently did nothing when the page
+  opened unfocused. Plain call + =setTimeout= instead.
+- Gotcha: default thread folding runs late in session JS and
+  collapses every multi-turn thread (=max-height: 0=); any earlier
+  scroll lands on dead geometry. The reveal must run after fold
+  init, unfold the target's thread, and scroll after the 0.2s
+  transition settles.
+- Observed while testing: trace mutation paths can carry a garbage
+  token (e.g. ={r}")= from a Bash heredoc) into the panel's file
+  list — path extraction in internal/trace, pre-existing, cosmetic.
+- Audit reports written to the insights dir now link citations
+  relatively (=/session/<proj>/<id>?turn=N.M=) — same-origin with
+  ccx web, so the cockpit becomes click-through into evidence.
