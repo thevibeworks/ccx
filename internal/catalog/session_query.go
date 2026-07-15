@@ -22,6 +22,7 @@ type SessionSort string
 const (
 	SortTime     SessionSort = "time"
 	SortMessages SessionSort = "messages"
+	SortPrompts  SessionSort = "prompts"
 )
 
 type SessionQuery struct {
@@ -78,6 +79,12 @@ func SortSessions(sessions []*parser.Session, sortBy SessionSort) {
 		sort.SliceStable(sessions, func(i, j int) bool {
 			return sessions[i].Stats.MessageCount > sessions[j].Stats.MessageCount
 		})
+	case SortPrompts:
+		// Human-turn count: raw message counts are inflated by tool
+		// results and harness noise; user prompts are the real signal.
+		sort.SliceStable(sessions, func(i, j int) bool {
+			return sessions[i].Stats.UserPrompts > sessions[j].Stats.UserPrompts
+		})
 	default:
 		sort.SliceStable(sessions, func(i, j int) bool {
 			return sessions[i].EndTime.After(sessions[j].EndTime)
@@ -87,10 +94,10 @@ func SortSessions(sessions []*parser.Session, sortBy SessionSort) {
 
 func ValidateSessionSort(sortBy SessionSort) error {
 	switch sortBy {
-	case "", SortTime, SortMessages:
+	case "", SortTime, SortMessages, SortPrompts:
 		return nil
 	default:
-		return fmt.Errorf("invalid sort %q (want time or messages)", sortBy)
+		return fmt.Errorf("invalid sort %q (want time, messages, or prompts)", sortBy)
 	}
 }
 

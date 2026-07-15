@@ -50,7 +50,7 @@ func init() {
 	exportCmd.Flags().BoolVar(&exportIncludeThinking, "include-thinking", false, "include thinking blocks")
 	exportCmd.Flags().BoolVar(&exportIncludeAgents, "include-agents", false, "include agent sidechains")
 	exportCmd.Flags().BoolVarP(&exportBrief, "brief", "b", false, "(deprecated: use --shape=brief) conversation only")
-	exportCmd.Flags().StringVar(&exportShape, "shape", "", "content shape: full, brief, trace, exchange (default: full)")
+	exportCmd.Flags().StringVar(&exportShape, "shape", "", "content shape: full, brief, trace, exchange, human (default: full)")
 	exportCmd.Flags().StringVar(&exportEnvelope, "envelope", "", "HTML wrapper: standalone, fragment (default: standalone)")
 	exportCmd.Flags().StringVar(&exportTemplate, "template", "", "custom template path")
 }
@@ -110,9 +110,22 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	shape := render.Shape(strings.ToLower(strings.TrimSpace(exportShape)))
 	switch shape {
-	case "", render.ShapeFull, render.ShapeBrief, render.ShapeTrace, render.ShapeExchange:
+	case "", render.ShapeFull, render.ShapeBrief, render.ShapeTrace, render.ShapeExchange, render.ShapeHuman:
 	default:
-		return fmt.Errorf("invalid shape %q (want full, brief, trace, or exchange)", exportShape)
+		return fmt.Errorf("invalid shape %q (want full, brief, trace, exchange, or human)", exportShape)
+	}
+
+	// shape=human is markdown-only; when no explicit format was given,
+	// use md instead of the configured default (usually html).
+	if shape == render.ShapeHuman && exportFormat == "" {
+		format = "md"
+		if exportOutput == "" {
+			id := session.ID
+			if len(id) > 8 {
+				id = id[:8]
+			}
+			output = fmt.Sprintf("session-%s.md", id)
+		}
 	}
 
 	envelope := render.Envelope(strings.ToLower(strings.TrimSpace(exportEnvelope)))

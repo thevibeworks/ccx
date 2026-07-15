@@ -248,25 +248,28 @@ func classifyMessage(msg *Message, raw rawMessage) MessageKind {
 			return KindToolResult
 		}
 
-		// Check for command message
+		// Check for harness-generated XML wrappers (commands, command
+		// output, task notifications) that arrive as type:user but were
+		// never typed by a human. Check the parsed text block first,
+		// then fall back to raw string content.
+		var text string
 		if len(msg.Content) > 0 && msg.Content[0].Type == "text" {
-			text := msg.Content[0].Text
-			if strings.HasPrefix(text, "<command-") {
+			text = msg.Content[0].Text
+		}
+		kind, ok := classifyUserText(text)
+		if !ok {
+			if str, isStr := raw.Message.Content.(string); isStr {
+				text = str
+				kind, ok = classifyUserText(text)
+			}
+		}
+		if ok {
+			if kind == KindCommand {
 				msg.IsCommand = true
 				msg.CommandName = extractCommandName(text)
 				msg.CommandArgs = extractCommandArgs(text)
-				return KindCommand
 			}
-		}
-
-		// Check raw content for string commands
-		if str, ok := raw.Message.Content.(string); ok {
-			if strings.HasPrefix(str, "<command-") {
-				msg.IsCommand = true
-				msg.CommandName = extractCommandName(str)
-				msg.CommandArgs = extractCommandArgs(str)
-				return KindCommand
-			}
+			return kind
 		}
 
 		// Actual user prompt
@@ -274,6 +277,23 @@ func classifyMessage(msg *Message, raw rawMessage) MessageKind {
 	}
 
 	return KindUnknown
+}
+
+// classifyUserText recognizes harness-generated XML wrappers in a
+// user-role message. These all masquerade as human turns in the raw
+// JSONL but carry no human input: slash-command markers, local command
+// stdout/stderr/caveat echoes, and background-task notifications.
+func classifyUserText(text string) (MessageKind, bool) {
+	t := strings.TrimSpace(text)
+	switch {
+	case strings.HasPrefix(t, "<command-"):
+		return KindCommand, true
+	case strings.HasPrefix(t, "<local-command-"):
+		return KindCommandOutput, true
+	case strings.HasPrefix(t, "<task-notification>"):
+		return KindNotification, true
+	}
+	return KindUnknown, false
 }
 
 // extractCommandName extracts command name from <command-name>/foo</command-name>
@@ -593,8 +613,13 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 				}
 			}
 			if !isToolResult {
-				stats.MessageCount++
-				stats.UserPrompts++
+				// Skip harness wrappers (commands, command output,
+				// notifications) so list counts match computeStats,
+				// which only counts KindUserPrompt.
+				if _, harness := classifyUserText(extractTextFromContent(raw.Message.Content)); !harness {
+					stats.MessageCount++
+					stats.UserPrompts++
+				}
 			}
 		} else if raw.Type == "assistant" {
 			stats.MessageCount++

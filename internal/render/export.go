@@ -27,6 +27,13 @@ import (
 //
 //	assistant reply, and a compact stats footer. Nothing
 //	else. Produces a reviewable digest of the whole session.
+//
+// human     — only the human's actual turns, verbatim, numbered, with
+//
+//	compaction-replay duplicates dropped. Harness noise that
+//	masquerades as user turns (command output, task
+//	notifications, meta) is excluded. The distillation
+//	primitive: what did the human actually say?
 type Shape string
 
 const (
@@ -34,6 +41,7 @@ const (
 	ShapeBrief    Shape = "brief"
 	ShapeTrace    Shape = "trace"
 	ShapeExchange Shape = "exchange"
+	ShapeHuman    Shape = "human"
 )
 
 // Envelope controls how much chrome wraps the exported session. Only
@@ -93,6 +101,8 @@ func Export(session *parser.Session, opts ExportOptions) (string, error) {
 		session = TraceSession(session)
 	case ShapeExchange:
 		return exportExchange(session, opts)
+	case ShapeHuman:
+		return exportHuman(session, opts)
 	}
 
 	switch strings.ToLower(opts.Format) {
