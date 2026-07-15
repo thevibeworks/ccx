@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/gob"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -286,5 +287,50 @@ func TestMulti_DiskCacheInvalidatesOnFileMtimeChange(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&b.parseCount); got != 2 {
 		t.Errorf("parse count after edit = %d, want 2 (disk must invalidate)", got)
+	}
+}
+
+func TestDiskCache_MissOnFormatVersionMismatch(t *testing.T) {
+	// A cache entry written by a binary with different parse semantics
+	// must miss even when source mtime+size match: gob decodes across
+	// struct versions silently, and serving the old parse shows users
+	// stale content until the source file happens to change.
+	dir := t.TempDir()
+	dc, err := newDiskCache(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess := realSession(t)
+	mtime := time.Now()
+	dc.put("/fake/source.jsonl", sess, mtime, 1234)
+
+	// Rewrite the entry with a stale format stamp, keeping everything
+	// else valid — simulating a file written by an older binary.
+	cp := dc.cachePathFor("/fake/source.jsonl")
+	f, err := os.Open(cp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry diskCacheEntry
+	if err := gob.NewDecoder(f).Decode(&entry); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	entry.Format = parser.CacheFormatVersion - 1
+	w, err := os.Create(cp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gob.NewEncoder(w).Encode(&entry); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	if _, ok := dc.get("/fake/source.jsonl", mtime, 1234); ok {
+		t.Fatal("stale-format entry must miss")
+	}
+	if _, err := os.Stat(cp); !os.IsNotExist(err) {
+		t.Error("stale-format entry should be deleted on miss")
 	}
 }

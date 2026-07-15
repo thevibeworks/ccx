@@ -32,8 +32,12 @@ type diskCache struct {
 
 // diskCacheEntry is the gob envelope around a persisted session.
 // SourcePath/Mtime/Size are stored in-band so a reader can verify
-// freshness without relying on the filename alone.
+// freshness without relying on the filename alone. Format carries
+// parser.CacheFormatVersion: gob decodes across struct versions
+// silently, so mtime+size alone would keep serving a stale parse
+// written by an older binary until the source file itself changed.
 type diskCacheEntry struct {
+	Format     int
 	SourcePath string
 	Mtime      time.Time
 	Size       int64
@@ -88,7 +92,7 @@ func (d *diskCache) get(sourcePath string, mtime time.Time, size int64) (*parser
 		return nil, false
 	}
 
-	if !entry.Mtime.Equal(mtime) || entry.Size != size {
+	if entry.Format != parser.CacheFormatVersion || !entry.Mtime.Equal(mtime) || entry.Size != size {
 		f.Close()
 		_ = os.Remove(cp)
 		return nil, false
@@ -114,6 +118,7 @@ func (d *diskCache) put(sourcePath string, sess *parser.Session, mtime time.Time
 		return
 	}
 	entry := diskCacheEntry{
+		Format:     parser.CacheFormatVersion,
 		SourcePath: sourcePath,
 		Mtime:      mtime,
 		Size:       size,

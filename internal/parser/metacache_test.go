@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"encoding/gob"
 	"os"
 	"path/filepath"
 	"testing"
@@ -147,5 +148,66 @@ func TestDiscoverProjectSessionsUsesMetaCache(t *testing.T) {
 	}
 	if len(third) != 0 {
 		t.Fatalf("expected re-parse after mtime change, got %+v", third)
+	}
+}
+
+func TestMetaCacheDiscardsOtherFormatVersions(t *testing.T) {
+	// A cache written by a binary with different parse semantics is
+	// discarded wholesale on load — every entry in it is suspect.
+	path := filepath.Join(t.TempDir(), "meta.gob")
+	resetMetaCache(t, path)
+
+	mtime := time.Now()
+	MetaStore("/a.jsonl", mtime, 10, &Session{ID: "a", Summary: "old-binary"})
+	FlushMetaCache()
+
+	// Rewrite the envelope with a stale format stamp.
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file metaCacheFile
+	if err := gob.NewDecoder(f).Decode(&file); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	file.Format = CacheFormatVersion - 1
+	w, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gob.NewEncoder(w).Encode(&file); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	InitMetaCache(path)
+	if _, hit := MetaLookup("/a.jsonl", mtime, 10); hit {
+		t.Fatal("cache from a different format version must not serve entries")
+	}
+}
+
+func TestMetaCacheDiscardsPreEnvelopeFiles(t *testing.T) {
+	// Caches written before the versioned envelope existed (bare map
+	// encoding) must be discarded, not decoded into garbage.
+	path := filepath.Join(t.TempDir(), "meta.gob")
+	resetMetaCache(t, path)
+
+	mtime := time.Now()
+	legacy := map[string]metaCacheEntry{
+		"/a.jsonl": {Mtime: mtime, Size: 10, Session: &Session{ID: "a"}},
+	}
+	w, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gob.NewEncoder(w).Encode(legacy); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	InitMetaCache(path)
+	if _, hit := MetaLookup("/a.jsonl", mtime, 10); hit {
+		t.Fatal("pre-envelope cache must not serve entries")
 	}
 }

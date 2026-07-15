@@ -38,6 +38,14 @@ type metaCacheEntry struct {
 	Session *Session // nil = known non-listable file
 }
 
+// metaCacheFile is the on-disk gob envelope. Format guards against
+// stale caches written by a binary with different parse semantics —
+// on mismatch the whole cache is discarded and rebuilt.
+type metaCacheFile struct {
+	Format  int
+	Entries map[string]metaCacheEntry
+}
+
 var metaCache = &sessionMetaCache{}
 
 // InitMetaCache points the package-level metadata cache at a persistent
@@ -110,7 +118,7 @@ func FlushMetaCache() {
 	if err != nil {
 		return
 	}
-	if err := gob.NewEncoder(f).Encode(c.entries); err != nil {
+	if err := gob.NewEncoder(f).Encode(metaCacheFile{Format: CacheFormatVersion, Entries: c.entries}); err != nil {
 		f.Close()
 		_ = os.Remove(tmp)
 		return
@@ -144,11 +152,16 @@ func (c *sessionMetaCache) ensureLoadedLocked() {
 	}
 	defer f.Close()
 
-	var entries map[string]metaCacheEntry
-	if err := gob.NewDecoder(f).Decode(&entries); err != nil {
-		// Corrupt or schema-drifted cache: start fresh; the next flush
-		// overwrites it.
+	var file metaCacheFile
+	if err := gob.NewDecoder(f).Decode(&file); err != nil {
+		// Corrupt, pre-envelope, or schema-drifted cache: start fresh;
+		// the next flush overwrites it.
 		return
 	}
-	c.entries = entries
+	if file.Format != CacheFormatVersion || file.Entries == nil {
+		// Written by a binary with different parse semantics — every
+		// entry is suspect. Rebuild from live parses.
+		return
+	}
+	c.entries = file.Entries
 }

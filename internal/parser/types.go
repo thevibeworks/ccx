@@ -30,6 +30,15 @@ type Project struct {
 	LastModified time.Time
 }
 
+// CacheFormatVersion stamps every persisted parse cache (the session
+// disk cache and the discovery metadata cache) and invalidates them
+// all when it changes. Bump it on ANY change to parsing,
+// classification, or the Session/Message structs: gob decodes across
+// struct versions silently, so without this stamp an upgraded binary
+// keeps serving parses produced by the old code until the source
+// session file itself happens to change.
+const CacheFormatVersion = 2
+
 type Session struct {
 	ID           string
 	FilePath     string
