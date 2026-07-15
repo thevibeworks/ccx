@@ -724,12 +724,11 @@ func TestHandleSession_TimelineRailEmptyFallback(t *testing.T) {
 	}
 }
 
-func TestHandleSession_SessionNavIsNarrowByDefault(t *testing.T) {
-	// The session-nav sidebar should emit the narrow-by-default CSS
-	// rules (panel-nav.session-nav width:56px, hover → 260px expand).
-	// This is a smoke test — the actual layout behaviour is CSS-only
-	// and can't be exercised from Go, but we can verify the right
-	// selectors are in the rendered page.
+func TestHandleSession_SingleRailShell(t *testing.T) {
+	// The session view runs ONE navigation rail (the outline). Session
+	// switching lives in the context bar, and the outline survives
+	// small viewports as a drawer instead of disappearing
+	// (docs/design/0002-shell-redesign-audit.md).
 	dir := setupTestDir(t)
 	setTestBackend(dir)
 
@@ -742,17 +741,20 @@ func TestHandleSession_SessionNavIsNarrowByDefault(t *testing.T) {
 	}
 	body := w.Body.String()
 
-	if !strings.Contains(body, `.panel-nav.session-nav {`) {
-		t.Error("expected .panel-nav.session-nav CSS block (narrow default state)")
+	if strings.Contains(body, `class="panel-nav session-nav"`) {
+		t.Error("the session-switcher rail must not render; the outline is the one rail")
 	}
-	if !strings.Contains(body, `width: 56px;`) {
-		t.Error("expected collapsed 56px width for session-nav")
+	if !strings.Contains(body, `class="context-bar"`) {
+		t.Error("expected the context bar (breadcrumb + session switcher)")
 	}
-	if !strings.Contains(body, `.panel-nav.session-nav:hover`) {
-		t.Error("expected hover-expand rule on session-nav")
+	if !strings.Contains(body, `class="nav-sidebar"`) {
+		t.Error("expected the outline rail")
 	}
-	if !strings.Contains(body, `width: 260px;`) {
-		t.Error("expected expanded 260px width on hover")
+	if !strings.Contains(body, `.session-layout.outline-open .nav-sidebar`) {
+		t.Error("expected the mobile outline drawer rule — navigation must not disappear on small viewports")
+	}
+	if !strings.Contains(body, `prefers-reduced-motion`) {
+		t.Error("expected a prefers-reduced-motion block")
 	}
 }
 

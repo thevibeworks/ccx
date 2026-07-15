@@ -315,34 +315,41 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 		b.WriteString(fmt.Sprintf(`<script>document.body.dataset.ccxTarget=%q;</script>`, turnTarget))
 	}
 	b.WriteString(renderTopNav(projectName, session.ID))
-	b.WriteString(`<div class="layout session-layout">`)
 
-	// Left panel: Sessions list (only if we have sessions to show)
-	if len(allSessions) > 0 {
-		b.WriteString(`<aside class="panel-nav session-nav">`)
-		b.WriteString(fmt.Sprintf(`<div class="panel-header"><a href="/project/%s">Sessions</a></div>`, html.EscapeString(projectName)))
-		b.WriteString(`<div class="panel-list">`)
+	// Context bar: where am I, and how do I move sideways. This
+	// replaces the old hover-expanding session rail — one navigation
+	// rail (the outline) remains; session switching is a breadcrumb
+	// concern, not a second rail.
+	b.WriteString(`<div class="context-bar">`)
+	b.WriteString(`<button class="icon-btn outline-btn" onclick="toggleOutlineDrawer()" title="Outline" aria-label="Toggle outline">☰</button>`)
+	b.WriteString(`<nav class="breadcrumb" aria-label="Breadcrumb">`)
+	b.WriteString(`<a href="/">Projects</a> <span class="sep">/</span> `)
+	b.WriteString(fmt.Sprintf(`<a href="/project/%s">%s</a> <span class="sep">/</span> `,
+		html.EscapeString(projectName), html.EscapeString(projectName)))
+	b.WriteString(fmt.Sprintf(`<span class="current">%s</span>`, html.EscapeString(idPrefix)))
+	b.WriteString(`</nav>`)
+	if len(allSessions) > 1 {
+		b.WriteString(`<select class="session-switcher" aria-label="Switch session" onchange="if(this.value)location.href=this.value">`)
 		for _, s := range allSessions {
-			active := ""
+			selected := ""
 			if s.ID == session.ID {
-				active = " active"
+				selected = " selected"
 			}
-			summary := truncate(s.Summary, 32)
-			if summary == "" {
-				summary = truncate(s.ID, 8)
+			label := truncate(s.ID, 6)
+			if tag := providerTag(s.Provider); tag != "" {
+				label += " " + tag
 			}
-			badge := providerBadgeHTML(s.Provider)
-			provAttr := ""
-			if s.Provider != "" {
-				provAttr = fmt.Sprintf(` data-provider="%s"`, s.Provider)
+			if summary := truncate(s.Summary, 48); summary != "" {
+				label += " · " + summary
 			}
-			b.WriteString(fmt.Sprintf(`<a href="/session/%s/%s" class="panel-item%s"%s title="%s"><span class="panel-id-row"><span class="panel-id">%s</span>%s</span><span class="panel-summary">%s</span></a>`,
-				html.EscapeString(projectName), html.EscapeString(s.ID), active, provAttr,
-				html.EscapeString(s.Summary), html.EscapeString(truncate(s.ID, 6)), badge, html.EscapeString(summary)))
+			b.WriteString(fmt.Sprintf(`<option value="/session/%s/%s"%s>%s</option>`,
+				html.EscapeString(projectName), html.EscapeString(s.ID), selected, html.EscapeString(label)))
 		}
-		b.WriteString(`</div>`)
-		b.WriteString(`</aside>`)
+		b.WriteString(`</select>`)
 	}
+	b.WriteString(`</div>`)
+
+	b.WriteString(`<div class="layout session-layout">`)
 
 	// Conversation nav sidebar
 	b.WriteString(`<aside class="nav-sidebar" id="nav-sidebar">`)
@@ -3768,6 +3775,17 @@ function sanitizeID(s) {
   return s ? s.replace(/[^a-zA-Z0-9_-]/g, '') : '';
 }
 
+function toggleOutlineDrawer() {
+  document.querySelector('.session-layout')?.classList.toggle('outline-open');
+}
+// Tapping an outline entry on a small viewport should land on the
+// message, not leave the drawer covering it.
+document.addEventListener('click', (e) => {
+  if (window.innerWidth > 1024) return;
+  if (e.target.closest('#nav-list a')) {
+    document.querySelector('.session-layout')?.classList.remove('outline-open');
+  }
+});
 function toggleSidebar() {
   const layout = document.querySelector('.session-layout');
   const icon = document.getElementById('toggle-icon');

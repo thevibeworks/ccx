@@ -344,103 +344,6 @@ code, pre, .session-id, .model-badge {
   position: sticky;
   top: 48px;
 }
-
-/* Session nav: narrow-by-default, expand-on-hover.
- *
- * Default state is 56px — wide enough for a session-id stub + provider
- * badge, narrow enough that the reading content gets the space it
- * needs. On hover the sidebar expands to 260px via overlay (absolute
- * positioning inside a 56px flex slot) so the outline sidebar and main
- * content don't shift sideways when the cursor drifts over.
- *
- * The outer <aside.session-nav> keeps its 56px footprint in the flex
- * layout. The inner stack (.panel-header + .panel-list) is the element
- * that actually widens — anchored left to the aside so expansion grows
- * rightward into a floating column with a soft shadow. */
-.panel-nav.session-nav {
-  width: 56px;
-  min-width: 56px;
-  background: transparent;
-  border-right: none;
-  position: sticky;
-  top: 48px;
-  z-index: 20;
-  overflow: visible;
-  display: block;
-}
-.panel-nav.session-nav .panel-header,
-.panel-nav.session-nav .panel-list {
-  width: 56px;
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
-  transition: width 0.18s ease, box-shadow 0.18s ease;
-}
-.panel-nav.session-nav:hover .panel-header,
-.panel-nav.session-nav:hover .panel-list {
-  width: 260px;
-  box-shadow: 6px 0 18px rgba(0, 0, 0, 0.08);
-}
-.panel-nav.session-nav .panel-header {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 14px 0;
-  text-align: center;
-  font-size: 0; /* Hide the "Sessions" text when collapsed */
-}
-.panel-nav.session-nav .panel-header::before {
-  content: 'S';
-  display: inline-block;
-  width: 24px;
-  height: 24px;
-  line-height: 24px;
-  border-radius: 50%;
-  font-size: 12px;
-  font-weight: 600;
-  background: color-mix(in srgb, var(--accent-session) 15%, transparent);
-  color: var(--accent-session);
-}
-.panel-nav.session-nav:hover .panel-header {
-  padding: 12px 16px;
-  font-size: 13px;
-  text-align: left;
-}
-.panel-nav.session-nav:hover .panel-header::before { display: none; }
-.panel-nav.session-nav .panel-list {
-  max-height: calc(100vh - 48px - 52px);
-  overflow-y: auto;
-}
-/* Collapsed panel items: compact pill showing only session id */
-.panel-nav.session-nav .panel-item {
-  padding: 8px 6px;
-  gap: 2px;
-  overflow: hidden;
-}
-.panel-nav.session-nav:hover .panel-item {
-  padding: 8px 16px;
-}
-.panel-nav.session-nav .panel-item .panel-summary {
-  display: none;
-}
-.panel-nav.session-nav:hover .panel-item .panel-summary {
-  display: block;
-}
-.panel-nav.session-nav .panel-item .panel-id {
-  font-size: 10px;
-  letter-spacing: 0.02em;
-}
-.panel-nav.session-nav:hover .panel-item .panel-id {
-  font-size: 11px;
-}
-/* Hide the provider badge's right-align magic when collapsed so it
- * centers under the id stub instead of floating off-screen */
-.panel-nav.session-nav .panel-item .panel-id-row {
-  justify-content: center;
-  flex-wrap: wrap;
-}
-.panel-nav.session-nav:hover .panel-item .panel-id-row {
-  justify-content: flex-start;
-}
 .panel-header {
   padding: 12px 16px;
   font-weight: 600;
@@ -453,8 +356,6 @@ code, pre, .session-id, .model-badge {
   text-decoration: none;
 }
 .panel-header a:hover { color: var(--text); }
-.panel-nav:not(.session-nav) .panel-header a:hover { color: var(--accent-project); }
-.session-nav .panel-header a:hover { color: var(--accent-session); }
 .panel-list {
   flex: 1;
   overflow-y: auto;
@@ -471,30 +372,17 @@ code, pre, .session-id, .model-badge {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-left: 3px solid transparent;
 }
 .panel-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .panel-item:hover {
   background: var(--bg-tertiary);
 }
+/* Active = terracotta-tinted ground; provider identity stays in the
+ * badge. One accent, semantically placed. */
 .panel-item.active {
-  background: var(--bg-tertiary);
-  border-left-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--bg-tertiary));
   font-weight: 500;
 }
-/* Context-specific panel accents */
-.panel-nav:not(.session-nav) .panel-item.active { border-left-color: var(--accent-project); }
-.session-nav .panel-item.active { border-left-color: var(--accent-session); }
-.session-nav .panel-item[data-provider="claude-code"].active { border-left-color: var(--accent-cc); }
-.session-nav .panel-item[data-provider="codex"].active { border-left-color: var(--accent-cx); }
-.session-nav .panel-item[data-provider="grok"].active { border-left-color: var(--accent-gx); }
-.session-nav .panel-item {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-.session-nav .panel-item .panel-id-row { display: flex; align-items: center; gap: 4px; width: 100%; }
-.session-nav .panel-item .panel-id-row .provider-badge { margin-left: auto; flex-shrink: 0; }
 .panel-id {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -666,8 +554,35 @@ code, pre, .session-id, .model-badge {
   margin-right: 10px;
   vertical-align: middle;
 }
-.page-header-projects { border-left: 3px solid var(--accent-project); padding-left: 16px; }
-.page-header-sessions { border-left: 3px solid var(--accent-session); padding-left: 16px; }
+/* Page identity comes from the heading and its badge — no stripe. */
+
+
+/* Context bar: location + sideways movement. Replaces the second
+ * navigation rail — the outline is the only rail. */
+.context-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  position: sticky;
+  top: 48px;
+  z-index: 15;
+}
+.context-bar .breadcrumb { margin-bottom: 0; flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-switcher {
+  margin-left: auto;
+  max-width: 42ch;
+  padding: 3px 6px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.outline-btn { display: none; }
 
 .breadcrumb {
   font-size: 12px;
@@ -866,17 +781,11 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 .card-stats .stat { display: flex; align-items: center; gap: 4px; }
 .card-stats .stat-sep { opacity: 0.4; }
 
-.project-card[data-provider="claude-code"] { border-left: 3px solid var(--accent-cc); }
-.project-card[data-provider="codex"] { border-left: 3px solid var(--accent-cx); }
-.project-card[data-provider="grok"] { border-left: 3px solid var(--accent-gx); }
-.project-card[data-provider="multi"] { border-left: 3px solid var(--text-muted); }
+/* Provider identity lives in the badge, not a stripe. */
 
 .session-list { display: flex; flex-direction: column; gap: 8px; }
 
-.session-card { border-left: 3px solid var(--accent-session); }
-.session-card[data-provider="claude-code"] { border-left: 3px solid var(--accent-cc); }
-.session-card[data-provider="codex"] { border-left: 3px solid var(--accent-cx); }
-.session-card[data-provider="grok"] { border-left: 3px solid var(--accent-gx); }
+
 
 .session-header {
   display: flex;
@@ -1005,7 +914,6 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   right: 40px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--accent-conversation);
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.12);
   padding: 0;
@@ -1205,9 +1113,8 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 
 /* Navigation item hierarchy */
 .nav-compact {
-  background: linear-gradient(90deg, rgba(255,180,50,0.15) 0%, transparent 100%);
+  background: color-mix(in srgb, var(--event-compact, #fa0) 12%, transparent);
   font-weight: 600;
-  border-left: 3px solid #fa0;
   margin: 8px 0;
 }
 .nav-compact .nav-icon { color: #fa0; }
@@ -2331,7 +2238,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 .long-output .output-full { max-height: 600px; overflow: auto; }
 .tool-error {
   background: var(--error-bg);
-  border-left: 3px solid var(--error-border);
+  border: 1px solid var(--error-border);
 }
 
 .block-result {
@@ -2424,16 +2331,14 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   font-size: 10px;
 }
 .diff-old {
-  background: rgba(255,100,100,0.1);
-  border-left: 3px solid #c66;
+  background: rgba(255,100,100,0.12);
   padding: 8px;
   margin: 0;
   white-space: pre-wrap;
   color: #a55;
 }
 .diff-new {
-  background: rgba(100,255,100,0.1);
-  border-left: 3px solid #6a6;
+  background: rgba(100,255,100,0.12);
   padding: 8px;
   margin: 0;
   white-space: pre-wrap;
@@ -2486,9 +2391,8 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 .task-prompt {
   margin-top: 8px;
   padding: 8px 12px;
-  background: var(--bg-secondary);
+  background: color-mix(in srgb, var(--primary) 7%, var(--bg-secondary));
   border-radius: var(--radius);
-  border-left: 3px solid var(--primary);
 }
 
 /* Skill tool */
@@ -2608,8 +2512,22 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   .dock-toolbar { left: 50%; max-width: calc(100vw - 40px); }
   .session-search { left: 50%; max-width: calc(100vw - 40px); min-width: auto; }
 }
+@media (max-width: 1024px) {
+  .outline-btn { display: inline-flex; }
+  .nav-sidebar {
+    position: fixed;
+    left: 0;
+    top: 48px;
+    bottom: 0;
+    height: auto;
+    z-index: 40;
+    transform: translateX(-100%);
+    transition: transform 100ms linear;
+    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.18);
+  }
+  .session-layout.outline-open .nav-sidebar { transform: none; }
+}
 @media (max-width: 600px) {
-  .nav-sidebar { display: none; }
   .panel-nav { display: none; }
   .top-nav { padding: 0 10px; }
   .dock-toolbar { bottom: 28px; }
@@ -2690,13 +2608,29 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 }
 .te-fail { padding: 1px 0; }
 
-/* Deep-link flash highlight for ?turn=N and evidence jumps */
+/* Deep-link flash highlight for ?turn=N and evidence jumps.
+ * Outline + opacity only: box-shadow animation is paint-heavy, and
+ * this is the one deliberate attention cue in the interface. */
 .msg-target {
-  animation: ccx-target-flash 2.2s ease-out;
+  outline: 3px solid var(--primary);
+  outline-offset: 1px;
+  animation: ccx-target-flash 2.2s ease-out forwards;
   scroll-margin-top: 60px;
 }
 @keyframes ccx-target-flash {
-  0%   { box-shadow: 0 0 0 3px var(--primary); }
-  70%  { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 40%, transparent); }
-  100% { box-shadow: none; }
+  0%   { outline-color: var(--primary); }
+  70%  { outline-color: color-mix(in srgb, var(--primary) 40%, transparent); }
+  100% { outline-color: transparent; }
+}
+
+/* Reduced motion: instant cuts, static cues. Color/opacity state
+ * changes stay (they carry meaning); choreography goes. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .msg-target { outline-color: var(--primary); animation: none; }
 }

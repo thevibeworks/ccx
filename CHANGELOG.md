@@ -5,6 +5,13 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [Unreleased]
+
+### Changed
+- **Session view runs one navigation rail.** The hover-expanding session-switcher rail is gone; the outline (turn-level navigation — the Inspect instrument) is the rail. Session switching moved to a context bar under the header: breadcrumb plus a native session switcher. On viewports under 1024px the outline becomes an off-canvas drawer behind a visible toggle instead of disappearing — mobile navigation now exists.
+- **Motion is mechanical and reduced-motion aware.** A global `prefers-reduced-motion` block (the file had none in 2,700 lines); the `?turn=N` deep-link flash animates outline color instead of box-shadow (compositor-friendly) and degrades to a static outline under reduced motion.
+- **Side-stripe accents removed across the UI** (kiln permanent anti-pattern): provider identity lives in badges only, active states use terracotta-tinted backgrounds, state blocks (tool errors, diffs, task prompts) use tints and full hairline borders. Audit and token plan: `docs/design/0002-shell-redesign-audit.md`.
+
 ## [0.10.0] - 2026-07-15
 
 ### Added
