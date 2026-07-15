@@ -5,6 +5,16 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [Unreleased]
+
+### Added
+- **Grok provider support** — ccx now reads Grok Build (grok CLI) sessions from `~/.grok/sessions/` alongside Claude Code and Codex. All five verbs work: `sessions`, `view`, `export`, `search`, `trace`, plus the web UI (GX badges, provider filter, `gx:` search prefix), `--provider gx`, `--grok-home`, `GROK_HOME`, `providers.grok` config, and `ccx doctor`. Discovery reads only each session's `summary.json` — no line scans, so Grok listing is the cheapest of the three providers. The parser consumes `chat_history.jsonl` (conversation), workspace `prompt_history.jsonl` (user-turn timestamps), and `updates.jsonl` (token totals), normalizes Grok's tool dialect onto the canonical names the trace analyzer understands (`run_terminal_command`→Bash, `edit_file`→Edit, ...), unwraps the `<user_query>` harness envelope, and renders reasoning summaries only (Grok thinking is encrypted; ccx never implies more exists). Parsing is gated on `chat_format_version: 1` — a future format bumps loud, not garbled. Format reference: `docs/devlog/2026-07-15-grok-session-format.org`, observed against grok 0.2.101 with committed sanitized fixtures under `testdata/fixtures/grok-home/`.
+- **No Grok cost, by design.** Grok sessions parse token counts but never display dollar figures: real Grok tool results carry no error flags either (203/203 sampled), so Grok turns also report zero tool errors instead of guessing from content text. Remove-wrong over display-wrong, both times.
+
+### Changed
+- **Zero cost now renders as nothing, not `$0.00`.** The trace outline header omits its cost segment when no cost was computed — `$0.00` read as "measured zero" when the truth is "unpriced" (Grok by contract, unknown models on any provider).
+- CLI `search` results show the backend's human-readable project name instead of pushing grok's URL-encoded directory names through claude-code decoding heuristics.
+
 ## [0.9.0] - 2026-07-15
 
 Two feature sets: the review loop grows per-turn evidence panels in the web UI, and export grows the distillation primitive. Driven by the vault-mining pilot (2026-07-12): 18 sessions distilled with ad-hoc Python exposed that every distiller agent re-implemented the same "what did the human actually say" filter. That filter is now a ccx primitive.

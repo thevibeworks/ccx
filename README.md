@@ -1,6 +1,6 @@
 # ccx
 
-**Session viewer for coding agents** — Browse, search, and export conversations from Claude Code and Codex.
+**Session viewer for coding agents** — Browse, search, and export conversations from Claude Code, Codex, and Grok.
 
 ```
 ccx web
@@ -27,9 +27,9 @@ Opens a browser at `localhost:8080`. That's it.
 
 ## What it does
 
-ccx reads session files from `~/.claude/` and `~/.codex/` and gives you a fast, keyboard-driven interface to browse them.
+ccx reads session files from `~/.claude/`, `~/.codex/`, and `~/.grok/` and gives you a fast, keyboard-driven interface to browse them.
 
-- **Multi-provider** — Claude Code + Codex sessions merged by project, with provider badges
+- **Multi-provider** — Claude Code + Codex + Grok sessions merged by project, with provider badges
 - **Two-panel navigation** — Projects → Sessions → Conversation tree
 - **Live tail** — Watch active sessions update in real-time
 - **In-session search** — Filter by User, Response, Tools, Agents, Thinking
@@ -38,7 +38,7 @@ ccx reads session files from `~/.claude/` and `~/.codex/` and gives you a fast, 
 - **Turn evidence** — per-turn review panel in the web UI (steps, tools, edited files, failed calls, cost) numbered identically to `ccx trace`, with `?turn=N` deep links
 - **Context trace** — `ccx trace` emits evidence for Context Folding
 - **Time-sliced logs** — `ccx log` cuts through long-running session JSONL by timestamp
-- **Provider filter** — `--provider cc` or `--provider cx` on any command
+- **Provider filter** — `--provider cc`, `cx`, or `gx` on any command
 - **Date filter** — `--after 2026-03-01 --before 2026-04-01`
 - **Keyboard shortcuts** — `j/k` scroll, `/` search, `z` fold, `r` refresh, `d` theme
 
@@ -94,12 +94,18 @@ providers:
     enabled: true
   codex:
     enabled: true
+  grok:
+    enabled: true
 ```
+
+Grok sessions show token counts but never cost: pricing is
+unverified, and a guessed dollar figure is worse than none.
 
 Override provider homes:
 ```bash
 ccx --claude-home /path web
 ccx --codex-home /path web
+ccx --grok-home /path web
 ```
 
 ## Data safety

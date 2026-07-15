@@ -16,6 +16,7 @@ var (
 	cfgFile    string
 	claudeHome string
 	codexHome  string
+	grokHome   string
 	version    string
 	buildTime  string
 )
@@ -67,9 +68,11 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: $XDG_CONFIG_HOME/ccx/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&claudeHome, "claude-home", "", "override CLAUDE_CODE_HOME")
 	rootCmd.PersistentFlags().StringVar(&codexHome, "codex-home", "", "override CODEX_HOME")
+	rootCmd.PersistentFlags().StringVar(&grokHome, "grok-home", "", "override GROK_HOME")
 
 	_ = viper.BindPFlag("claude_code_home", rootCmd.PersistentFlags().Lookup("claude-home"))
 	_ = viper.BindPFlag("codex_home", rootCmd.PersistentFlags().Lookup("codex-home"))
+	_ = viper.BindPFlag("grok_home", rootCmd.PersistentFlags().Lookup("grok-home"))
 
 	rootCmd.AddCommand(projectsCmd)
 	rootCmd.AddCommand(sessionsCmd)
@@ -110,6 +113,7 @@ func initConfig() {
 
 	viper.SetDefault("claude_code_home", config.DefaultClaudeHome())
 	viper.SetDefault("codex_home", config.DefaultCodexHome())
+	viper.SetDefault("grok_home", config.DefaultGrokHome())
 	viper.SetDefault("theme", "dark")
 	viper.SetDefault("rendering.syntax_highlight", true)
 	viper.SetDefault("rendering.show_thinking", "collapsed")

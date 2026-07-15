@@ -29,11 +29,29 @@ func DefaultCodexHome() string {
 	return filepath.Join(home, ".codex")
 }
 
+func DefaultGrokHome() string {
+	if env := os.Getenv("GROK_HOME"); env != "" {
+		return env
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".grok")
+}
+
 func ClaudeHome() string {
 	if v := viper.GetString("claude_code_home"); v != "" {
 		return expandPath(v)
 	}
 	return DefaultClaudeHome()
+}
+
+func GrokHome() string {
+	if v := viper.GetString("grok_home"); v != "" {
+		return expandPath(v)
+	}
+	return DefaultGrokHome()
 }
 
 func CodexHome() string {

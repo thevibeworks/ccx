@@ -88,8 +88,17 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	var results []searchResult
 
 	for _, p := range projects {
-		projDisplay := parser.GetProjectDisplayName(p.EncodedName)
-		projPath := parser.DecodePath(p.EncodedName)
+		// Backends set Name to the human-readable form; the encoding
+		// heuristics are claude-code specific and mangle grok's
+		// url-encoded dirs.
+		projDisplay := p.Name
+		if projDisplay == "" {
+			projDisplay = parser.GetProjectDisplayName(p.EncodedName)
+		}
+		projPath := p.Path
+		if projPath == "" {
+			projPath = parser.DecodePath(p.EncodedName)
+		}
 
 		// Project name match (skip if filtering to sessions only)
 		if searchType != "session" {

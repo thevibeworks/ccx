@@ -1,0 +1,139 @@
+* [2026-07-15] Dev Log: Grok Build Session Format Reference       :reference:grok:
+
+** Context
+Phase 1 of the Q3 goal contract (docs/2026-q3-goal.md): Grok provider
+parity. This is the contract spike — the format reference that gates
+the build, written from real local sessions, not from docs.
+
+Observed against grok CLI =0.2.101 (stable)= with
+=chat_format_version: 1=. The format is young; when docs and disk
+disagree, disk wins, and this file records what was actually on disk.
+Re-verify against this doc before extending the parser.
+
+Official docs: https://docs.x.ai/build/features/sessions and
+https://docs.x.ai/build/cli/reference
+
+** Layout
+Everything lives under =~/.grok/= (override: =GROK_HOME=). Sessions:
+
+#+begin_example
+~/.grok/sessions/
+  session_search.sqlite                  # CLI's own search index (ignore)
+  <url-encoded-workspace-path>/          # %2FUsers%2Feric%2F... one dir per cwd
+    prompt_history.jsonl                 # workspace-level prompt log
+    <session-uuid>/                      # one dir per session (uuid v7)
+      summary.json                       # metadata (the quick-parse source)
+      chat_history.jsonl                 # the conversation (parse source of truth)
+      updates.jsonl                      # ACP-style update stream (timestamps, usage)
+      events.jsonl                       # runtime events (permissions, phases)
+      rewind_points.jsonl                # per-prompt file snapshots (rewind/fork)
+      system_prompt.txt                  # rendered system prompt
+      prompt_context.json                # context assembly detail
+      terminal/call-<id>-<n>.log         # raw terminal output per exec tool call
+      recap_requests/<uuid>.json         # recap feature artifacts
+      announcement_state.json, resources_state.json, signals.json
+#+end_example
+
+Workspace encoding is URL escaping of the absolute cwd
+(=%2FUsers%2Feric...= -> =/Users/eric...=), unlike Claude Code's
+dash encoding and unlike Codex's date-sharded flat layout.
+
+** summary.json — discovery metadata
+One JSON object. Fields observed (all present on a real session):
+
+- =info.id= (session uuid), =info.cwd=
+- =session_summary= / =generated_title= — human summary
+- =created_at=, =updated_at=, =last_active_at= (RFC3339, nanosecond)
+- =num_messages= (updates stream count), =num_chat_messages=
+- =current_model_id= (e.g. =grok-4.5=), =reasoning_effort=
+- =chat_format_version= (currently 1 — gate parsing on this)
+- =git_root_dir=, =git_remotes[]=, =head_commit=, =head_branch=
+- =agent_name=, =sandbox_profile=, =request_id=, =grok_home=
+
+This file alone serves session lists: no line scan needed. That makes
+Grok discovery cheaper than either existing provider.
+
+** chat_history.jsonl — the conversation
+One JSON object per line, discriminated by =type=:
+
+- =system=: ={type, content: string}= — the system prompt.
+- =user=: ={type, content: [{type: "text", text}]}=. First user turn
+  wraps environment blocks (=<user_info>=, =<git_status>=) around the
+  typed prompt — same harness-noise problem the 0.9.0 classification
+  work solved for Claude Code; classify accordingly.
+- =assistant=: ={type, content, tool_calls?, model_id,
+  model_fingerprint, reasoning_effort}=. =tool_calls= is an array of
+  ={id, name, arguments}= where =arguments= is a JSON-encoded STRING
+  (OpenAI dialect), not an object — decode before extracting paths.
+- =reasoning=: ={type, id, status, summary, encrypted_content}= —
+  thinking is encrypted; only =summary= is renderable. Never attempt
+  to decode =encrypted_content=.
+- =tool_result=: ={type, tool_call_id, content}=. NO error flag
+  exists (203/203 sampled lines carry exactly these three keys), so
+  Grok turns report zero tool errors rather than guessing from
+  content text — remove-wrong over display-wrong. Error visibility
+  may come later from events.jsonl permission/hook records.
+
+No per-message timestamps and no usage in this file — both live in
+updates.jsonl.
+
+** updates.jsonl — timestamps and usage
+JSON-RPC notifications: ={timestamp (unix seconds), method:
+"_x.ai/session/update", params: {sessionId, update: {sessionUpdate:
+<kind>, ...}, _meta: {eventId, agentTimestampMs}}}=.
+
+Observed =sessionUpdate= kinds include message/tool-call mirrors of
+the chat stream plus =hook_execution= and lifecycle events. Usage
+arrives in camelCase: ={usage: {inputTokens, outputTokens,
+totalTokens, cachedReadTokens, reasoningTokens, modelCalls,
+apiDurationMs, modelUsage: {<model-id>: {...}}}}=.
+
+Parity build uses this stream only to attribute timestamps and usage
+onto chat messages (the same job Codex's =token_count= delta logic
+does). Everything else in it is out of scope for v1.
+
+** events.jsonl
+={ts (RFC3339), type, ...}= runtime events: =loop_started=,
+=first_token=, =permission_requested/resolved=, =phase_changed=
+(thousands — spinner phases), MCP lifecycle. Not needed for parity;
+revisit for permission-audit features later.
+
+** rewind_points.jsonl — file snapshots
+One line per prompt: ={prompt_index, created_at, file_snapshots: {},
+after_snapshots: {}}=. This is the documented snapshot/rewind
+mechanism. Read-only parity ignores it (fork/resume for Grok is out
+of scope by contract).
+
+** prompt_history.jsonl — workspace-level
+={timestamp, session_id, prompt, is_bash}= per line, one file per
+workspace dir. Cheap source for "sessions in this workspace by last
+prompt" without touching per-session dirs.
+
+** Mapping onto ccx's model
+| Grok                          | ccx                                        |
+|-------------------------------+--------------------------------------------|
+| workspace dir (url-decoded)   | Project (path = decoded cwd)               |
+| session dir uuid              | Session.ID                                 |
+| summary.json                  | quick-parse Session metadata               |
+| chat =user= line              | KindUserPrompt (after noise classification) |
+| chat =assistant= line         | KindAssistant, content + tool_use blocks   |
+| assistant =tool_calls[i]=     | ContentBlock{type: tool_use} (decode args) |
+| chat =tool_result= line       | KindToolResult, ContentBlock{tool_result}  |
+| chat =reasoning= line         | thinking block (summary only)              |
+| updates usage                 | MessageUsage (incl. ReasoningTokens)       |
+| updates timestamp             | Message.Timestamp                          |
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp |
+| chat_history.jsonl is parse source of truth | reconstruct from updates.jsonl | chat file is the stable documented artifact; updates is an event mirror with 2x volume | claude | 2026-07-15 |
+| updates.jsonl only for ts+usage attribution | full ACP replay | parity needs message-level evidence, not runtime theater | claude | 2026-07-15 |
+| No cost figures for Grok | estimate from public pricing | contract hard-exclusion: no cost until exact usage evidence exists in the files AND pricing is verified | claude | 2026-07-15 |
+| Gate on chat_format_version == 1 | parse whatever | format is young; a version bump should fail loud, not garble | claude | 2026-07-15 |
+
+** Notes
+- Provider flag: =gx= (cc/cx/gx symmetry).
+- Sessions can hold errors worth surfacing: =permission_resolved=
+  denials and failed hooks — future audit material, not v1.
+- reasoning =encrypted_content= means Grok thinking is structurally
+  private; ccx renders the summary only. Do not ship a "show
+  thinking" toggle that implies more than the summary exists.

@@ -136,6 +136,8 @@ func providerTag(p string) string {
 		return "[CC]"
 	case "codex":
 		return "[CX]"
+	case "grok":
+		return "[GX]"
 	default:
 		return ""
 	}

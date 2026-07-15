@@ -1,0 +1,9 @@
+{"type":"system","content":"You are Grok 4.5 released by xAI. Fixture system prompt."}
+{"type":"user","content":[{"type":"text","text":"<user_query>\nfix the greeting bug in widget.go\n</user_query>"}]}
+{"type":"reasoning","id":"reason-1","status":"completed","summary":"Reading the file to find the greeting bug before editing.","encrypted_content":"OPAQUE-FIXTURE-BLOB"}
+{"type":"assistant","content":"Let me read widget.go first.","tool_calls":[{"id":"call-fixture-read-1","name":"read_file","arguments":"{\"path\":\"widget.go\"}"}],"model_id":"grok-4.5","model_fingerprint":"fp_fixture_2","reasoning_effort":"high"}
+{"type":"tool_result","tool_call_id":"call-fixture-read-1","content":[{"type":"text","text":"package widget\n\nfunc Greet() string { return \"helo\" }\n"}]}
+{"type":"assistant","content":"Found it — typo in the greeting. Fixing.","tool_calls":[{"id":"call-fixture-edit-1","name":"edit_file","arguments":"{\"path\":\"widget.go\",\"old_string\":\"helo\",\"new_string\":\"hello\"}"},{"id":"call-fixture-bash-1","name":"run_terminal_command","arguments":"{\"command\":\"go test ./...\"}"}],"model_id":"grok-4.5","model_fingerprint":"fp_fixture_2","reasoning_effort":"high"}
+{"type":"tool_result","tool_call_id":"call-fixture-edit-1","content":[{"type":"text","text":"edited widget.go"}]}
+{"type":"tool_result","tool_call_id":"call-fixture-bash-1","content":[{"type":"text","text":"FAIL: TestGreet expected greeting mock"}]}
+{"type":"assistant","content":"Fixed the typo; one pre-existing test needs its fixture updated — flagging rather than changing test expectations silently.","model_id":"grok-4.5","model_fingerprint":"fp_fixture_2","reasoning_effort":"high"}

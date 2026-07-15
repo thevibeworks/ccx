@@ -37,7 +37,7 @@ func projectProviders(p *parser.Project) []string {
 		}
 	}
 	var providers []string
-	for _, id := range []string{"claude-code", "codex"} {
+	for _, id := range []string{"claude-code", "codex", "grok"} {
 		if seen[id] {
 			providers = append(providers, id)
 		}
@@ -62,6 +62,8 @@ func providerTag(id string) string {
 		return "CC"
 	case "codex":
 		return "CX"
+	case "grok":
+		return "GX"
 	default:
 		return ""
 	}
@@ -88,6 +90,11 @@ func parseProviderQuery(q string) (provider, query string) {
 	for _, prefix := range []string{"cc:", "claude-code:", "claude:"} {
 		if strings.HasPrefix(strings.ToLower(q), prefix) {
 			return "claude-code", strings.TrimSpace(q[len(prefix):])
+		}
+	}
+	for _, prefix := range []string{"gx:", "grok:"} {
+		if strings.HasPrefix(strings.ToLower(q), prefix) {
+			return "grok", strings.TrimSpace(q[len(prefix):])
 		}
 	}
 	for _, prefix := range []string{"cx:", "codex:"} {
@@ -224,7 +231,7 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 	b.WriteString(`<span class="search-spinner" id="search-spinner"></span>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="sort-controls">`)
-	b.WriteString(`<select id="provider-filter" class="sort-select" title="Filter by provider"><option value="all">All</option><option value="claude-code">Claude Code</option><option value="codex">Codex</option></select>`)
+	b.WriteString(`<select id="provider-filter" class="sort-select" title="Filter by provider"><option value="all">All</option><option value="claude-code">Claude Code</option><option value="codex">Codex</option><option value="grok">Grok</option></select>`)
 	b.WriteString(`<span class="sort-label">Sort:</span>`)
 	b.WriteString(fmt.Sprintf(`<select id="sort" class="sort-select">
 		<option value="time"%s>Recent</option>
@@ -2398,6 +2405,7 @@ async function doSearch(query) {
 function providerBadge(p) {
   if (p === 'claude-code') return '<span class="provider-badge provider-CC">CC</span>';
   if (p === 'codex') return '<span class="provider-badge provider-CX">CX</span>';
+  if (p === 'grok') return '<span class="provider-badge provider-GX">GX</span>';
   return '';
 }
 
@@ -2504,6 +2512,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 	providers := []providerInfo{
 		{"claude-code", ccxSettings.ClaudeHome, 0},
 		{"codex", ccxSettings.CodexHome, 0},
+		{"grok", ccxSettings.GrokHome, 0},
 	}
 	allProjects, _ := sessionProvider.DiscoverProjects()
 	for _, p := range allProjects {
@@ -3499,7 +3508,8 @@ if (globalSearchInput && searchResults) {
                           r.type === 'session' ? '<span class="result-badge badge-session">S</span>' :
                           '<span class="result-badge badge-message">M</span>';
             const pb = r.provider === 'claude-code' ? ' <span class="provider-badge provider-CC">CC</span>' :
-                       r.provider === 'codex' ? ' <span class="provider-badge provider-CX">CX</span>' : '';
+                       r.provider === 'codex' ? ' <span class="provider-badge provider-CX">CX</span>' :
+                       r.provider === 'grok' ? ' <span class="provider-badge provider-GX">GX</span>' : '';
             const safeUrl = (r.url && r.url[0] === '/' && r.url[1] !== '/') ? escapeHtml(r.url) : '#';
             let html = '<a href="' + safeUrl + '" class="search-result">';
             html += badge;
@@ -3691,7 +3701,8 @@ if (globalSearchInput && searchResults) {
                           r.type === 'session' ? '<span class="result-badge badge-session">S</span>' :
                           '<span class="result-badge badge-message">M</span>';
             const pb = r.provider === 'claude-code' ? ' <span class="provider-badge provider-CC">CC</span>' :
-                       r.provider === 'codex' ? ' <span class="provider-badge provider-CX">CX</span>' : '';
+                       r.provider === 'codex' ? ' <span class="provider-badge provider-CX">CX</span>' :
+                       r.provider === 'grok' ? ' <span class="provider-badge provider-GX">GX</span>' : '';
             const safeUrl = (r.url && r.url[0] === '/' && r.url[1] !== '/') ? escapeHtml(r.url) : '#';
             let html = '<a href="' + safeUrl + '" class="search-result">';
             html += badge;

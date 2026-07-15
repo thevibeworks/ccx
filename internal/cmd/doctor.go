@@ -82,6 +82,19 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		warnings = append(warnings, fmt.Sprintf("Codex home not found: %s", codexHome))
 	}
 
+	grokHome := config.GrokHome()
+	if _, err := os.Stat(grokHome); err == nil {
+		fmt.Printf("[OK] Grok home: %s\n", grokHome)
+		if info, err := os.Stat(filepath.Join(grokHome, "sessions")); err == nil && info.IsDir() {
+			fmt.Println("[OK] Grok sessions/: found")
+		}
+		if _, err := os.Stat(filepath.Join(grokHome, "config.toml")); err == nil {
+			fmt.Println("[OK] Grok config.toml: found")
+		}
+	} else {
+		warnings = append(warnings, fmt.Sprintf("Grok home not found: %s", grokHome))
+	}
+
 	fmt.Println()
 
 	for _, w := range warnings {

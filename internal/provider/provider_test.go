@@ -12,8 +12,10 @@ func TestDefaultHonorsEnabledProvidersWithoutExistingHomes(t *testing.T) {
 
 	viper.Set("claude_code_home", "/tmp/missing-claude-home")
 	viper.Set("codex_home", "/tmp/missing-codex-home")
+	viper.Set("grok_home", "/tmp/missing-grok-home")
 	viper.Set("providers.claude-code.enabled", false)
 	viper.Set("providers.codex.enabled", true)
+	viper.Set("providers.grok.enabled", false)
 
 	backend := Default()
 	if backend.ID() != "codex" {

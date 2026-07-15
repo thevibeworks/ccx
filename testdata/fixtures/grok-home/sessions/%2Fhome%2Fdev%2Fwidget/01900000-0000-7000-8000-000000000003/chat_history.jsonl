@@ -1,0 +1,4 @@
+{"type":"system","content":"You are Grok 4.5 released by xAI. Fixture system prompt."}
+{"type":"user","content":[{"type":"text","text":"<user_query>\nadd a farewell function\n</user_query>"}]}
+{"type":"assistant","content":"Adding Farewell() next to Greet().","tool_calls":[{"id":"call-fixture-write-1","name":"create_file","arguments":"{\"path\":\"farewell.go\",\"content\":\"package widget\\n\\nfunc Farewell() string { return \\\"goodbye\\\" }\\n\"}"}],"model_id":"grok-4.5","model_fingerprint":"fp_fixture_3","reasoning_effort":"medium"}
+{"type":"tool_result","tool_call_id":"call-fixture-write-1","content":[{"type":"text","text":"created farewell.go"}]}

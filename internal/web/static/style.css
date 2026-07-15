@@ -14,6 +14,7 @@
   /* Provider accent colors */
   --accent-cc: #da7756;
   --accent-cx: #10b981;
+  --accent-gx: #8b5cf6;
   /* Semantic event tokens — one color per event kind, used by the
    * rail, outline, info panel, badges, and any future surface. If
    * you want to rebrand an event kind, change it HERE, not in a
@@ -53,6 +54,7 @@
   --accent-conversation: #22d3ee;
   --accent-cc: #e09070;
   --accent-cx: #34d399;
+  --accent-gx: #a78bfa;
   --user-bg: #2a2520;
   --assistant-bg: #202820;
   --tool-bg: #282520;
@@ -173,6 +175,7 @@ code, pre, .session-id, .model-badge {
 }
 .provider-CC { background: var(--accent-cc); color: #fff; }
 .provider-CX { background: var(--accent-cx); color: #fff; }
+.provider-GX { background: var(--accent-gx); color: #fff; }
 .search-loading, .search-empty {
   padding: 16px;
   color: var(--text-muted);
@@ -484,6 +487,7 @@ code, pre, .session-id, .model-badge {
 .session-nav .panel-item.active { border-left-color: var(--accent-session); }
 .session-nav .panel-item[data-provider="claude-code"].active { border-left-color: var(--accent-cc); }
 .session-nav .panel-item[data-provider="codex"].active { border-left-color: var(--accent-cx); }
+.session-nav .panel-item[data-provider="grok"].active { border-left-color: var(--accent-gx); }
 .session-nav .panel-item {
   flex-direction: column;
   align-items: flex-start;
@@ -864,6 +868,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 
 .project-card[data-provider="claude-code"] { border-left: 3px solid var(--accent-cc); }
 .project-card[data-provider="codex"] { border-left: 3px solid var(--accent-cx); }
+.project-card[data-provider="grok"] { border-left: 3px solid var(--accent-gx); }
 .project-card[data-provider="multi"] { border-left: 3px solid var(--text-muted); }
 
 .session-list { display: flex; flex-direction: column; gap: 8px; }
@@ -871,6 +876,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 .session-card { border-left: 3px solid var(--accent-session); }
 .session-card[data-provider="claude-code"] { border-left: 3px solid var(--accent-cc); }
 .session-card[data-provider="codex"] { border-left: 3px solid var(--accent-cx); }
+.session-card[data-provider="grok"] { border-left: 3px solid var(--accent-gx); }
 
 .session-header {
   display: flex;

@@ -5,6 +5,7 @@ import "github.com/spf13/viper"
 type Settings struct {
 	ClaudeHome string
 	CodexHome  string
+	GrokHome   string
 
 	Theme           string
 	SyntaxHighlight bool
@@ -39,12 +40,19 @@ var defaultProviders = map[string]ProviderConfig{
 		AccentLight: "#3b82f6",
 		AccentDark:  "#60a5fa",
 	},
+	"grok": {
+		Enabled:     true,
+		DisplayName: "Grok",
+		AccentLight: "#8b5cf6",
+		AccentDark:  "#a78bfa",
+	},
 }
 
 func Load() *Settings {
 	s := &Settings{
 		ClaudeHome:      ClaudeHome(),
 		CodexHome:       CodexHome(),
+		GrokHome:        GrokHome(),
 		Theme:           viper.GetString("theme"),
 		SyntaxHighlight: viper.GetBool("rendering.syntax_highlight"),
 		ShowThinking:    viper.GetString("rendering.show_thinking"),

@@ -1,0 +1,3 @@
+{"type":"system","content":"You are Grok 4.5 released by xAI. Fixture system prompt."}
+{"type":"user","content":[{"type":"text","text":"<user_info>\nOS Version: linux\nWorkspace Path: /home/dev/widget\n</user_info>\n\n<user_query>\nhello there\n</user_query>"}]}
+{"type":"assistant","content":"Hello! How can I help with the widget project today?","model_id":"grok-4.5","model_fingerprint":"fp_fixture_1","reasoning_effort":"high"}

@@ -114,12 +114,12 @@ func RenderOutlineText(outline *Outline) string {
 	// Wall-span misleads on long sessions; print active time next to it
 	// and say which timezone the rendered times are in (JSON carries
 	// them in UTC — silent localization breaks cross-referencing).
-	fmt.Fprintf(&b, "%s -> %s (times %s) | active %s | %d turns | %d steps | %d files edited | %d tool errors | $%.2f\n",
+	fmt.Fprintf(&b, "%s -> %s (times %s) | active %s | %d turns | %d steps | %d files edited | %d tool errors%s\n",
 		formatOutlineTime(s.Start), formatOutlineTime(s.End), outlineZone(s.Start),
 		formatActive(outline.Stats.ActiveSecs),
 		outline.Stats.TurnCount, outline.Stats.StepCount,
 		outline.Stats.FilesEdited, outline.Stats.ToolErrors,
-		outline.Stats.TotalCostUSD)
+		headerCost(outline.Stats.TotalCostUSD))
 	for _, w := range outline.Warnings {
 		fmt.Fprintf(&b, "warning: %s: %s\n", w.Kind, w.Message)
 	}
@@ -242,4 +242,15 @@ func formatActive(secs float64) string {
 		m := int(d.Minutes()) % 60
 		return fmt.Sprintf("%dh%02dm", h, m)
 	}
+}
+
+// headerCost renders the header's cost segment, or nothing when no
+// cost was computed: $0.00 would read as "measured zero" when the
+// truth is "unpriced" (Grok sessions by contract, unknown models on
+// any provider) — remove-wrong over display-wrong.
+func headerCost(cost float64) string {
+	if cost <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" | $%.2f", cost)
 }

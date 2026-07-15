@@ -25,6 +25,8 @@ func NormalizeProvider(raw string) string {
 		return "claude-code"
 	case "cx", "codex":
 		return "codex"
+	case "gx", "grok":
+		return "grok"
 	case "", "all":
 		return ""
 	default:
