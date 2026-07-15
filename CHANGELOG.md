@@ -7,6 +7,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- **`ccx run <skill> --agent claude|codex|grok` — the runner bridge.** Launches an installed agent CLI headlessly (claude -p / codex exec / grok --single) with one of ccx's bundled skills as the prompt, plus an optional task. Deliberately a bridge, not an agent loop: the provider CLI owns permissions, sandboxing, streaming, and the session file — ccx passes no permission flags and never writes into provider homes. `--dry-run` prints the exact command, the payload, and the permission posture without executing. Every run retains a receipt in `~/.local/share/ccx/runs/` linking it to the provider-native session it produced, which `ccx trace` opens directly.
+
 ### Changed
 - **Session view runs one navigation rail.** The hover-expanding session-switcher rail is gone; the outline (turn-level navigation — the Inspect instrument) is the rail. Session switching moved to a context bar under the header: breadcrumb plus a native session switcher. On viewports under 1024px the outline becomes an off-canvas drawer behind a visible toggle instead of disappearing — mobile navigation now exists.
 - **Motion is mechanical and reduced-motion aware.** A global `prefers-reduced-motion` block (the file had none in 2,700 lines); the `?turn=N` deep-link flash animates outline color instead of box-shadow (compositor-friendly) and degrades to a static outline under reduced motion.

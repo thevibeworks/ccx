@@ -49,6 +49,9 @@ ccx
 │   └── --project [path] --session ID --latest  # Deep-link into a view
 ├── fork <session-id>             # Fork session to current project
 │   └── --to /path                # Fork to specific directory
+├── run <skill> [task]            # Run a bundled skill via an agent CLI
+│   └── --agent claude|codex|grok # Which installed CLI executes it
+│   └── --dry-run                 # Show command + payload + permissions, no exec
 ├── skills                        # Manage bundled agent skills
 │   └── install --scope user|project  # Install skills matching this binary
 ├── config                        # Show / init config
@@ -219,5 +222,19 @@ never describe flags the binary doesn't have):
 ccx skills install               # -> ~/.claude/skills/
 ccx skills install --scope project  # -> ./.claude/skills/
 ```
+
+## Runner bridge
+
+```bash
+ccx run ccx-recap --agent claude          # recap this workspace via claude
+ccx run ccx-retro --agent codex "last session"
+ccx run ccx-recap --agent grok --dry-run  # inspect before running
+```
+
+`ccx run` launches the INSTALLED agent CLI headlessly with a bundled
+skill as the prompt. The agent CLI owns permissions and sandboxing —
+ccx passes no permission flags. The run's session is written by the
+provider and readable with `ccx trace`; a receipt linking run to
+session lands in `~/.local/share/ccx/runs/`.
 
 ccx treats all agent session data as read-only. It never modifies session files.
