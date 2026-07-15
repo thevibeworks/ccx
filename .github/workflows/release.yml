@@ -22,6 +22,16 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+      # A tag must never publish from a red repo: run the same checks
+      # CI runs before goreleaser gets to build anything.
+      - name: Test
+        run: go test -race ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8 # keep in sync with Makefile tools target
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

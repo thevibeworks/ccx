@@ -19,12 +19,13 @@ ccx
 │   └── --provider cc|cx          # Filter by provider
 │   └── --search QUERY            # Search summaries
 │   └── --after DATE              # After date (YYYY-MM-DD)
-│   └── --sort time|messages      # Sort order
+│   └── --sort time|messages|prompts  # Sort order (prompts = human-turn count)
 ├── view [session]                # View session in terminal
 │   └── --brief                   # Conversation only
 ├── export [session]              # Export session
-│   └── --format html|md|org|json
-│   └── --brief                   # Conversation only
+│   └── --format html|md|org|exec
+│   └── --shape full|brief|trace|exchange|human
+│   └── --brief                   # (deprecated: use --shape brief)
 ├── search [query]                # Search across sessions
 │   └── --provider cc|cx          # Filter by provider
 │   └── --after / --before DATE   # Date range
@@ -98,9 +99,18 @@ ccx --codex-home /path view
 ccx export -f html              # Rich HTML
 ccx export -f md                # Markdown
 ccx export -f org               # Org-mode
-ccx export -f json              # Raw JSON
-ccx export -f html --brief      # Conversation only (no tool details)
+ccx export -f exec              # Executive summary
+ccx export --shape brief        # Conversation only (no tool details)
+ccx export --shape human        # Only the human's turns, verbatim,
+                                # numbered, citable by #<uuid8>
 ```
+
+`--shape` picks the content (full, brief, trace, exchange, human);
+`--format` picks the encoding. `--shape human` is markdown-only and
+defaults `--format md`; use it when distilling what the human
+actually said (replay duplicates from compaction are deduplicated).
+For machine-readable JSON evidence use `ccx trace --json`, not
+export.
 
 ## Web UI
 

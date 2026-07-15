@@ -51,7 +51,7 @@ test:
 # Install dev tools (golangci-lint, goimports)
 tools:
 	@echo "Installing dev tools to $(GOBIN)..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 # keep in sync with ci.yml
 	go install golang.org/x/tools/cmd/goimports@latest
 	@echo "Done."
 

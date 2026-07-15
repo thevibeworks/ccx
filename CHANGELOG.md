@@ -5,6 +5,22 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [0.9.0] - 2026-07-15
+
+Two feature sets: the review loop grows per-turn evidence panels in the web UI, and export grows the distillation primitive. Driven by the vault-mining pilot (2026-07-12): 18 sessions distilled with ad-hoc Python exposed that every distiller agent re-implemented the same "what did the human actually say" filter. That filter is now a ccx primitive.
+
+### Added
+- **Per-turn evidence panel with `?turn=N` deep links in the web UI.** Every user turn in the session view carries a review panel: steps, tool counts, edited files (linked to their inline diff blocks), spawned agents, failed calls, cost, and active time. Turn ordinals come from the same segmentation `ccx trace` uses, so `#54` on the page is the turn `ccx trace --turn 54` prints and the turn an audit report cites; `?turn=54` (and `?turn=54.10` for a step) deep-links into the page and expands the right thread.
+- **`export --shape human` — the distillation primitive.** Emits only the human's actual turns, verbatim, numbered, each anchored with timestamp + message-UUID prefix so notes can cite `<session>#<uuid8>` and resolve it back to the transcript. Compaction replays (identical text + identical timestamp re-emitted after a context rewind) are deduplicated and the header reports the drop count (`Turns: 73 (98 raw, 25 replay duplicates dropped)` on a real 4,498-line session). Markdown-only by design; defaults `--format md` when unset.
+- **`sessions --sort prompts`** — rank sessions by human-turn count. Raw message counts are inflated by tool results and harness noise; user prompts are the signal-density metric for deciding which sessions are worth reading (or sending to an LLM) at all.
+
+### Fixed
+- **Tool errors now surface on the calls that caused them.** The trace analyzer counts errors from `tool_result` blocks (where providers actually record them), but call evidence previously looked for errors on `tool_use` blocks — so the web evidence panel could claim "2 errors" while listing no failed calls. Result errors are now attributed back to the issuing call by tool ID, including calls from non-mutating tools (a failed `Read` now appears in the failed-calls list). The panel's error chip and its failed-calls list are guaranteed to agree, and both match `ccx trace`.
+- **Upgrading ccx no longer serves stale parses from the on-disk caches.** The session disk cache and the discovery metadata cache invalidated on source mtime+size only; gob decodes across struct versions silently, so a new binary kept serving sessions parsed by the old code until the source file happened to change — parser fixes shipped blind. Both caches now carry a format version stamp and discard entries written under a different one.
+- **Tag pushes can no longer publish from a red repo.** The release workflow now runs `go test -race` and golangci-lint before goreleaser, and the linter version is pinned (CI, release, and `make tools` all install the same one) instead of floating on `latest`.
+- **Harness noise no longer classified as human turns.** `<local-command-stdout/stderr/caveat>` echoes and `<task-notification>` events arrive as `type:user` in the JSONL but were never typed by a human; they previously classified as `user_prompt` (the `<command-` prefix check missed `<local-command-`). New kinds `command_output` and `notification`. In a measured session, 33 raw user-typed turns were actually 9 human turns.
+- **Session-list prompt counts now match full-parse counts.** Quick parse counted commands and harness wrappers as user prompts; it now applies the same classification as the full parser, so `sessions` listings and session view agree.
+
 ## [0.8.0] - 2026-07-09
 
 All changes below respond to the field report in [#19](https://github.com/thevibeworks/ccx/issues/19) — a real-usage grilling of the trace v2 + skills flow.

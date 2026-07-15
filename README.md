@@ -34,8 +34,8 @@ ccx reads session files from `~/.claude/` and `~/.codex/` and gives you a fast, 
 - **Live tail** — Watch active sessions update in real-time
 - **In-session search** — Filter by User, Response, Tools, Agents, Thinking
 - **Memory inspector** — View CLAUDE.md, MEMORY.md, AGENTS.md per project
-- **Brief export** — Conversation-only mode strips tool noise
-- **Export** — HTML, Markdown, Org-mode, JSON
+- **Export shapes** — HTML, Markdown, Org-mode; `--shape brief` strips tool noise, `--shape human` emits only the human's numbered, citable turns
+- **Turn evidence** — per-turn review panel in the web UI (steps, tools, edited files, failed calls, cost) numbered identically to `ccx trace`, with `?turn=N` deep links
 - **Context trace** — `ccx trace` emits evidence for Context Folding
 - **Time-sliced logs** — `ccx log` cuts through long-running session JSONL by timestamp
 - **Provider filter** — `--provider cc` or `--provider cx` on any command
@@ -73,7 +73,8 @@ ccx sessions --provider=cx       # Codex sessions in this workspace
 ccx sessions --after=2026-03-01  # Date filtered
 ccx sessions --scope yesterday --tz +8 --all --json # Session containers by end time
 ccx view [session]               # View in terminal
-ccx export -f html --brief       # Export conversation-only HTML
+ccx export --shape brief         # Export conversation-only HTML
+ccx export --shape human         # Only the human's turns, citable
 ccx trace [session] -o trace.json # Extract evidence for context folding
 ccx log --scope yesterday --tz +8 --all --json # Time-sliced log evidence
 ccx search "auth bug"            # Search across sessions + memory
