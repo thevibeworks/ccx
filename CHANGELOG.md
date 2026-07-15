@@ -5,7 +5,7 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
-## [Unreleased]
+## [0.11.0] - 2026-07-15
 
 ### Added
 - **`ccx run <skill> --agent claude|codex|grok` — the runner bridge.** Launches an installed agent CLI headlessly (claude -p / codex exec / grok --single) with one of ccx's bundled skills as the prompt, plus an optional task. Deliberately a bridge, not an agent loop: the provider CLI owns permissions, sandboxing, streaming, and the session file — ccx passes no permission flags and never writes into provider homes. `--dry-run` prints the exact command, the payload, and the permission posture without executing. Every run retains a receipt in `~/.local/share/ccx/runs/` linking it to the provider-native session it produced, which `ccx trace` opens directly.
