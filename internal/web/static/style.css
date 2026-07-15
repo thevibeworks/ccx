@@ -2610,3 +2610,87 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   .session-search { bottom: 66px; }
   .info-panel { bottom: 66px; right: 16px; }
 }
+
+/* ===== Turn evidence panel (what the agent did in this turn) ===== */
+.turn-evidence {
+  margin: 2px 0 10px 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  font-size: 12px;
+}
+.turn-evidence > summary.te-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 10px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-muted);
+}
+.turn-evidence > summary.te-chips::-webkit-details-marker { display: none; }
+.turn-evidence[open] > summary.te-chips { border-bottom: 1px solid var(--border); }
+.te-permalink {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--primary);
+  text-decoration: none;
+}
+.te-permalink:hover { text-decoration: underline; }
+.te-chip { white-space: nowrap; }
+.te-chip.te-edit { color: var(--primary); }
+.te-chip.te-agent { color: var(--event-subagent, #8b5cf6); }
+.te-chip.te-error { color: #d33; font-weight: 600; }
+.te-chip.te-cost, .te-chip.te-time { font-family: var(--font-mono); }
+.te-body { padding: 6px 10px 8px; display: flex; flex-direction: column; gap: 8px; }
+.te-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+.te-file {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 0;
+  flex-wrap: wrap;
+}
+.te-path { font-family: var(--font-mono); font-size: 11.5px; }
+.te-file-links { display: inline-flex; gap: 4px; }
+.te-link {
+  font-family: var(--font-mono);
+  color: var(--primary);
+  text-decoration: none;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.te-link:hover { border-color: var(--primary); }
+.te-link-error { color: #d33; border-color: #d33; }
+.te-agent-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 1px 0; }
+.te-agent-desc { color: var(--text); }
+.te-agent-status { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; }
+.te-tools { display: flex; gap: 6px; flex-wrap: wrap; }
+.te-tool {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+}
+.te-fail { padding: 1px 0; }
+
+/* Deep-link flash highlight for ?turn=N and evidence jumps */
+.msg-target {
+  animation: ccx-target-flash 2.2s ease-out;
+  scroll-margin-top: 60px;
+}
+@keyframes ccx-target-flash {
+  0%   { box-shadow: 0 0 0 3px var(--primary); }
+  70%  { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 40%, transparent); }
+  100% { box-shadow: none; }
+}

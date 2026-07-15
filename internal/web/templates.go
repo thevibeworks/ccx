@@ -14,6 +14,7 @@ import (
 
 	ccxconfig "github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/trace"
 )
 
 var idSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
@@ -280,8 +281,15 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 	return b.String()
 }
 
-func renderSessionPage(session *parser.Session, projectName string, allSessions []*parser.Session, memCount int, showThinking, showTools, loadAll bool, theme string) string {
+func renderSessionPage(session *parser.Session, projectName string, allSessions []*parser.Session, memCount int, showThinking, showTools, loadAll bool, theme string, traceTurns []trace.Turn, turnTarget string) string {
 	var b strings.Builder
+
+	// Turn evidence keyed by the user anchor UUID; renderThread attaches
+	// the per-turn evidence panel when the thread anchor has a turn.
+	turnMap := make(map[string]*trace.Turn, len(traceTurns))
+	for i := range traceTurns {
+		turnMap[traceTurns[i].AnchorID] = &traceTurns[i]
+	}
 
 	idPrefix := session.ID
 	if len(idPrefix) > 8 {
@@ -294,6 +302,10 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	// green for Codex). Non-session pages never set this attribute.
 	if provider := strings.TrimSpace(session.Provider); provider != "" {
 		b.WriteString(fmt.Sprintf(`<script>document.body.dataset.ccxProvider=%q;</script>`, provider))
+	}
+	// ?turn=N deep-link target: sessionJS scrolls to and highlights it.
+	if turnTarget != "" {
+		b.WriteString(fmt.Sprintf(`<script>document.body.dataset.ccxTarget=%q;</script>`, turnTarget))
 	}
 	b.WriteString(renderTopNav(projectName, session.ID))
 	b.WriteString(`<div class="layout session-layout">`)
@@ -354,7 +366,7 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	b.WriteString(fmt.Sprintf(`<input type="checkbox" id="show-tools" style="display:none" %s>`, toolsChecked))
 
 	b.WriteString(`<div class="messages" id="messages">`)
-	renderMessages(&b, session.RootMessages, 0, showThinking, showTools, loadAll)
+	renderMessages(&b, session.RootMessages, 0, showThinking, showTools, loadAll, turnMap)
 	b.WriteString(`</div>`)
 
 	// Tail spinner for watch mode
@@ -582,14 +594,14 @@ func splitByUserPrompts(messages []*parser.Message, chunkSize int) [][]*parser.M
 	return sections
 }
 
-func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, showThinking, showTools, loadAll bool) {
+func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, showThinking, showTools, loadAll bool, turnMap map[string]*trace.Turn) {
 	allMsgs := flattenMessages(messages)
 	mainMsgs := filterMainConversation(allMsgs)
 	sidechainGroups := groupSidechainsByAgent(allMsgs)
 	scMap := matchSidechainsToToolUse(mainMsgs, sidechainGroups)
 
 	if !loadAll && len(mainMsgs) > progressiveLoadThreshold {
-		renderMessagesProgressive(b, mainMsgs, showThinking, showTools, scMap)
+		renderMessagesProgressive(b, mainMsgs, showThinking, showTools, scMap, turnMap)
 		return
 	}
 
@@ -607,7 +619,7 @@ func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, s
 
 		if isAnchor {
 			if inThread && len(currentThread) > 0 {
-				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
+				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
 			}
 			currentThread = []*parser.Message{msg}
 			inThread = true
@@ -619,12 +631,12 @@ func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, s
 	}
 
 	if inThread && len(currentThread) > 0 {
-		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
+		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
 	}
 }
 
 // renderMessagesProgressive renders large conversations with lazy loading
-func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, showThinking, showTools bool, scMap map[string]sidechainGroup) {
+func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, showThinking, showTools bool, scMap map[string]sidechainGroup, turnMap map[string]*trace.Turn) {
 	sections := splitByCompactBoundaries(allMsgs)
 
 	// If no compact boundaries, fall back to splitting by user prompts
@@ -675,7 +687,7 @@ func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, sh
 
 		if isAnchor {
 			if inThread && len(currentThread) > 0 {
-				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
+				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
 			}
 			currentThread = []*parser.Message{msg}
 			inThread = true
@@ -687,7 +699,7 @@ func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, sh
 	}
 
 	if inThread && len(currentThread) > 0 {
-		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap)
+		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
 	}
 }
 
@@ -836,7 +848,7 @@ func renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, s
 }
 
 // renderThread renders a conversation thread anchored by a USER message
-func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock, scMap map[string]sidechainGroup) {
+func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock, scMap map[string]sidechainGroup, turnMap map[string]*trace.Turn) {
 	if len(thread) == 0 {
 		return
 	}
@@ -849,6 +861,10 @@ func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, sh
 	b.WriteString(`<div class="thread-anchor">`)
 	renderTurnMessage(b, anchor, showThinking, showTools, 0, toolResults)
 	b.WriteString(`</div>`)
+
+	if turn := turnMap[anchor.UUID]; turn != nil {
+		renderTurnEvidence(b, turn, thread, scMap)
+	}
 
 	if len(responses) > 0 {
 		b.WriteString(`<div class="thread-responses">`)
@@ -870,6 +886,178 @@ func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, sh
 	}
 
 	b.WriteString(`</div>`)
+}
+
+// renderTurnEvidence renders the per-turn review panel under a thread
+// anchor: a chip row summarizing what the agent did in this turn, and
+// an expandable body itemizing edited files (linked to the inline diff
+// blocks), tool usage, spawned agents with their results, and failed
+// calls. Turn ordinals come from the trace segmentation, so "#54" here
+// is the same turn `ccx trace --turn 54` prints and the same citation
+// an audit report writes.
+func renderTurnEvidence(b *strings.Builder, turn *trace.Turn, thread []*parser.Message, scMap map[string]sidechainGroup) {
+	// Mutations grouped per edited file, in first-touch order.
+	type fileEdit struct {
+		path  string
+		calls []trace.ToolCallEvidence
+	}
+	var fileEdits []*fileEdit
+	byPath := make(map[string]*fileEdit)
+	var failed []trace.ToolCallEvidence
+	for _, step := range turn.Steps {
+		for _, m := range step.Mutations {
+			if m.IsError {
+				failed = append(failed, m)
+			}
+			if !m.MutatesWorkspace {
+				continue
+			}
+			for _, p := range m.Paths {
+				fe := byPath[p]
+				if fe == nil {
+					fe = &fileEdit{path: p}
+					byPath[p] = fe
+					fileEdits = append(fileEdits, fe)
+				}
+				fe.calls = append(fe.calls, m)
+			}
+		}
+	}
+
+	// Agent dispatches from the thread's main-tree messages.
+	type agentRow struct {
+		toolID string
+		group  sidechainGroup
+	}
+	var agents []agentRow
+	for _, msg := range thread {
+		if msg.IsSidechain || msg.Kind != parser.KindAssistant {
+			continue
+		}
+		for _, block := range msg.Content {
+			if block.Type == "tool_use" && subagentToolSet[block.ToolName] {
+				agents = append(agents, agentRow{toolID: block.ToolID, group: scMap[block.ToolID]})
+			}
+		}
+	}
+
+	toolTotal := 0
+	for _, n := range turn.ToolCounts {
+		toolTotal += n
+	}
+
+	hasBody := len(fileEdits) > 0 || len(agents) > 0 || toolTotal > 0 || len(failed) > 0
+
+	b.WriteString(fmt.Sprintf(`<details class="turn-evidence" id="turn-%d">`, turn.Index))
+	b.WriteString(`<summary class="te-chips">`)
+	b.WriteString(fmt.Sprintf(`<a class="te-permalink" href="?turn=%d" title="Permalink to turn %d — matches ccx trace numbering">#%d</a>`, turn.Index, turn.Index, turn.Index))
+	if n := len(turn.Steps); n > 0 {
+		b.WriteString(fmt.Sprintf(`<span class="te-chip">%d steps</span>`, n))
+	}
+	if toolTotal > 0 {
+		b.WriteString(fmt.Sprintf(`<span class="te-chip">%d tools</span>`, toolTotal))
+	}
+	if n := len(turn.FilesEdited); n > 0 {
+		b.WriteString(fmt.Sprintf(`<span class="te-chip te-edit">%d files</span>`, n))
+	}
+	if len(agents) > 0 {
+		b.WriteString(fmt.Sprintf(`<span class="te-chip te-agent">%d agents</span>`, len(agents)))
+	}
+	if turn.Errors > 0 {
+		b.WriteString(fmt.Sprintf(`<span class="te-chip te-error">%d errors</span>`, turn.Errors))
+	}
+	if turn.CostUSD > 0 {
+		b.WriteString(fmt.Sprintf(`<span class="te-chip te-cost">%s</span>`, formatCost(turn.CostUSD)))
+	}
+	if turn.ActiveSecs > 1 {
+		b.WriteString(fmt.Sprintf(`<span class="te-chip te-time">%s</span>`, formatOffset(time.Duration(turn.ActiveSecs*float64(time.Second)))))
+	}
+	b.WriteString(`</summary>`)
+
+	if hasBody {
+		b.WriteString(`<div class="te-body">`)
+
+		if len(fileEdits) > 0 {
+			b.WriteString(`<div class="te-section"><div class="te-section-title">Edited</div>`)
+			for _, fe := range fileEdits {
+				b.WriteString(`<div class="te-file">`)
+				b.WriteString(fmt.Sprintf(`<code class="te-path" title="%s">%s</code>`,
+					html.EscapeString(fe.path), html.EscapeString(truncatePath(fe.path, 56))))
+				b.WriteString(`<span class="te-file-links">`)
+				for i, m := range fe.calls {
+					cls := "te-link"
+					if m.IsError {
+						cls += " te-link-error"
+					}
+					title := m.Name
+					if !m.Timestamp.IsZero() {
+						title += " " + m.Timestamp.Local().Format("15:04:05")
+					}
+					b.WriteString(fmt.Sprintf(`<a class="%s" href="#tool-%s" title="%s">%d</a>`,
+						cls, sanitizeID(m.ToolID), html.EscapeString(title), i+1))
+				}
+				b.WriteString(`</span></div>`)
+			}
+			b.WriteString(`</div>`)
+		}
+
+		if len(agents) > 0 {
+			b.WriteString(`<div class="te-section"><div class="te-section-title">Agents</div>`)
+			for _, a := range agents {
+				g := a.group
+				name := g.AgentType
+				if name == "" {
+					name = "agent"
+				}
+				b.WriteString(`<div class="te-agent-row">`)
+				b.WriteString(fmt.Sprintf(`<a class="te-link" href="#tool-%s">%s</a>`,
+					sanitizeID(a.toolID), html.EscapeString(name)))
+				if g.Description != "" {
+					b.WriteString(fmt.Sprintf(`<span class="te-agent-desc">%s</span>`, html.EscapeString(truncate(g.Description, 72))))
+				}
+				if g.Result != nil && g.Result.Status != "" {
+					b.WriteString(fmt.Sprintf(`<span class="te-agent-status">%s</span>`, html.EscapeString(g.Result.Status)))
+				}
+				b.WriteString(`</div>`)
+			}
+			b.WriteString(`</div>`)
+		}
+
+		if toolTotal > 0 {
+			b.WriteString(`<div class="te-section"><div class="te-section-title">Tools</div><div class="te-tools">`)
+			names := make([]string, 0, len(turn.ToolCounts))
+			for name := range turn.ToolCounts {
+				names = append(names, name)
+			}
+			sort.Slice(names, func(i, j int) bool {
+				if turn.ToolCounts[names[i]] != turn.ToolCounts[names[j]] {
+					return turn.ToolCounts[names[i]] > turn.ToolCounts[names[j]]
+				}
+				return names[i] < names[j]
+			})
+			for _, name := range names {
+				b.WriteString(fmt.Sprintf(`<span class="te-tool">%s×%d</span>`,
+					html.EscapeString(name), turn.ToolCounts[name]))
+			}
+			b.WriteString(`</div></div>`)
+		}
+
+		if len(failed) > 0 {
+			b.WriteString(`<div class="te-section"><div class="te-section-title">Failed calls</div>`)
+			for _, m := range failed {
+				label := m.Name
+				if len(m.Paths) > 0 {
+					label += " " + truncatePath(m.Paths[0], 40)
+				}
+				b.WriteString(fmt.Sprintf(`<div class="te-fail"><a class="te-link te-link-error" href="#tool-%s">%s</a></div>`,
+					sanitizeID(m.ToolID), html.EscapeString(label)))
+			}
+			b.WriteString(`</div>`)
+		}
+
+		b.WriteString(`</div>`)
+	}
+	b.WriteString(`</details>`)
 }
 
 func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, showTools bool, level int, toolResults map[string]parser.ContentBlock) {
@@ -3407,6 +3595,41 @@ document.addEventListener('click', function(e) {
   }
 });
 
+// Reveal a message/tool block: open every enclosing <details> so the
+// target is actually visible, scroll it centered, and flash-highlight.
+// Used by ?turn=N deep links and turn-evidence jump links.
+function ccxReveal(id) {
+  const el = document.getElementById(id);
+  if (!el) return false;
+  unfoldThread(el); // folded threads collapse their turns to 0 height
+  for (let p = el; p; p = p.parentElement) {
+    if (p.tagName === 'DETAILS') p.open = true;
+  }
+  if (el.tagName === 'DETAILS') el.open = true;
+  // Scroll after the fold/expand transitions settle (0.2s in CSS);
+  // scrolling mid-transition lands on stale geometry.
+  setTimeout(() => {
+    el.scrollIntoView({ block: 'center' });
+    el.classList.remove('msg-target');
+    void el.offsetWidth; // restart the flash animation
+    el.classList.add('msg-target');
+  }, 230);
+  return true;
+}
+
+// Turn-evidence jump links (#tool-..., #msg-...): reveal instead of a
+// bare hash jump, which can't open collapsed details.
+document.addEventListener('click', function(e) {
+  const a = e.target.closest('a.te-link');
+  if (!a) return;
+  const href = a.getAttribute('href') || '';
+  if (!href.startsWith('#')) return;
+  if (ccxReveal(href.slice(1))) {
+    e.preventDefault();
+    history.replaceState(null, '', href);
+  }
+});
+
 document.getElementById('show-thinking')?.addEventListener('change', function() {
   document.querySelectorAll('.block-thinking').forEach(el => {
     if (this.checked) el.setAttribute('open', '');
@@ -4359,6 +4582,15 @@ document.querySelectorAll('.thread').forEach(thread => {
   // fold button (handled by the early return above).
   applyState(turns.length >= 2);
 });
+
+// ?turn=N deep-link target set server-side (body.dataset.ccxTarget).
+// Must run AFTER the default thread folding above: folding collapses
+// every multi-turn thread and would invalidate an earlier scroll.
+// Plain call, not requestAnimationFrame — RAF never fires in
+// background tabs, and deep links are often opened into one.
+if (document.body.dataset.ccxTarget) {
+  ccxReveal(document.body.dataset.ccxTarget);
+}
 
 // z keybinding toggles the thread fold under the current scroll position.
 // Finds the visible thread whose top is nearest the viewport top and

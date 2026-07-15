@@ -286,3 +286,55 @@ func TestBuildOutlineAndRenderText(t *testing.T) {
 		t.Fatalf("text missing step line:\n%s", text)
 	}
 }
+
+func TestAnalyzeAttributesResultErrorsToCallEvidence(t *testing.T) {
+	now := time.Now()
+	session := &parser.Session{
+		ID:        "err-attr",
+		StartTime: now,
+		RootMessages: []*parser.Message{
+			{UUID: "u1", Kind: parser.KindUserPrompt, Type: "user", Timestamp: now,
+				Content: []parser.ContentBlock{{Type: "text", Text: "run and read"}}},
+			{UUID: "a1", Kind: parser.KindAssistant, Type: "assistant", Timestamp: now.Add(time.Minute),
+				Content: []parser.ContentBlock{
+					{Type: "text", Text: "Editing, running, reading."},
+					{Type: "tool_use", ToolName: "Edit", ToolID: "t_edit", ToolInput: map[string]any{"file_path": "/w/a.go"}},
+					{Type: "tool_use", ToolName: "Bash", ToolID: "t_bash", ToolInput: map[string]any{"command": "make test"}},
+					{Type: "tool_use", ToolName: "Read", ToolID: "t_read", ToolInput: map[string]any{"file_path": "/w/b.go"}},
+				}},
+			{UUID: "r1", Kind: parser.KindToolResult, Type: "user", Timestamp: now.Add(2 * time.Minute),
+				Content: []parser.ContentBlock{{Type: "tool_result", ToolID: "t_edit"}}},
+			{UUID: "r2", Kind: parser.KindToolResult, Type: "user", Timestamp: now.Add(3 * time.Minute),
+				Content: []parser.ContentBlock{{Type: "tool_result", ToolID: "t_bash", IsError: true}}},
+			{UUID: "r3", Kind: parser.KindToolResult, Type: "user", Timestamp: now.Add(4 * time.Minute),
+				Content: []parser.ContentBlock{{Type: "tool_result", ToolID: "t_read", IsError: true}}},
+		},
+	}
+
+	turn := Analyze(session).Turns[0]
+	if turn.Errors != 2 {
+		t.Fatalf("turn errors: got %d, want 2", turn.Errors)
+	}
+
+	// Errors live on results in the log; the analyzer must surface
+	// them on the issuing call's evidence so failure lists agree with
+	// error counts. The failed Read is not a mutating tool, so its
+	// evidence is materialized on error.
+	failed := map[string]bool{}
+	for _, step := range turn.Steps {
+		for _, m := range step.Mutations {
+			if m.IsError {
+				failed[m.ToolID] = true
+			}
+			if m.ToolID == "t_edit" && m.IsError {
+				t.Error("successful edit must not be marked as error")
+			}
+		}
+	}
+	if !failed["t_bash"] || !failed["t_read"] {
+		t.Fatalf("failed evidence: got %v, want t_bash and t_read", failed)
+	}
+	if len(failed) != turn.Errors {
+		t.Fatalf("failed evidence count %d must equal turn.Errors %d", len(failed), turn.Errors)
+	}
+}

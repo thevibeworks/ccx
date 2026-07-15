@@ -142,7 +142,7 @@ func TestFilterMainConversation_NoSidechain(t *testing.T) {
 func TestRenderMessages_SidechainInlineWithDispatch(t *testing.T) {
 	session := buildSessionWithSidechains()
 	var b strings.Builder
-	renderMessages(&b, session.RootMessages, 0, false, false, true)
+	renderMessages(&b, session.RootMessages, 0, false, false, true, nil)
 	html := b.String()
 
 	if !strings.Contains(html, "fix the auth bug") {
@@ -174,7 +174,7 @@ func TestRenderMessages_SidechainInlineWithDispatch(t *testing.T) {
 func TestRenderMessages_SidechainNotAsOwnThread(t *testing.T) {
 	session := buildSessionWithSidechains()
 	var b strings.Builder
-	renderMessages(&b, session.RootMessages, 0, false, false, true)
+	renderMessages(&b, session.RootMessages, 0, false, false, true, nil)
 	html := b.String()
 
 	threadCount := strings.Count(html, `class="thread"`)
@@ -223,7 +223,7 @@ func TestRenderMessages_SidechainStatsPreserved(t *testing.T) {
 func TestRenderMessages_SidechainShowsAgentTypeAndStats(t *testing.T) {
 	session := buildSessionWithSidechains()
 	var b strings.Builder
-	renderMessages(&b, session.RootMessages, 0, false, false, true)
+	renderMessages(&b, session.RootMessages, 0, false, false, true, nil)
 	html := b.String()
 
 	if !strings.Contains(html, "Explore") {
@@ -338,7 +338,7 @@ func TestRenderMessages_MainOnlySession(t *testing.T) {
 	}
 
 	var b strings.Builder
-	renderMessages(&b, session.RootMessages, 0, false, false, true)
+	renderMessages(&b, session.RootMessages, 0, false, false, true, nil)
 	html := b.String()
 
 	if !strings.Contains(html, "hello") {

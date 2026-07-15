@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/thevibeworks/ccx/internal/parser"
 	"github.com/thevibeworks/ccx/internal/provider"
 	"github.com/thevibeworks/ccx/internal/render"
+	"github.com/thevibeworks/ccx/internal/trace"
 )
 
 var (
@@ -314,10 +316,55 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 		theme = config.Theme() // respect user config
 	}
 
+	// Turn segmentation shared with `ccx trace`: web turn ordinals and
+	// ?turn= deep links resolve through the same code path, so a trace
+	// citation like "#54.10" always lands on the same message here.
+	traceTurns := trace.Analyze(fullSession).Turns
+	turnTarget := ""
+	if tp := q.Get("turn"); tp != "" {
+		if id := resolveTurnTarget(traceTurns, tp); id != "" {
+			turnTarget = "msg-" + sanitizeID(id)
+			// Reviewing a cited turn needs the whole session in the DOM;
+			// progressive loading would hide early turns.
+			loadAll = true
+		}
+	}
+
 	memCount := len(loadProjectMemory(projectName))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderSessionPage(fullSession, projectName, allSessions, memCount, showThinking, showTools, loadAll, theme))
+	fmt.Fprint(w, renderSessionPage(fullSession, projectName, allSessions, memCount, showThinking, showTools, loadAll, theme, traceTurns, turnTarget))
+}
+
+// resolveTurnTarget maps a ?turn= value ("54" or "54.10", the trace
+// citation format) to the message UUID to scroll to: the turn's user
+// anchor, or the narration message of step M when given. Returns ""
+// when the turn doesn't exist.
+func resolveTurnTarget(turns []trace.Turn, param string) string {
+	turnPart, stepPart, hasStep := strings.Cut(param, ".")
+	turnIdx, err := strconv.Atoi(strings.TrimSpace(turnPart))
+	if err != nil {
+		return ""
+	}
+	for i := range turns {
+		t := &turns[i]
+		if t.Index != turnIdx {
+			continue
+		}
+		if hasStep {
+			if stepIdx, err := strconv.Atoi(strings.TrimSpace(stepPart)); err == nil {
+				for j := range t.Steps {
+					if t.Steps[j].Index == stepIdx && t.Steps[j].MessageID != "" {
+						return t.Steps[j].MessageID
+					}
+				}
+			}
+			// Unknown step or step without a narration message: fall back
+			// to the turn anchor rather than 404ing the review.
+		}
+		return t.AnchorID
+	}
+	return ""
 }
 
 func handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -1029,6 +1076,17 @@ func handleSearchPage(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, renderSearchPage(strings.Join(providerHomes, ", "), query))
 }
 
+// exportSafePermalinks rewrites turn permalinks for standalone files:
+// ?turn=N resolves through the server's query handling, which a
+// downloaded HTML file doesn't have, so a saved export would carry
+// dead links. The in-document anchor #turn-N points at the same
+// panel. The match is unambiguous: user content is HTML-escaped
+// (quotes become &#34;), so this exact byte sequence is only ever
+// emitted by renderTurnEvidence itself.
+func exportSafePermalinks(html string) string {
+	return strings.ReplaceAll(html, `class="te-permalink" href="?turn=`, `class="te-permalink" href="#turn-`)
+}
+
 func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/export/")
 	parts := strings.SplitN(path, "/", 2)
@@ -1067,7 +1125,8 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.html", truncate(sessionID, 8)))
-		fmt.Fprint(w, renderSessionPage(fullSession, projectName, nil, 0, true, true, true, "light"))
+		page := renderSessionPage(fullSession, projectName, nil, 0, true, true, true, "light", trace.Analyze(fullSession).Turns, "")
+		fmt.Fprint(w, exportSafePermalinks(page))
 	case "md", "markdown":
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.md", truncate(sessionID, 8)))
@@ -1646,5 +1705,7 @@ func handleInsightView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(data)
+	// Headers are already sent; a failed body write has no recovery
+	// path beyond dropping the connection, which the server does.
+	_, _ = w.Write(data)
 }

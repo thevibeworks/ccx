@@ -211,7 +211,7 @@ func TestRenderSessionPage_EmitsProviderDataAttribute(t *testing.T) {
 		Provider:  "codex",
 		StartTime: time.Now(),
 	}
-	html := renderSessionPage(session, "test-project", nil, 0, false, false, false, "light")
+	html := renderSessionPage(session, "test-project", nil, 0, false, false, false, "light", nil, "")
 	if !strings.Contains(html, `document.body.dataset.ccxProvider="codex"`) {
 		t.Error("expected codex provider hint in body dataset, got: ", truncateForLog(html))
 	}
@@ -221,7 +221,7 @@ func TestRenderSessionPage_EmitsProviderDataAttribute(t *testing.T) {
 		Provider:  "claude-code",
 		StartTime: time.Now(),
 	}
-	htmlCC := renderSessionPage(sessionCC, "test-project", nil, 0, false, false, false, "light")
+	htmlCC := renderSessionPage(sessionCC, "test-project", nil, 0, false, false, false, "light", nil, "")
 	if !strings.Contains(htmlCC, `document.body.dataset.ccxProvider="claude-code"`) {
 		t.Error("expected claude-code provider hint in body dataset")
 	}
@@ -230,7 +230,7 @@ func TestRenderSessionPage_EmitsProviderDataAttribute(t *testing.T) {
 		ID:        "abcdef",
 		StartTime: time.Now(),
 	}
-	htmlNone := renderSessionPage(sessionNoProvider, "test-project", nil, 0, false, false, false, "light")
+	htmlNone := renderSessionPage(sessionNoProvider, "test-project", nil, 0, false, false, false, "light", nil, "")
 	if strings.Contains(htmlNone, "dataset.ccxProvider") {
 		t.Error("empty provider should NOT emit the hint")
 	}

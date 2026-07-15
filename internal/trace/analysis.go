@@ -185,7 +185,9 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 	readSet := make(map[string]struct{})
 
 	var steps []Step
-	stepByToolID := make(map[string]int) // ToolID -> index into steps
+	stepByToolID := make(map[string]int)              // ToolID -> index into steps
+	callByToolID := make(map[string]ToolCallEvidence) // every call, for late error attribution
+	mutIdxByToolID := make(map[string][2]int)         // ToolID -> (step index, index into Mutations)
 
 	currentStep := func() *Step {
 		if len(steps) == 0 {
@@ -282,13 +284,7 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 						readSet[path] = struct{}{}
 					}
 				}
-				if !mutatingTools[cb.ToolName] && !cb.IsError {
-					continue
-				}
-				if mutatesWorkspace {
-					step.FilesEdited = appendUnique(step.FilesEdited, paths...)
-				}
-				step.Mutations = append(step.Mutations, ToolCallEvidence{
+				evidence := ToolCallEvidence{
 					MessageID:        msg.UUID,
 					ToolID:           cb.ToolID,
 					Name:             cb.ToolName,
@@ -298,7 +294,20 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 					MutatesWorkspace: mutatesWorkspace,
 					Reads:            readTools[cb.ToolName],
 					IsError:          cb.IsError,
-				})
+				}
+				if cb.ToolID != "" {
+					callByToolID[cb.ToolID] = evidence
+				}
+				if !mutatingTools[cb.ToolName] && !cb.IsError {
+					continue
+				}
+				if mutatesWorkspace {
+					step.FilesEdited = appendUnique(step.FilesEdited, paths...)
+				}
+				step.Mutations = append(step.Mutations, evidence)
+				if cb.ToolID != "" {
+					mutIdxByToolID[cb.ToolID] = [2]int{len(steps) - 1, len(step.Mutations) - 1}
+				}
 			case "tool_result":
 				if !cb.IsError {
 					continue
@@ -306,6 +315,21 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 				turn.Errors++
 				if step := stepForResult(msg, steps, stepByToolID); step != nil {
 					step.Errors++
+				}
+				// Errors arrive on results, not calls: mark the issuing
+				// call's evidence, materializing it for non-mutating
+				// tools so failure lists match the error counts.
+				if cb.ToolID == "" {
+					continue
+				}
+				if loc, ok := mutIdxByToolID[cb.ToolID]; ok {
+					steps[loc[0]].Mutations[loc[1]].IsError = true
+				} else if ev, ok := callByToolID[cb.ToolID]; ok {
+					ev.IsError = true
+					if idx, ok := stepByToolID[cb.ToolID]; ok && idx >= 0 && idx < len(steps) {
+						steps[idx].Mutations = append(steps[idx].Mutations, ev)
+						mutIdxByToolID[cb.ToolID] = [2]int{idx, len(steps[idx].Mutations) - 1}
+					}
 				}
 			}
 		}
