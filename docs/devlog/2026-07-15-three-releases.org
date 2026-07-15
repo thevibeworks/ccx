@@ -1,0 +1,63 @@
+* [2026-07-15] Three releases in one day: gate, Grok, bridge      :FEAT:ARCH:RELEASE:
+
+** Tension
+The Q3 goal contract (docs/2026-q3-goal.md) was written in the
+morning against a dirty worktree, a red main, and five release
+blockers. The instruction was "ship it full & elegant" — not plan it,
+ship it.
+
+** Observation
+Working the gate surfaced a bug bigger than the one the review
+flagged. While verifying the evidence-panel error counts against a
+real session, the web UI served a parse produced by the PREVIOUS
+binary: both persisted caches invalidated on source mtime+size only,
+and gob decodes across struct versions silently. Every parser fix was
+shipping blind until a user's session file happened to change — the
+field-report #19 drift class, one layer deeper. The review's blocker
+was a symptom; the cache was the disease.
+
+Also observed while building Grok support: real Grok tool_result
+lines carry NO error flag (203/203 sampled). The fixture initially
+invented one — caught by checking the fixture against reality before
+the parser consumed it. Spike-before-build earned its place.
+
+** Decision
+Ship three releases, each green end to end:
+- v0.9.0 — the gate: error attribution onto call evidence, cache
+  format-version stamps, lint-guarded release path, truthful docs,
+  privacy-scrubbed devlogs, export-safe permalinks.
+- v0.10.0 — Grok parity: spike doc from real sessions first, then
+  discovery/parse/view/export/search/trace/web on sanitized
+  fixtures. No cost figures, no inferred errors: remove-wrong over
+  display-wrong.
+- v0.11.0 — the runner bridge (ccx run <skill> --agent, dry-run
+  disclosure, session receipts) plus shell redesign pass 1 (one
+  nav rail, context bar, mobile outline drawer, reduced-motion,
+  side-stripes gone).
+
+Rejected along the way: shipping without the gate (the gate WAS the
+ship — two finished features were hoarded behind it), estimating
+Grok cost from public pricing, and an owned agent loop (the bridge
+launches installed CLIs; providers keep permissions and sessions).
+
+** Tradeoff
+Phase 2 is deliberately half-shipped: the structural corrections are
+in v0.11.0, but page-by-page token adoption and screenshots wait for
+a human taste pass and a machine with a browser. Shipping the
+mechanical half first means the current UI is a hybrid for a while;
+the alternative — holding the shell work until the full redesign —
+was exactly the hoarding the gate existed to end.
+
+** Next
+The live wire is the Phase 2 taste review: the one-rail session view
+changes how the product feels, and only Eric can say whether the
+context-bar switcher carries the session-browsing weight the old
+hover rail carried. After that, screenshots, then the launch is
+unblocked.
+
+** Artifacts
+Tags v0.9.0, v0.10.0, v0.11.0, all released from green CI with
+test+lint now gating the tag path. Audit doc:
+docs/design/0002-shell-redesign-audit.md. Bridge receipt proof:
+a real claude -p run traced back through ccx trace. Issues #2 and
+#6 closed with reconciliation; llms.txt at root; topics set.
