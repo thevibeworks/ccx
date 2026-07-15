@@ -5,7 +5,7 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
-## [Unreleased]
+## [0.10.0] - 2026-07-15
 
 ### Added
 - **Grok provider support** — ccx now reads Grok Build (grok CLI) sessions from `~/.grok/sessions/` alongside Claude Code and Codex. All five verbs work: `sessions`, `view`, `export`, `search`, `trace`, plus the web UI (GX badges, provider filter, `gx:` search prefix), `--provider gx`, `--grok-home`, `GROK_HOME`, `providers.grok` config, and `ccx doctor`. Discovery reads only each session's `summary.json` — no line scans, so Grok listing is the cheapest of the three providers. The parser consumes `chat_history.jsonl` (conversation), workspace `prompt_history.jsonl` (user-turn timestamps), and `updates.jsonl` (token totals), normalizes Grok's tool dialect onto the canonical names the trace analyzer understands (`run_terminal_command`→Bash, `edit_file`→Edit, ...), unwraps the `<user_query>` harness envelope, and renders reasoning summaries only (Grok thinking is encrypted; ccx never implies more exists). Parsing is gated on `chat_format_version: 1` — a future format bumps loud, not garbled. Format reference: `docs/devlog/2026-07-15-grok-session-format.org`, observed against grok 0.2.101 with committed sanitized fixtures under `testdata/fixtures/grok-home/`.
