@@ -5,7 +5,9 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
-## [Unreleased]
+## [0.12.0] - 2026-07-24
+
+Both changes answer the second field report — the first one produced by ccx tracing itself: a user audited a live session's trace and caught its two headline numbers lying. Findings 3-5 from the same report are tracked in issues #21-#23.
 
 ### Fixed
 - **`ccx trace` no longer counts branch siblings as turns.** A user edit/resend appears in the log as two user records sharing one `parentUuid` — a branch point, not two turns — but the trace showed both as sequential turns with duplicate text and an inflated `turn_count` (first field report: a "7-turn" session was 6 turns plus one abandoned branch). Branches are detected through the message tree: the abandoned sibling (and any follow-up prompts inside its subtree) stays in the trace marked `superseded` / `superseded_by_turn` — an edited prompt is evidence of a course change, not noise — while `stats.turn_count` counts only active turns and `stats.superseded_turns` discloses the rest. The outline header reads `9 turns (+1 superseded)` and the abandoned turn is badged `(superseded by #7)`.
