@@ -50,17 +50,34 @@ type Turn struct {
 	UserTextTruncated bool   `json:"user_text_truncated,omitempty"`
 	IsCommand         bool   `json:"is_command,omitempty"`
 	CommandName       string `json:"command_name,omitempty"`
+	// Superseded marks a branch casualty: the user edited or resent
+	// this prompt, and SupersededByTurn is the sibling turn that
+	// replaced it (0 when the replacement produced no turn). The turn
+	// stays in the trace as evidence of the course change but is
+	// excluded from stats.turn_count.
+	Superseded       bool `json:"superseded,omitempty"`
+	SupersededByTurn int  `json:"superseded_by_turn,omitempty"`
 
 	Steps []Step `json:"steps,omitempty"`
 
 	// Turn-level rollups across all steps.
-	FilesEdited  []string       `json:"files_edited,omitempty"`
-	FilesRead    []string       `json:"files_read,omitempty"`
-	ToolCounts   map[string]int `json:"tool_counts,omitempty"`
-	Errors       int            `json:"errors,omitempty"`
-	InputTokens  int            `json:"input_tokens,omitempty"`
-	OutputTokens int            `json:"output_tokens,omitempty"`
-	CostUSD      float64        `json:"cost_usd,omitempty"`
+	FilesEdited []string       `json:"files_edited,omitempty"`
+	FilesRead   []string       `json:"files_read,omitempty"`
+	ToolCounts  map[string]int `json:"tool_counts,omitempty"`
+	Errors      int            `json:"errors,omitempty"`
+	// Token split for the main loop. Cache tokens dominate real cost
+	// (cache writes bill at 1.25x input, and one long turn can write
+	// hundreds of thousands), so a cost without them is unauditable.
+	InputTokens       int `json:"input_tokens,omitempty"`
+	OutputTokens      int `json:"output_tokens,omitempty"`
+	CacheReadTokens   int `json:"cache_read_tokens,omitempty"`
+	CacheCreateTokens int `json:"cache_create_tokens,omitempty"`
+	ReasoningTokens   int `json:"reasoning_tokens,omitempty"` // Codex only
+	// CostUSD covers the main loop; AgentsCostUSD is subagent spend
+	// whose results attached to this turn's steps, kept separate so
+	// per-turn tokens reconcile to per-turn cost.
+	CostUSD       float64 `json:"cost_usd,omitempty"`
+	AgentsCostUSD float64 `json:"agents_cost_usd,omitempty"`
 	// ActiveSecs is gap-capped activity time: the sum of inter-message
 	// intervals, each capped at 5 minutes. Wall time (End - Start) can
 	// include overnight gaps; this cannot.
@@ -177,17 +194,32 @@ type TraceWarning struct {
 }
 
 type TraceStats struct {
-	TurnCount        int     `json:"turn_count"`
-	StepCount        int     `json:"step_count"`
-	FilesEdited      int     `json:"files_edited"`
-	FilesRead        int     `json:"files_read"`
-	ToolsUsed        int     `json:"tools_used"`
-	ToolErrors       int     `json:"tool_errors"`
-	WorkspaceDocs    int     `json:"workspace_docs"`
-	KnowledgeEntries int     `json:"knowledge_entries"`
-	CommitsLinked    int     `json:"commits_linked"`
-	UncommittedFiles int     `json:"uncommitted_files"`
-	TotalCostUSD     float64 `json:"total_cost_usd"`
+	// TurnCount counts active turns only. SupersededTurns counts
+	// branch casualties (user edit/resend); they stay in turns as
+	// evidence, so len(turns) = TurnCount + SupersededTurns.
+	TurnCount        int `json:"turn_count"`
+	SupersededTurns  int `json:"superseded_turns,omitempty"`
+	StepCount        int `json:"step_count"`
+	FilesEdited      int `json:"files_edited"`
+	FilesRead        int `json:"files_read"`
+	ToolsUsed        int `json:"tools_used"`
+	ToolErrors       int `json:"tool_errors"`
+	WorkspaceDocs    int `json:"workspace_docs"`
+	KnowledgeEntries int `json:"knowledge_entries"`
+	CommitsLinked    int `json:"commits_linked"`
+	UncommittedFiles int `json:"uncommitted_files"`
+	// Main-loop token totals across turns (superseded included: the
+	// tokens were spent). Sidechain internals are not in these.
+	InputTokens       int `json:"input_tokens,omitempty"`
+	OutputTokens      int `json:"output_tokens,omitempty"`
+	CacheReadTokens   int `json:"cache_read_tokens,omitempty"`
+	CacheCreateTokens int `json:"cache_create_tokens,omitempty"`
+	ReasoningTokens   int `json:"reasoning_tokens,omitempty"`
+	// TotalCostUSD is all-in: main loop plus every sidechain with
+	// usage in the log. AgentsCostUSD is the sidechain share, so
+	// main-loop spend = TotalCostUSD - AgentsCostUSD.
+	TotalCostUSD  float64 `json:"total_cost_usd"`
+	AgentsCostUSD float64 `json:"agents_cost_usd,omitempty"`
 	// DurationSecs is wall-span (session end - start), which can dwarf
 	// the work in long-running sessions. ActiveSecs is the gap-capped
 	// activity sum across turns — the honest "time worked" number.
@@ -212,20 +244,28 @@ type Outline struct {
 const OutlineKind = "ccx.outline.v1"
 
 type OutlineTurn struct {
-	Index         int           `json:"index"`
-	Start         time.Time     `json:"start"`
-	DurationSecs  float64       `json:"duration_seconds,omitempty"`
-	ActiveSecs    float64       `json:"active_seconds,omitempty"`
-	UserText      string        `json:"user_text"`
-	IsCommand     bool          `json:"is_command,omitempty"`
-	CommandName   string        `json:"command_name,omitempty"`
-	Steps         []OutlineStep `json:"steps,omitempty"`
-	Edits         int           `json:"edits,omitempty"`
-	Tools         int           `json:"tools,omitempty"`
-	Errors        int           `json:"errors,omitempty"`
-	Agents        int           `json:"agents,omitempty"`
-	CostUSD       float64       `json:"cost_usd,omitempty"`
-	LinkedCommits []string      `json:"linked_commits,omitempty"`
+	Index             int           `json:"index"`
+	Start             time.Time     `json:"start"`
+	DurationSecs      float64       `json:"duration_seconds,omitempty"`
+	ActiveSecs        float64       `json:"active_seconds,omitempty"`
+	UserText          string        `json:"user_text"`
+	IsCommand         bool          `json:"is_command,omitempty"`
+	CommandName       string        `json:"command_name,omitempty"`
+	Superseded        bool          `json:"superseded,omitempty"`
+	SupersededByTurn  int           `json:"superseded_by_turn,omitempty"`
+	Steps             []OutlineStep `json:"steps,omitempty"`
+	Edits             int           `json:"edits,omitempty"`
+	Tools             int           `json:"tools,omitempty"`
+	Errors            int           `json:"errors,omitempty"`
+	Agents            int           `json:"agents,omitempty"`
+	InputTokens       int           `json:"input_tokens,omitempty"`
+	OutputTokens      int           `json:"output_tokens,omitempty"`
+	CacheReadTokens   int           `json:"cache_read_tokens,omitempty"`
+	CacheCreateTokens int           `json:"cache_create_tokens,omitempty"`
+	ReasoningTokens   int           `json:"reasoning_tokens,omitempty"`
+	CostUSD           float64       `json:"cost_usd,omitempty"`
+	AgentsCostUSD     float64       `json:"agents_cost_usd,omitempty"`
+	LinkedCommits     []string      `json:"linked_commits,omitempty"`
 }
 
 type OutlineStep struct {

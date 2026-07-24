@@ -287,6 +287,76 @@ func TestBuildOutlineAndRenderText(t *testing.T) {
 	}
 }
 
+// TestAnalyzeTokenSplitAndAgentCost is the cost-auditability contract:
+// cache tokens dominate real spend, so every turn must carry the full
+// split, and sidechain spend must land in the total instead of
+// vanishing — a $5 turn the outline can't explain is a $5 turn nobody
+// trusts.
+func TestAnalyzeTokenSplitAndAgentCost(t *testing.T) {
+	now := time.Now()
+	session := &parser.Session{
+		ID:        "token-split",
+		StartTime: now,
+		EndTime:   now.Add(10 * time.Minute),
+		Stats:     parser.SessionStats{AgentSidechains: 1},
+		RootMessages: []*parser.Message{
+			{UUID: "u1", Kind: parser.KindUserPrompt, Type: "user", Timestamp: now,
+				Content: []parser.ContentBlock{{Type: "text", Text: "one-line ask"}}},
+			{UUID: "a1", Kind: parser.KindAssistant, Type: "assistant", Timestamp: now.Add(time.Minute),
+				Usage: &parser.MessageUsage{InputTokens: 200, OutputTokens: 500,
+					CacheReadTokens: 90_000, CacheCreateTokens: 45_000, CostUSD: 1.10},
+				Content: []parser.ContentBlock{
+					{Type: "text", Text: "Spawning an agent."},
+					{Type: "tool_use", ToolName: "Agent", ToolID: "t1", ToolInput: map[string]any{"subagent_type": "Explore"}},
+				}},
+			{UUID: "sc1", Kind: parser.KindAssistant, Type: "assistant", IsSidechain: true, AgentID: "agent-1", Timestamp: now.Add(2 * time.Minute),
+				Usage:   &parser.MessageUsage{InputTokens: 1000, OutputTokens: 300, CostUSD: 0.40},
+				Content: []parser.ContentBlock{{Type: "text", Text: "agent working"}}},
+			{UUID: "tr1", Kind: parser.KindToolResult, Type: "user", Timestamp: now.Add(3 * time.Minute),
+				Content:        []parser.ContentBlock{{Type: "tool_result", ToolID: "t1"}},
+				SubAgentResult: &parser.SubAgentResultData{AgentID: "agent-1", AgentType: "Explore", Status: "completed"}},
+		},
+	}
+
+	result := Analyze(session)
+	turn := result.Turns[0]
+	if turn.CacheReadTokens != 90_000 || turn.CacheCreateTokens != 45_000 {
+		t.Fatalf("turn cache tokens: r=%d w=%d", turn.CacheReadTokens, turn.CacheCreateTokens)
+	}
+	if turn.CostUSD != 1.10 {
+		t.Fatalf("turn main cost: %v", turn.CostUSD)
+	}
+	if turn.AgentsCostUSD != 0.40 {
+		t.Fatalf("turn agents cost: %v", turn.AgentsCostUSD)
+	}
+	if got := result.Stats.TotalCostUSD; got != 1.50 {
+		t.Fatalf("total cost must be all-in (main+agents): %v", got)
+	}
+	if result.Stats.AgentsCostUSD != 0.40 {
+		t.Fatalf("stats agents cost: %v", result.Stats.AgentsCostUSD)
+	}
+	if result.Stats.CacheReadTokens != 90_000 || result.Stats.CacheCreateTokens != 45_000 {
+		t.Fatalf("stats cache tokens: r=%d w=%d",
+			result.Stats.CacheReadTokens, result.Stats.CacheCreateTokens)
+	}
+
+	outline := BuildOutline(result)
+	ot := outline.Turns[0]
+	if ot.CacheReadTokens != 90_000 || ot.CacheCreateTokens != 45_000 || ot.AgentsCostUSD != 0.40 {
+		t.Fatalf("outline turn split lost: %+v", ot)
+	}
+	text := RenderOutlineText(outline)
+	if !strings.Contains(text, "cache 90k r/45k w") {
+		t.Fatalf("turn badge must show the cache split:\n%s", text)
+	}
+	if !strings.Contains(text, "$1.50 ($0.40 agents)") {
+		t.Fatalf("header cost must be all-in with the agents share:\n%s", text)
+	}
+	if !strings.Contains(text, "tokens: 200 in/500 out, cache 90k r/45k w") {
+		t.Fatalf("header must carry the session token split:\n%s", text)
+	}
+}
+
 func TestAnalyzeAttributesResultErrorsToCallEvidence(t *testing.T) {
 	now := time.Now()
 	session := &parser.Session{

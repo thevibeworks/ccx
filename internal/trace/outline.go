@@ -25,15 +25,23 @@ func BuildOutline(result *TraceResult) *Outline {
 	}
 	for _, turn := range result.Turns {
 		ot := OutlineTurn{
-			Index:         turn.Index,
-			Start:         turn.Start,
-			UserText:      headline(turn.UserText),
-			IsCommand:     turn.IsCommand,
-			CommandName:   turn.CommandName,
-			Edits:         len(turn.FilesEdited),
-			Errors:        turn.Errors,
-			CostUSD:       turn.CostUSD,
-			LinkedCommits: shortSHAs(turn.LinkedCommits),
+			Index:             turn.Index,
+			Start:             turn.Start,
+			UserText:          headline(turn.UserText),
+			IsCommand:         turn.IsCommand,
+			CommandName:       turn.CommandName,
+			Superseded:        turn.Superseded,
+			SupersededByTurn:  turn.SupersededByTurn,
+			Edits:             len(turn.FilesEdited),
+			Errors:            turn.Errors,
+			InputTokens:       turn.InputTokens,
+			OutputTokens:      turn.OutputTokens,
+			CacheReadTokens:   turn.CacheReadTokens,
+			CacheCreateTokens: turn.CacheCreateTokens,
+			ReasoningTokens:   turn.ReasoningTokens,
+			CostUSD:           turn.CostUSD,
+			AgentsCostUSD:     turn.AgentsCostUSD,
+			LinkedCommits:     shortSHAs(turn.LinkedCommits),
 		}
 		if d := turn.End.Sub(turn.Start).Seconds(); d > 0 {
 			ot.DurationSecs = d
@@ -111,15 +119,24 @@ func RenderOutlineText(outline *Outline) string {
 		project = filepath.Base(s.CWD)
 	}
 	fmt.Fprintf(&b, "session %s | %s | %s | %s\n", id, s.Provider, project, s.Model)
+	turnsSeg := fmt.Sprintf("%d turns", outline.Stats.TurnCount)
+	if outline.Stats.SupersededTurns > 0 {
+		turnsSeg = fmt.Sprintf("%d turns (+%d superseded)", outline.Stats.TurnCount, outline.Stats.SupersededTurns)
+	}
 	// Wall-span misleads on long sessions; print active time next to it
 	// and say which timezone the rendered times are in (JSON carries
 	// them in UTC — silent localization breaks cross-referencing).
-	fmt.Fprintf(&b, "%s -> %s (times %s) | active %s | %d turns | %d steps | %d files edited | %d tool errors%s\n",
+	fmt.Fprintf(&b, "%s -> %s (times %s) | active %s | %s | %d steps | %d files edited | %d tool errors%s\n",
 		formatOutlineTime(s.Start), formatOutlineTime(s.End), outlineZone(s.Start),
 		formatActive(outline.Stats.ActiveSecs),
-		outline.Stats.TurnCount, outline.Stats.StepCount,
+		turnsSeg, outline.Stats.StepCount,
 		outline.Stats.FilesEdited, outline.Stats.ToolErrors,
-		headerCost(outline.Stats.TotalCostUSD))
+		headerCost(outline.Stats.TotalCostUSD, outline.Stats.AgentsCostUSD))
+	if tok := tokenSplit(outline.Stats.InputTokens, outline.Stats.OutputTokens,
+		outline.Stats.CacheReadTokens, outline.Stats.CacheCreateTokens,
+		outline.Stats.ReasoningTokens); tok != "" {
+		fmt.Fprintf(&b, "tokens: %s\n", tok)
+	}
 	for _, w := range outline.Warnings {
 		fmt.Fprintf(&b, "warning: %s: %s\n", w.Kind, w.Message)
 	}
@@ -146,6 +163,13 @@ func RenderOutlineText(outline *Outline) string {
 
 func turnBadges(turn OutlineTurn) string {
 	var parts []string
+	if turn.Superseded {
+		if turn.SupersededByTurn > 0 {
+			parts = append(parts, fmt.Sprintf("superseded by #%d", turn.SupersededByTurn))
+		} else {
+			parts = append(parts, "superseded")
+		}
+	}
 	// Active time, not wall gap: an autonomous turn bleeding into an
 	// overnight gap would otherwise badge as an 18-hour turn.
 	if turn.ActiveSecs >= 60 {
@@ -163,13 +187,58 @@ func turnBadges(turn OutlineTurn) string {
 	if turn.Agents > 0 {
 		parts = append(parts, fmt.Sprintf("%d agents", turn.Agents))
 	}
+	if tok := tokenSplit(turn.InputTokens, turn.OutputTokens,
+		turn.CacheReadTokens, turn.CacheCreateTokens, turn.ReasoningTokens); tok != "" {
+		parts = append(parts, tok)
+	}
 	if turn.CostUSD >= 0.005 {
 		parts = append(parts, fmt.Sprintf("$%.2f", turn.CostUSD))
+	}
+	if turn.AgentsCostUSD >= 0.005 {
+		parts = append(parts, fmt.Sprintf("$%.2f agents", turn.AgentsCostUSD))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
 	return " (" + strings.Join(parts, ", ") + ")"
+}
+
+// tokenSplit renders the token components that explain a cost figure.
+// Cache tokens get their own segment: cache writes bill at 1.25x input
+// rate and routinely dwarf everything else, so a turn that "looks
+// cheap" (2 tools, one short reply) can only be audited when the cache
+// traffic is visible.
+func tokenSplit(input, output, cacheRead, cacheCreate, reasoning int) string {
+	var parts []string
+	if input > 0 || output > 0 {
+		parts = append(parts, fmt.Sprintf("%s in/%s out", formatTokens(input), formatTokens(output)))
+	}
+	if reasoning > 0 {
+		parts = append(parts, fmt.Sprintf("%s reason", formatTokens(reasoning)))
+	}
+	switch {
+	case cacheCreate > 0:
+		parts = append(parts, fmt.Sprintf("cache %s r/%s w", formatTokens(cacheRead), formatTokens(cacheCreate)))
+	case cacheRead > 0:
+		parts = append(parts, fmt.Sprintf("cache %s r", formatTokens(cacheRead)))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// formatTokens renders a token count compactly: 512, 1.2k, 45k, 3.2m.
+func formatTokens(n int) string {
+	switch {
+	case n < 1000:
+		return fmt.Sprintf("%d", n)
+	case n < 10_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	case n < 1_000_000:
+		return fmt.Sprintf("%dk", n/1000)
+	case n < 10_000_000:
+		return fmt.Sprintf("%.1fm", float64(n)/1e6)
+	default:
+		return fmt.Sprintf("%dm", n/1_000_000)
+	}
 }
 
 func stepBadges(step OutlineStep) string {
@@ -247,10 +316,15 @@ func formatActive(secs float64) string {
 // headerCost renders the header's cost segment, or nothing when no
 // cost was computed: $0.00 would read as "measured zero" when the
 // truth is "unpriced" (Grok sessions by contract, unknown models on
-// any provider) — remove-wrong over display-wrong.
-func headerCost(cost float64) string {
+// any provider) — remove-wrong over display-wrong. The total is
+// all-in; the agents share is broken out when nonzero so the sum of
+// turn costs remains reconcilable.
+func headerCost(cost, agentsCost float64) string {
 	if cost <= 0 {
 		return ""
+	}
+	if agentsCost >= 0.005 {
+		return fmt.Sprintf(" | $%.2f ($%.2f agents)", cost, agentsCost)
 	}
 	return fmt.Sprintf(" | $%.2f", cost)
 }

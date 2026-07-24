@@ -59,14 +59,16 @@ func Analyze(session *parser.Session) *TraceResult {
 	allMsgs := parser.FlattenSessionMessages(session)
 	sidechainSummaries := collectSidechainEvidence(allMsgs)
 	turns := segmentTurns(allMsgs, sidechainSummaries)
+	supersededCount := markSupersededTurns(turns, detectSupersededAnchors(allMsgs))
 
 	allEdited := make(map[string]struct{})
 	allRead := make(map[string]struct{})
 	allTools := make(map[string]struct{})
 	stepCount := 0
 	toolErrors := 0
-	var totalCost float64
+	var mainCost float64
 	var activeSecs float64
+	var inputTok, outputTok, cacheReadTok, cacheCreateTok, reasoningTok int
 
 	for _, turn := range turns {
 		for _, f := range turn.FilesEdited {
@@ -80,8 +82,21 @@ func Analyze(session *parser.Session) *TraceResult {
 		}
 		stepCount += len(turn.Steps)
 		toolErrors += turn.Errors
-		totalCost += turn.CostUSD
+		mainCost += turn.CostUSD
 		activeSecs += turn.ActiveSecs
+		inputTok += turn.InputTokens
+		outputTok += turn.OutputTokens
+		cacheReadTok += turn.CacheReadTokens
+		cacheCreateTok += turn.CacheCreateTokens
+		reasoningTok += turn.ReasoningTokens
+	}
+
+	// Agent spend comes from the authoritative sidechain map, not the
+	// per-turn attachments: a sidechain whose result never landed in a
+	// turn still spent real money.
+	var agentsCost float64
+	for _, sc := range sidechainSummaries {
+		agentsCost += sc.CostUSD
 	}
 
 	dur := session.EndTime.Sub(session.StartTime).Seconds()
@@ -90,16 +105,23 @@ func Analyze(session *parser.Session) *TraceResult {
 	}
 
 	stats := TraceStats{
-		TurnCount:     len(turns),
-		StepCount:     stepCount,
-		FilesEdited:   len(allEdited),
-		FilesRead:     len(allRead),
-		ToolsUsed:     len(allTools),
-		ToolErrors:    toolErrors,
-		TotalCostUSD:  totalCost,
-		DurationSecs:  dur,
-		ActiveSecs:    activeSecs,
-		HasSidechains: session.Stats.AgentSidechains > 0,
+		TurnCount:         len(turns) - supersededCount,
+		SupersededTurns:   supersededCount,
+		StepCount:         stepCount,
+		FilesEdited:       len(allEdited),
+		FilesRead:         len(allRead),
+		ToolsUsed:         len(allTools),
+		ToolErrors:        toolErrors,
+		InputTokens:       inputTok,
+		OutputTokens:      outputTok,
+		CacheReadTokens:   cacheReadTok,
+		CacheCreateTokens: cacheCreateTok,
+		ReasoningTokens:   reasoningTok,
+		TotalCostUSD:      mainCost + agentsCost,
+		AgentsCostUSD:     agentsCost,
+		DurationSecs:      dur,
+		ActiveSecs:        activeSecs,
+		HasSidechains:     session.Stats.AgentSidechains > 0,
 	}
 
 	return &TraceResult{
@@ -217,6 +239,9 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 		if msg.Usage != nil {
 			turn.InputTokens += msg.Usage.InputTokens
 			turn.OutputTokens += msg.Usage.OutputTokens
+			turn.CacheReadTokens += msg.Usage.CacheReadTokens
+			turn.CacheCreateTokens += msg.Usage.CacheCreateTokens
+			turn.ReasoningTokens += msg.Usage.ReasoningTokens
 			turn.CostUSD += msg.Usage.CostUSD
 		}
 
@@ -257,6 +282,7 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 			summary.FilesRead = nil
 			if step := stepForResult(msg, steps, stepByToolID); step != nil {
 				step.Sidechains = append(step.Sidechains, summary)
+				turn.AgentsCostUSD += summary.CostUSD
 			}
 		}
 

@@ -5,7 +5,14 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
-## [0.11.0] - 2026-07-15
+## [Unreleased]
+
+### Fixed
+- **`ccx trace` no longer counts branch siblings as turns.** A user edit/resend appears in the log as two user records sharing one `parentUuid` — a branch point, not two turns — but the trace showed both as sequential turns with duplicate text and an inflated `turn_count` (first field report: a "7-turn" session was 6 turns plus one abandoned branch). Branches are detected through the message tree: the abandoned sibling (and any follow-up prompts inside its subtree) stays in the trace marked `superseded` / `superseded_by_turn` — an edited prompt is evidence of a course change, not noise — while `stats.turn_count` counts only active turns and `stats.superseded_turns` discloses the rest. The outline header reads `9 turns (+1 superseded)` and the abandoned turn is badged `(superseded by #7)`.
+
+### Added
+- **Per-turn token split — cost is now auditable at the outline level.** Turns previously carried only `input_tokens`/`output_tokens`, but cache traffic (absent entirely) is what dominates real cost, so a one-line reply billing $0.39 was unexplainable. Turns and the outline now carry `cache_read_tokens`, `cache_create_tokens`, and `reasoning_tokens` (Codex), turn badges show `88 in/29k out, cache 2.6m r/138k w` next to the dollar figure, and the header gains a session-level `tokens:` line. Stats carry the same totals.
+- **Sidechain spend is in the total now.** Turn costs sum only main-loop messages, so agent-heavy sessions under-reported: `stats.total_cost_usd` is now all-in (main + every sidechain with usage in the log), with the agent share broken out as `stats.agents_cost_usd`, per-turn `agents_cost_usd`, and `$12.40 ($3.10 agents)` in the header. Sidechains whose transcripts live outside the session file still contribute nothing — absence, not a guess.
 
 ### Added
 - **`ccx run <skill> --agent claude|codex|grok` — the runner bridge.** Launches an installed agent CLI headlessly (claude -p / codex exec / grok --single) with one of ccx's bundled skills as the prompt, plus an optional task. Deliberately a bridge, not an agent loop: the provider CLI owns permissions, sandboxing, streaming, and the session file — ccx passes no permission flags and never writes into provider homes. `--dry-run` prints the exact command, the payload, and the permission posture without executing. Every run retains a receipt in `~/.local/share/ccx/runs/` linking it to the provider-native session it produced, which `ccx trace` opens directly.

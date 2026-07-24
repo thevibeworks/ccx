@@ -1,0 +1,89 @@
+* [2026-07-24] Trace fidelity: phantom branch turns, unauditable cost   :FIX:FEAT:TRACE:
+
+** Context
+Second field report, and the first one produced by ccx itself: a user
+ran =ccx trace 0.11.0= over a live session and audited the trace
+instead of the session. Five findings came back. Two were
+launch-relevant and are fixed here; three are filed as issues
+(mutation command summaries, git-root warning noise in containers,
+outline width control).
+
+** Why
+v0.9.0's theme was truthful surfaces, and trace is the audit
+centerpiece. The report showed its two headline numbers lying:
+
+1. A "7-turn" session was 6 turns plus one branch. An edit/resend
+   appears in the log as two user records sharing one =parentUuid= —
+   =segmentTurns= scanned linearly and opened a turn on every user
+   prompt, so the abandoned sibling showed as a duplicate sequential
+   turn. =export --shape human= already deduped replays; trace did not.
+2. A turn showing "2 tools" billed $5.64 with nothing in the outline
+   to explain it. Turns tracked only input/output tokens; cache
+   read/write — which dominate real cost (writes bill 1.25x input) —
+   were not tracked at turn level at all. Worse, found while
+   verifying: sidechain usage was excluded from turn costs AND from
+   =total_cost_usd=, so agent-heavy sessions under-reported spend.
+
+** What
+- =FIX= Branch siblings detected via the message tree
+  (=internal/trace/branches.go=): user-prompt/command anchors sharing
+  a present parent form a branch group; the last sibling wins
+  (append-only logs record the resend after what it supersedes);
+  anchors inside an abandoned subtree inherit the same replacement.
+  Turns stay in the trace marked =superseded= /
+  =superseded_by_turn=; =stats.turn_count= counts active only,
+  =stats.superseded_turns= discloses the rest.
+- =FEAT= Turn-level token split: =cache_read_tokens=,
+  =cache_create_tokens=, =reasoning_tokens= (Codex) on Turn,
+  OutlineTurn, and TraceStats. Outline badges render
+  =88 in/29k out, cache 2.6m r/138k w= next to the dollar figure;
+  header gains a =tokens:= line.
+- =FEAT= All-in cost: =stats.total_cost_usd= = main loop + every
+  sidechain with usage in the log; =agents_cost_usd= breaks out the
+  share at stats and turn level; header renders
+  =$12.40 ($3.10 agents)=.
+
+** How
+The dedupe reuses nothing from =--shape human= on purpose: its
+=(timestamp, text)= key only catches replay duplicates re-emitted with
+identical timestamps. An edit/resend has a different timestamp and
+possibly different text — only the parent link identifies it. The
+parser already built the tree (=buildMessageTree=); trace just never
+consumed it.
+
+Marking beats dropping for an audit surface: an edited-and-resent
+prompt is forensic signal (the human changed course). The abandoned
+turn keeps its index so =--turn N= stays stable; only the count
+semantics changed.
+
+Agent spend comes from the authoritative sidechain map, not the
+per-turn attachments, so a sidechain whose result message never landed
+in a turn still counts toward the total. Sidechains with transcripts
+outside the session file contribute nothing — absence over guessing
+(=SubAgentResult.usage= exists but pricing it means assuming the
+subagent's model; rejected).
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp |
+|----------+--------------+-----------+-----+-----------|
+| Mark superseded turns, keep them in =turns= | Drop like =--shape human= | Audit tool: course changes are evidence; dropping hides them | eric+claude | 2026-07-24 |
+| Tree-based sibling detection | Port human-shape (ts,text) dedupe | (ts,text) misses edited resends — different ts, different text | eric+claude | 2026-07-24 |
+| =total_cost_usd= all-in, agents share broken out | Keep main-only total | A total that excludes agent spend is the lie being fixed; the split keeps per-turn sums reconcilable | eric+claude | 2026-07-24 |
+| Per-turn cost stays main-loop-only | Fold agent cost into =cost_usd= | Per-turn tokens must reconcile to per-turn cost; mixing breaks the audit equation | eric+claude | 2026-07-24 |
+
+** Verification
+Verified against the real session behind the field report: the header
+now reads =9 turns (+1 superseded)=, the phantom turn is badged
+=(superseded by #7)=, and the expensive turn's $22.87 is explained by
+=cache 7.2m r/1.7m w= sitting right next to it. Unit tests cover
+sibling marking, abandoned-subtree propagation, the queued-prompts
+non-branch case, and the token/cost reconciliation contract.
+=make fmt/test/lint/build= green.
+
+** Notes
+The remaining three report findings are tracked as GitHub issues:
+inline command/path summary on mutation evidence, git-root warning
+demoted when the process-cwd fallback succeeds, =--width= for outline
+headlines. Web UI does not yet render =superseded= — it consumes
+=trace.Analyze().Turns= and can pick the field up in the Phase 2
+pass.
