@@ -5,6 +5,17 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [Unreleased]
+
+### Added
+- goal attribution (#24): `ccx sessions` joins deva launch receipts
+  (`$XDG_DATA_HOME/ccx/launches/*.jsonl`, written by `deva --goal`,
+  thevibeworks/deva#499) to sessions by cwd + time. A receipt stamps
+  sessions in the same cwd starting within [ts-5m, ts+24h]; latest
+  qualifying receipt wins. `--json` output gains `goal`; new `--goal
+  SLUG` filter. Receipts are advisory: missing dir or malformed lines
+  never error, and session files stay untouched.
+
 ## [0.12.0] - 2026-07-24
 
 Both changes answer the second field report — the first one produced by ccx tracing itself: a user audited a live session's trace and caught its two headline numbers lying. Findings 3-5 from the same report are tracked in issues #21-#23.

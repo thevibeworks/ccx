@@ -77,7 +77,7 @@ func TestPrintSessionsJSONIncludesWorkspaceEndAndMetrics(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() {
-		if err := printSessionsJSON(sessions); err != nil {
+		if err := printSessionsJSON(sessions, nil); err != nil {
 			t.Fatalf("printSessionsJSON() error: %v", err)
 		}
 	})

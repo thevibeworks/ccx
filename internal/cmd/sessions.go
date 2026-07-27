@@ -12,6 +12,7 @@ import (
 	"github.com/thevibeworks/ccx/internal/catalog"
 	"github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/insight"
+	"github.com/thevibeworks/ccx/internal/launches"
 	"github.com/thevibeworks/ccx/internal/parser"
 	"github.com/thevibeworks/ccx/internal/provider"
 )
@@ -41,6 +42,7 @@ var (
 	sessionsTZ       string
 	sessionsModel    string
 	sessionsAll      bool
+	sessionsGoal     string
 )
 
 func init() {
@@ -55,6 +57,7 @@ func init() {
 	sessionsCmd.Flags().StringVar(&sessionsTZ, "tz", "local", "timezone for --scope/--after/--before: IANA name, UTC, local, or offset like +8")
 	sessionsCmd.Flags().StringVar(&sessionsModel, "model", "", "filter by model name substring")
 	sessionsCmd.Flags().BoolVar(&sessionsAll, "all", false, "list sessions across all projects")
+	sessionsCmd.Flags().StringVar(&sessionsGoal, "goal", "", "filter by launch-receipt goal slug (deva --goal)")
 }
 
 func runSessions(cmd *cobra.Command, args []string) error {
@@ -118,13 +121,24 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to list sessions: %w", err)
 	}
+
+	receipts := launches.Load()
+	if sessionsGoal != "" {
+		matched := sessions[:0]
+		for _, s := range sessions {
+			if receipts.GoalFor(s.CWD, s.StartTime) == sessionsGoal {
+				matched = append(matched, s)
+			}
+		}
+		sessions = matched
+	}
 	if len(sessions) == 0 {
 		fmt.Println("No sessions found.")
 		return nil
 	}
 
 	if sessionsJSON {
-		return printSessionsJSON(sessions)
+		return printSessionsJSON(sessions, receipts)
 	}
 
 	return printSessionsTable(sessions, projectName == "" && sessionsAll)
@@ -179,6 +193,7 @@ type sessionJSON struct {
 	Provider   string  `json:"provider"`
 	Project    string  `json:"project"`
 	Workspace  string  `json:"workspace,omitempty"`
+	Goal       string  `json:"goal,omitempty"`
 	Summary    string  `json:"summary"`
 	StartTime  string  `json:"start_time"`
 	EndTime    string  `json:"end_time"`
@@ -191,7 +206,7 @@ type sessionJSON struct {
 	FilePath   string  `json:"file_path,omitempty"`
 }
 
-func printSessionsJSON(sessions []*parser.Session) error {
+func printSessionsJSON(sessions []*parser.Session, receipts *launches.Index) error {
 	items := make([]sessionJSON, len(sessions))
 	for i, s := range sessions {
 		cacheTokens := s.Stats.CacheReadTokens + s.Stats.CacheCreateTokens
@@ -200,6 +215,7 @@ func printSessionsJSON(sessions []*parser.Session) error {
 			Provider:   s.Provider,
 			Project:    s.ProjectName,
 			Workspace:  s.CWD,
+			Goal:       receipts.GoalFor(s.CWD, s.StartTime),
 			Summary:    s.Summary,
 			StartTime:  s.StartTime.Format(time.RFC3339),
 			EndTime:    s.EndTime.Format(time.RFC3339),

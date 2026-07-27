@@ -1,0 +1,41 @@
+* [2026-07-27] Dev Log: goal attribution from deva launch receipts    :FEAT:
+
+** Context
+The operator-ledger loop (goals/brief/debrief over ccx evidence) needs
+sessions attributed to goals. Post-hoc inference from JSONL is lossy and
+expensive; deva --goal (thevibeworks/deva#499) now stamps intent at
+launch as JSONL receipts in $XDG_DATA_HOME/ccx/launches/. ccx side: #24.
+
+** Why
+Sessions are born orphans. A receipt at launch costs one line; ccx can
+then answer "which goal was this session serving?" at read time without
+touching session files.
+
+** What
+- =FEAT= internal/launches: Receipt, LoadDir, Index.GoalFor
+- =FEAT= ccx sessions: goal field in --json, --goal SLUG filter
+
+** How
+Join rule: a receipt stamps sessions in the same cwd starting within
+[ts-5m, ts+24h]; the latest qualifying receipt wins. 5m grace absorbs
+receipt-vs-session clock ordering at launch; 24h cap stops a stale
+stamp from claiming next week's work. Receipts are advisory: missing
+dir, unreadable file, malformed line all degrade to "no goal", never
+an error.
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp |
+| receipts live in ccx data dir | ops ledger stores them | receipts are evidence; the ledger cites session IDs, it does not store evidence | eric | 2026-07-27 |
+| cwd+time join, no container match | match receipt.container | session JSONL does not record the container; cwd+time is checkable from both sides | eric | 2026-07-27 |
+| latest-qualifying-wins | first-wins | re-launching with a fresh --goal must restamp the workspace | eric | 2026-07-27 |
+
+** Notes
+- Verified live: a receipt at 11:40Z stamped exactly the one real
+  session starting 11:48Z in the same cwd; two earlier same-cwd
+  sessions (04:14Z, 08:43Z) stayed unstamped after the ts was
+  narrowed. First attempt used an over-broad ts and stamped all
+  three -- the rule is coarse by design (cwd-scoped, 24h): a receipt
+  claims the whole cwd until superseded. Frequent --goal launches
+  keep attribution fresh; that is the intended usage.
+- Gotcha reconfirmed: session start_time/end_time in --json are UTC
+  (Z). --tz only moves the scope window, not the rendered instants.
