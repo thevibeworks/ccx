@@ -3613,6 +3613,45 @@ document.addEventListener('click', function(e) {
   }
 });
 
+// Clamp long panes: an explicit expander instead of an inner
+// scrollbar, so the mouse wheel never gets trapped inside a tool
+// output (cctrace's msg-clamp mechanic). Progressive enhancement:
+// panes keep their overflow scroll until JS measures them. Panes
+// inside closed <details> measure as 0 — the toggle listener clamps
+// them lazily on first open.
+(function() {
+  const CLAMP_SEL = '.block-content, .block-result, .long-output .output-full, .compact-content';
+  function clampPane(el) {
+    if (el.dataset.clampChecked) return;
+    if (el.clientHeight === 0) return; // hidden; measure on reveal
+    el.dataset.clampChecked = '1';
+    if (el.scrollHeight <= el.clientHeight + 40) return;
+    el.classList.add('clamped');
+    const btn = document.createElement('button');
+    btn.className = 'clamp-more';
+    btn.type = 'button';
+    btn.textContent = '▾ show all';
+    btn.addEventListener('click', function() {
+      const open = el.classList.toggle('unclamped');
+      el.classList.toggle('clamped', !open);
+      btn.textContent = open ? '▴ collapse' : '▾ show all';
+    });
+    el.insertAdjacentElement('afterend', btn);
+  }
+  function scanClamps(root) {
+    (root || document).querySelectorAll(CLAMP_SEL).forEach(clampPane);
+  }
+  document.addEventListener('toggle', function(e) {
+    if (e.target.open) scanClamps(e.target);
+  }, true);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { scanClamps(); });
+  } else {
+    scanClamps();
+  }
+  window.ccxClampPanes = scanClamps;
+})();
+
 // Reveal a message/tool block: open every enclosing <details> so the
 // target is actually visible, scroll it centered, and flash-highlight.
 // Used by ?turn=N deep links and turn-evidence jump links.
@@ -3662,6 +3701,10 @@ document.getElementById('show-tools')?.addEventListener('change', function() {
   });
   document.querySelectorAll('.block-result').forEach(el => {
     el.style.display = this.checked ? 'block' : 'none';
+    const next = el.nextElementSibling;
+    if (next && next.classList.contains('clamp-more')) {
+      next.style.display = this.checked ? 'block' : 'none';
+    }
   });
 });
 

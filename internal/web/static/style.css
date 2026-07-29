@@ -2651,6 +2651,34 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 }
 .te-fail { padding: 1px 0; }
 
+/* Long panes clamp with an explicit expander instead of an inner
+ * scrollbar, so the mouse wheel never gets trapped inside a tool
+ * output (cctrace's msg-clamp mechanic). JS measures overflow and
+ * adds .clamped + the button; without JS panes keep their scroll. */
+.clamped {
+  overflow: hidden !important;
+  -webkit-mask-image: linear-gradient(to bottom, #000 82%, transparent);
+  mask-image: linear-gradient(to bottom, #000 82%, transparent);
+}
+.unclamped {
+  max-height: none !important;
+  overflow: visible !important;
+}
+.clamp-more {
+  display: block;
+  width: 100%;
+  padding: 4px 10px;
+  background: none;
+  border: none;
+  border-top: 1px dashed var(--border);
+  color: var(--primary);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: left;
+}
+.clamp-more:hover { background: var(--hover); }
+
 /* Deep-link flash highlight for ?turn=N and evidence jumps.
  * Outline + opacity only: box-shadow animation is paint-heavy, and
  * this is the one deliberate attention cue in the interface. */

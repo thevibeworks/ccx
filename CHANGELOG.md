@@ -9,6 +9,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 - **Web UI wears terminal material now** — cctrace's design language ported onto ccx's markup (every selector and JS hook kept, values rewritten). 13px `ui-monospace` body replaces 17px system sans ('Courier New' led the old mono stack); warm-tinted neutrals with terracotta as the single accent plus a five-hue semantic set (green/red/amber/purple/blue) replace ~12 stray hues; pastel role bubbles become hairline surfaces with faint washes — user turns get the cctrace anchor mechanic (space above + accent-washed header row); thinking is muted italic. Chrome details: thin scrollbars, accent selection, visible focus, tinted shadows, one radius scale. Second side-stripe purge caught what 0.11 missed (tool blocks, outline active item, agent turns, doctor/memory cards). Devlog: `docs/devlog/2026-07-29-web-terminal-material.org`.
+- **Long tool outputs clamp with an explicit "show all" expander** instead of an inner scrollbar — the mouse wheel never gets trapped inside a pane (cctrace's msg-clamp mechanic). Progressive enhancement: JS measures overflow and adds the fade mask + button; panes inside collapsed details clamp lazily on first open; without JS the old scroll behavior remains.
 
 ## [0.12.0] - 2026-07-24
 
