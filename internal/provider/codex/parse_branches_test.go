@@ -309,8 +309,10 @@ func TestParseSessionTokenCountFromEventMsg(t *testing.T) {
 		t.Fatalf("ParseSession() error: %v", err)
 	}
 
-	if session.Stats.InputTokens != 500 {
-		t.Fatalf("InputTokens = %d, want 500", session.Stats.InputTokens)
+	// input_tokens=500 includes cached_input_tokens=100; ccx carries
+	// the non-cached 400 (Anthropic-style exclusive semantics).
+	if session.Stats.InputTokens != 400 {
+		t.Fatalf("InputTokens = %d, want 400", session.Stats.InputTokens)
 	}
 	if session.Stats.CacheReadTokens != 100 {
 		t.Fatalf("CacheReadTokens = %d, want 100", session.Stats.CacheReadTokens)
@@ -328,8 +330,8 @@ func TestParseSessionTokenCountFromEventMsg(t *testing.T) {
 	if assistant.Usage == nil {
 		t.Fatal("assistant.Usage is nil, want attributed token delta")
 	}
-	if assistant.Usage.InputTokens != 500 {
-		t.Fatalf("assistant.Usage.InputTokens = %d, want 500", assistant.Usage.InputTokens)
+	if assistant.Usage.InputTokens != 400 {
+		t.Fatalf("assistant.Usage.InputTokens = %d, want 400", assistant.Usage.InputTokens)
 	}
 	if assistant.Usage.CacheReadTokens != 100 {
 		t.Fatalf("assistant.Usage.CacheReadTokens = %d, want 100", assistant.Usage.CacheReadTokens)
@@ -340,8 +342,12 @@ func TestParseSessionTokenCountFromEventMsg(t *testing.T) {
 	if assistant.Usage.ReasoningTokens != 50 {
 		t.Fatalf("assistant.Usage.ReasoningTokens = %d, want 50", assistant.Usage.ReasoningTokens)
 	}
-	if assistant.Usage.CostUSD <= 0 {
-		t.Fatalf("assistant.Usage.CostUSD = %v, want > 0", assistant.Usage.CostUSD)
+	// gpt-5 tier 10/80, cache read 5: 400*10 + 200*80 + 100*5 per 1M.
+	// Cached input billed once (at the cache rate) and reasoning not
+	// billed on top of output — the double-billing regression guard.
+	wantCost := 0.0205
+	if diff := assistant.Usage.CostUSD - wantCost; diff < -1e-9 || diff > 1e-9 {
+		t.Fatalf("assistant.Usage.CostUSD = %v, want %v", assistant.Usage.CostUSD, wantCost)
 	}
 	if session.Stats.CostUSD != assistant.Usage.CostUSD {
 		t.Fatalf("session.Stats.CostUSD = %v, want %v", session.Stats.CostUSD, assistant.Usage.CostUSD)

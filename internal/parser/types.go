@@ -37,7 +37,7 @@ type Project struct {
 // struct versions silently, so without this stamp an upgraded binary
 // keeps serving parses produced by the old code until the source
 // session file itself happens to change.
-const CacheFormatVersion = 2
+const CacheFormatVersion = 3
 
 type Session struct {
 	ID           string
@@ -103,6 +103,12 @@ type SessionStats struct {
 // ReasoningTokens carries reasoning_output_tokens. CacheCreateTokens
 // stays zero for Codex (OpenAI doesn't expose 5m/1h cache creation
 // the way Anthropic does).
+//
+// CONTRACT (Anthropic-style exclusive semantics, both providers):
+// InputTokens excludes cache reads — the Codex backend subtracts
+// cached_input_tokens, which upstream includes in input_tokens.
+// OutputTokens includes reasoning; ReasoningTokens is the informational
+// subset and is never billed separately (see ComputeCost).
 type MessageUsage struct {
 	InputTokens       int
 	OutputTokens      int
