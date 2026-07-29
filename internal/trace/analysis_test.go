@@ -408,3 +408,61 @@ func TestAnalyzeAttributesResultErrorsToCallEvidence(t *testing.T) {
 		t.Fatalf("failed evidence count %d must equal turn.Errors %d", len(failed), turn.Errors)
 	}
 }
+
+// TestAnalyzeMutationEvidenceCarriesCommandSummary: paths answer "did
+// this step touch the workspace", the summary answers "how" — without
+// the command, auditing a Bash mutation means opening the raw JSONL.
+func TestAnalyzeMutationEvidenceCarriesCommandSummary(t *testing.T) {
+	now := time.Now()
+	session := &parser.Session{
+		ID:        "cmd-summary",
+		StartTime: now,
+		RootMessages: []*parser.Message{
+			{UUID: "u1", Kind: parser.KindUserPrompt, Type: "user", Timestamp: now,
+				Content: []parser.ContentBlock{{Type: "text", Text: "build it"}}},
+			{UUID: "a1", Kind: parser.KindAssistant, Type: "assistant", Timestamp: now.Add(time.Minute),
+				Content: []parser.ContentBlock{
+					{Type: "text", Text: "Building and editing."},
+					{Type: "tool_use", ToolName: "Bash", ToolID: "t_bash", ToolInput: map[string]any{"command": "go test ./... > /w/out.log 2>&1"}},
+					{Type: "tool_use", ToolName: "Edit", ToolID: "t_edit", ToolInput: map[string]any{"file_path": "/w/a.go"}},
+					{Type: "tool_use", ToolName: "Bash", ToolID: "t_fail", ToolInput: map[string]any{"command": "make lint"}},
+				}},
+			{UUID: "r1", Kind: parser.KindToolResult, Type: "user", Timestamp: now.Add(2 * time.Minute),
+				Content: []parser.ContentBlock{{Type: "tool_result", ToolID: "t_fail", IsError: true}}},
+		},
+	}
+
+	turn := Analyze(session).Turns[0]
+	summaries := map[string]string{}
+	for _, step := range turn.Steps {
+		for _, m := range step.Mutations {
+			summaries[m.ToolID] = m.Summary
+		}
+	}
+	if summaries["t_bash"] != "go test ./... > /w/out.log 2>&1" {
+		t.Fatalf("bash mutation summary: %q", summaries["t_bash"])
+	}
+	if summaries["t_fail"] != "make lint" {
+		t.Fatalf("failed bash summary: %q", summaries["t_fail"])
+	}
+	if summaries["t_edit"] != "" {
+		t.Fatalf("edit carries no command, summary must be empty: %q", summaries["t_edit"])
+	}
+}
+
+func TestCommandSummaryCollapsesAndBounds(t *testing.T) {
+	if got := commandSummary(map[string]any{"command": "git commit -m \"$(cat <<'EOF'\nsubject line\n\nbody\nEOF\n)\""}); strings.ContainsAny(got, "\n\t") {
+		t.Fatalf("summary must be one line: %q", got)
+	}
+	long := strings.Repeat("x", 5000)
+	got := commandSummary(map[string]any{"command": long})
+	if len([]rune(got)) > evidenceCommandRunes+3 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("summary must be bounded with ellipsis, got %d runes", len([]rune(got)))
+	}
+	if commandSummary(map[string]any{"file_path": "/w/a.go"}) != "" {
+		t.Fatal("non-command input must yield empty summary")
+	}
+	if commandSummary(nil) != "" {
+		t.Fatal("nil input must yield empty summary")
+	}
+}

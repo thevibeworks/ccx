@@ -111,15 +111,20 @@ type Step struct {
 }
 
 type ToolCallEvidence struct {
-	MessageID        string    `json:"message_id,omitempty"`
-	ToolID           string    `json:"tool_id,omitempty"`
-	Name             string    `json:"name"`
-	Timestamp        time.Time `json:"timestamp,omitempty"`
-	Paths            []string  `json:"paths,omitempty"`
-	MutationCapable  bool      `json:"mutation_capable"`
-	MutatesWorkspace bool      `json:"mutates_workspace"`
-	Reads            bool      `json:"reads"`
-	IsError          bool      `json:"is_error,omitempty"`
+	MessageID string    `json:"message_id,omitempty"`
+	ToolID    string    `json:"tool_id,omitempty"`
+	Name      string    `json:"name"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
+	// Summary is a bounded one-line excerpt of what the call ran, for
+	// command-carrying tools (Bash and provider dialects normalized to
+	// it). Paths answer "did it touch the workspace"; Summary answers
+	// "how" without opening the raw JSONL.
+	Summary          string   `json:"summary,omitempty"`
+	Paths            []string `json:"paths,omitempty"`
+	MutationCapable  bool     `json:"mutation_capable"`
+	MutatesWorkspace bool     `json:"mutates_workspace"`
+	Reads            bool     `json:"reads"`
+	IsError          bool     `json:"is_error,omitempty"`
 }
 
 type Sidechain struct {
