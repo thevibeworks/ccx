@@ -5,6 +5,11 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
+## [Unreleased]
+
+### Changed
+- **Web UI wears terminal material now** — cctrace's design language ported onto ccx's markup (every selector and JS hook kept, values rewritten). 13px `ui-monospace` body replaces 17px system sans ('Courier New' led the old mono stack); warm-tinted neutrals with terracotta as the single accent plus a five-hue semantic set (green/red/amber/purple/blue) replace ~12 stray hues; pastel role bubbles become hairline surfaces with faint washes — user turns get the cctrace anchor mechanic (space above + accent-washed header row); thinking is muted italic. Chrome details: thin scrollbars, accent selection, visible focus, tinted shadows, one radius scale. Second side-stripe purge caught what 0.11 missed (tool blocks, outline active item, agent turns, doctor/memory cards). Devlog: `docs/devlog/2026-07-29-web-terminal-material.org`.
+
 ## [0.12.0] - 2026-07-24
 
 Both changes answer the second field report — the first one produced by ccx tracing itself: a user audited a live session's trace and caught its two headline numbers lying. Findings 3-5 from the same report are tracked in issues #21-#23.
