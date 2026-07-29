@@ -254,7 +254,7 @@ func TestBuildOutlineAndRenderText(t *testing.T) {
 		},
 	}
 
-	outline := BuildOutline(Analyze(session))
+	outline := BuildOutline(Analyze(session), DefaultHeadlineWidth)
 	if outline.Kind != OutlineKind {
 		t.Fatalf("kind: %q", outline.Kind)
 	}
@@ -284,6 +284,43 @@ func TestBuildOutlineAndRenderText(t *testing.T) {
 	}
 	if !strings.Contains(text, "1. Profiling first") {
 		t.Fatalf("text missing step line:\n%s", text)
+	}
+}
+
+// TestBuildOutlineWidthControl: the headline cap is a parameter, not a
+// constant — 0 disables truncation (the JSON consumers' escape hatch
+// that previously required --full), and the cap applies identically to
+// turn user text and step headlines.
+func TestBuildOutlineWidthControl(t *testing.T) {
+	now := time.Now()
+	long := strings.TrimSpace(strings.Repeat("alpha beta ", 30)) // 329 runes
+	session := &parser.Session{
+		ID:        "width",
+		StartTime: now,
+		RootMessages: []*parser.Message{
+			{UUID: "u1", Kind: parser.KindUserPrompt, Type: "user", Timestamp: now,
+				Content: []parser.ContentBlock{{Type: "text", Text: long}}},
+			{UUID: "a1", Kind: parser.KindAssistant, Type: "assistant", Timestamp: now.Add(time.Minute),
+				Content: []parser.ContentBlock{{Type: "text", Text: long}}},
+		},
+	}
+	result := Analyze(session)
+
+	def := BuildOutline(result, DefaultHeadlineWidth).Turns[0]
+	if !strings.HasSuffix(def.UserText, "...") || len([]rune(def.UserText)) > DefaultHeadlineWidth+3 {
+		t.Fatalf("default width must truncate: %d runes", len([]rune(def.UserText)))
+	}
+
+	full := BuildOutline(result, 0).Turns[0]
+	if full.UserText != long || full.Steps[0].Headline != long {
+		t.Fatalf("width 0 must not truncate: user=%d step=%d runes",
+			len([]rune(full.UserText)), len([]rune(full.Steps[0].Headline)))
+	}
+
+	narrow := BuildOutline(result, 20).Turns[0]
+	if len([]rune(narrow.UserText)) > 23 || len([]rune(narrow.Steps[0].Headline)) > 23 {
+		t.Fatalf("width 20 must cap both headline kinds: user=%q step=%q",
+			narrow.UserText, narrow.Steps[0].Headline)
 	}
 }
 
@@ -340,7 +377,7 @@ func TestAnalyzeTokenSplitAndAgentCost(t *testing.T) {
 			result.Stats.CacheReadTokens, result.Stats.CacheCreateTokens)
 	}
 
-	outline := BuildOutline(result)
+	outline := BuildOutline(result, DefaultHeadlineWidth)
 	ot := outline.Turns[0]
 	if ot.CacheReadTokens != 90_000 || ot.CacheCreateTokens != 45_000 || ot.AgentsCostUSD != 0.40 {
 		t.Fatalf("outline turn split lost: %+v", ot)
@@ -406,5 +443,63 @@ func TestAnalyzeAttributesResultErrorsToCallEvidence(t *testing.T) {
 	}
 	if len(failed) != turn.Errors {
 		t.Fatalf("failed evidence count %d must equal turn.Errors %d", len(failed), turn.Errors)
+	}
+}
+
+// TestAnalyzeMutationEvidenceCarriesCommandSummary: paths answer "did
+// this step touch the workspace", the summary answers "how" — without
+// the command, auditing a Bash mutation means opening the raw JSONL.
+func TestAnalyzeMutationEvidenceCarriesCommandSummary(t *testing.T) {
+	now := time.Now()
+	session := &parser.Session{
+		ID:        "cmd-summary",
+		StartTime: now,
+		RootMessages: []*parser.Message{
+			{UUID: "u1", Kind: parser.KindUserPrompt, Type: "user", Timestamp: now,
+				Content: []parser.ContentBlock{{Type: "text", Text: "build it"}}},
+			{UUID: "a1", Kind: parser.KindAssistant, Type: "assistant", Timestamp: now.Add(time.Minute),
+				Content: []parser.ContentBlock{
+					{Type: "text", Text: "Building and editing."},
+					{Type: "tool_use", ToolName: "Bash", ToolID: "t_bash", ToolInput: map[string]any{"command": "go test ./... > /w/out.log 2>&1"}},
+					{Type: "tool_use", ToolName: "Edit", ToolID: "t_edit", ToolInput: map[string]any{"file_path": "/w/a.go"}},
+					{Type: "tool_use", ToolName: "Bash", ToolID: "t_fail", ToolInput: map[string]any{"command": "make lint"}},
+				}},
+			{UUID: "r1", Kind: parser.KindToolResult, Type: "user", Timestamp: now.Add(2 * time.Minute),
+				Content: []parser.ContentBlock{{Type: "tool_result", ToolID: "t_fail", IsError: true}}},
+		},
+	}
+
+	turn := Analyze(session).Turns[0]
+	summaries := map[string]string{}
+	for _, step := range turn.Steps {
+		for _, m := range step.Mutations {
+			summaries[m.ToolID] = m.Summary
+		}
+	}
+	if summaries["t_bash"] != "go test ./... > /w/out.log 2>&1" {
+		t.Fatalf("bash mutation summary: %q", summaries["t_bash"])
+	}
+	if summaries["t_fail"] != "make lint" {
+		t.Fatalf("failed bash summary: %q", summaries["t_fail"])
+	}
+	if summaries["t_edit"] != "" {
+		t.Fatalf("edit carries no command, summary must be empty: %q", summaries["t_edit"])
+	}
+}
+
+func TestCommandSummaryCollapsesAndBounds(t *testing.T) {
+	if got := commandSummary(map[string]any{"command": "git commit -m \"$(cat <<'EOF'\nsubject line\n\nbody\nEOF\n)\""}); strings.ContainsAny(got, "\n\t") {
+		t.Fatalf("summary must be one line: %q", got)
+	}
+	long := strings.Repeat("x", 5000)
+	got := commandSummary(map[string]any{"command": long})
+	if len([]rune(got)) > evidenceCommandRunes+3 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("summary must be bounded with ellipsis, got %d runes", len([]rune(got)))
+	}
+	if commandSummary(map[string]any{"file_path": "/w/a.go"}) != "" {
+		t.Fatal("non-command input must yield empty summary")
+	}
+	if commandSummary(nil) != "" {
+		t.Fatal("nil input must yield empty summary")
 	}
 }

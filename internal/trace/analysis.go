@@ -315,6 +315,7 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 					ToolID:           cb.ToolID,
 					Name:             cb.ToolName,
 					Timestamp:        msg.Timestamp,
+					Summary:          commandSummary(cb.ToolInput),
 					Paths:            paths,
 					MutationCapable:  mutatingTools[cb.ToolName],
 					MutatesWorkspace: mutatesWorkspace,
@@ -470,6 +471,7 @@ func collectSidechainEvidence(messages []*parser.Message) map[string]Sidechain {
 					ToolID:           block.ToolID,
 					Name:             block.ToolName,
 					Timestamp:        msg.Timestamp,
+					Summary:          commandSummary(block.ToolInput),
 					Paths:            paths,
 					MutationCapable:  mutatingTools[block.ToolName],
 					MutatesWorkspace: mutatesWorkspace,
@@ -620,6 +622,32 @@ func cleanEvidencePath(path string) string {
 		return ""
 	}
 	return path
+}
+
+// evidenceCommandRunes bounds the one-line command excerpt carried on
+// tool-call evidence. Short by design: the summary answers "what did
+// this step run", the raw JSONL (via message_id) holds the rest.
+const evidenceCommandRunes = 200
+
+// commandSummary extracts what a command-carrying tool call ran, as
+// one bounded line. Providers normalize their shell dialects onto a
+// "command" string input (Bash, exec_command, run_terminal_command),
+// so that key is the contract.
+func commandSummary(toolInput any) string {
+	input, ok := toolInput.(map[string]any)
+	if !ok {
+		return ""
+	}
+	cmd, ok := input["command"].(string)
+	if !ok {
+		return ""
+	}
+	cmd = strings.Join(strings.Fields(cmd), " ")
+	runes := []rune(cmd)
+	if len(runes) <= evidenceCommandRunes {
+		return cmd
+	}
+	return strings.TrimSpace(string(runes[:evidenceCommandRunes])) + "..."
 }
 
 func summarizeEvidenceText(text string) string {

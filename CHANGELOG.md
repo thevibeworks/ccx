@@ -15,7 +15,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   qualifying receipt wins. `--json` output gains `goal`; new `--goal
   SLUG` filter. Receipts are advisory: missing dir or malformed lines
   never error, and session files stay untouched.
+- **Mutation evidence carries the command it ran.** `ToolCallEvidence` gains a bounded one-line `summary` for command-carrying tools (Bash and the provider dialects normalized onto the `command` input). Paths answered "did this step touch the workspace" while hiding *how* — auditing a Bash mutation meant opening the raw JSONL. (#21)
+- **`ccx trace --width N` controls outline headline truncation** (0 = untruncated; default stays 160), applied to text and JSON outlines alike. Previously a constant, and the only escape was `--full`'s entire bundle — which bit JSON skill/script consumers hardest. (#23)
 
+### Fixed
+- **Git-root fallback is provenance, not a warning.** `session_git_root_missing` fired whenever the session's recorded cwd didn't resolve locally, even when the process-cwd fallback then found the right repo — the common case in containers, where every trace carried the warning despite correct correlation. A successful fallback now records `git.resolved_from` (`"session_cwd"` | `"process_cwd"`); the warning fires only when nothing resolves. (#22)
 ## [0.12.0] - 2026-07-24
 
 Both changes answer the second field report — the first one produced by ccx tracing itself: a user audited a live session's trace and caught its two headline numbers lying. Findings 3-5 from the same report are tracked in issues #21-#23.

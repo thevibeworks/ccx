@@ -7,12 +7,17 @@ import (
 	"time"
 )
 
-const outlineHeadlineRunes = 160
+// DefaultHeadlineWidth caps outline headlines, in runes. `ccx trace
+// --width N` overrides it; 0 disables truncation entirely.
+const DefaultHeadlineWidth = 160
 
 // BuildOutline reduces a full trace to its always-fits skeleton:
 // every turn and step headline plus rollup numbers. This is what
 // consumers read FIRST; they drill into specific turns afterwards.
-func BuildOutline(result *TraceResult) *Outline {
+// width caps headline length in runes; <= 0 means untruncated. The
+// cap applies to JSON output too — skill/script consumers see the
+// same headlines humans do.
+func BuildOutline(result *TraceResult, width int) *Outline {
 	if result == nil {
 		return &Outline{Kind: OutlineKind}
 	}
@@ -27,7 +32,7 @@ func BuildOutline(result *TraceResult) *Outline {
 		ot := OutlineTurn{
 			Index:             turn.Index,
 			Start:             turn.Start,
-			UserText:          headline(turn.UserText),
+			UserText:          headline(turn.UserText, width),
 			IsCommand:         turn.IsCommand,
 			CommandName:       turn.CommandName,
 			Superseded:        turn.Superseded,
@@ -53,7 +58,7 @@ func BuildOutline(result *TraceResult) *Outline {
 		for _, step := range turn.Steps {
 			os := OutlineStep{
 				Index:    step.Index,
-				Headline: headline(step.Narration),
+				Headline: headline(step.Narration, width),
 				Edits:    len(step.FilesEdited),
 				Errors:   step.Errors,
 				Agents:   len(step.Sidechains),
@@ -69,9 +74,9 @@ func BuildOutline(result *TraceResult) *Outline {
 	return outline
 }
 
-// headline reduces evidence text to its first meaningful line,
-// capped for outline display.
-func headline(text string) string {
+// headline reduces evidence text to its first meaningful line, capped
+// at width runes for outline display (<= 0 = uncapped).
+func headline(text string, width int) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ""
@@ -79,11 +84,15 @@ func headline(text string) string {
 	if idx := strings.IndexByte(text, '\n'); idx > 0 {
 		text = text[:idx]
 	}
-	runes := []rune(strings.TrimSpace(text))
-	if len(runes) > outlineHeadlineRunes {
-		return strings.TrimSpace(string(runes[:outlineHeadlineRunes])) + "..."
+	text = strings.TrimSpace(text)
+	if width <= 0 {
+		return text
 	}
-	return string(runes)
+	runes := []rune(text)
+	if len(runes) > width {
+		return strings.TrimSpace(string(runes[:width])) + "..."
+	}
+	return text
 }
 
 func shortSHAs(shas []string) []string {
