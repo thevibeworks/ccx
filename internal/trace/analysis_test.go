@@ -254,7 +254,7 @@ func TestBuildOutlineAndRenderText(t *testing.T) {
 		},
 	}
 
-	outline := BuildOutline(Analyze(session))
+	outline := BuildOutline(Analyze(session), DefaultHeadlineWidth)
 	if outline.Kind != OutlineKind {
 		t.Fatalf("kind: %q", outline.Kind)
 	}
@@ -284,6 +284,43 @@ func TestBuildOutlineAndRenderText(t *testing.T) {
 	}
 	if !strings.Contains(text, "1. Profiling first") {
 		t.Fatalf("text missing step line:\n%s", text)
+	}
+}
+
+// TestBuildOutlineWidthControl: the headline cap is a parameter, not a
+// constant — 0 disables truncation (the JSON consumers' escape hatch
+// that previously required --full), and the cap applies identically to
+// turn user text and step headlines.
+func TestBuildOutlineWidthControl(t *testing.T) {
+	now := time.Now()
+	long := strings.TrimSpace(strings.Repeat("alpha beta ", 30)) // 329 runes
+	session := &parser.Session{
+		ID:        "width",
+		StartTime: now,
+		RootMessages: []*parser.Message{
+			{UUID: "u1", Kind: parser.KindUserPrompt, Type: "user", Timestamp: now,
+				Content: []parser.ContentBlock{{Type: "text", Text: long}}},
+			{UUID: "a1", Kind: parser.KindAssistant, Type: "assistant", Timestamp: now.Add(time.Minute),
+				Content: []parser.ContentBlock{{Type: "text", Text: long}}},
+		},
+	}
+	result := Analyze(session)
+
+	def := BuildOutline(result, DefaultHeadlineWidth).Turns[0]
+	if !strings.HasSuffix(def.UserText, "...") || len([]rune(def.UserText)) > DefaultHeadlineWidth+3 {
+		t.Fatalf("default width must truncate: %d runes", len([]rune(def.UserText)))
+	}
+
+	full := BuildOutline(result, 0).Turns[0]
+	if full.UserText != long || full.Steps[0].Headline != long {
+		t.Fatalf("width 0 must not truncate: user=%d step=%d runes",
+			len([]rune(full.UserText)), len([]rune(full.Steps[0].Headline)))
+	}
+
+	narrow := BuildOutline(result, 20).Turns[0]
+	if len([]rune(narrow.UserText)) > 23 || len([]rune(narrow.Steps[0].Headline)) > 23 {
+		t.Fatalf("width 20 must cap both headline kinds: user=%q step=%q",
+			narrow.UserText, narrow.Steps[0].Headline)
 	}
 }
 
@@ -340,7 +377,7 @@ func TestAnalyzeTokenSplitAndAgentCost(t *testing.T) {
 			result.Stats.CacheReadTokens, result.Stats.CacheCreateTokens)
 	}
 
-	outline := BuildOutline(result)
+	outline := BuildOutline(result, DefaultHeadlineWidth)
 	ot := outline.Turns[0]
 	if ot.CacheReadTokens != 90_000 || ot.CacheCreateTokens != 45_000 || ot.AgentsCostUSD != 0.40 {
 		t.Fatalf("outline turn split lost: %+v", ot)

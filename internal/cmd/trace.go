@@ -47,6 +47,7 @@ var (
 	traceJSON    bool
 	traceTurn    int
 	traceFull    bool
+	traceWidth   int
 )
 
 func init() {
@@ -60,6 +61,7 @@ func addTraceFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&traceJSON, "json", false, "outline as JSON")
 	cmd.Flags().IntVar(&traceTurn, "turn", 0, "full evidence for one turn (JSON)")
 	cmd.Flags().BoolVar(&traceFull, "full", false, "complete trace bundle (JSON)")
+	cmd.Flags().IntVar(&traceWidth, "width", trace.DefaultHeadlineWidth, "outline headline width in runes (0 = untruncated)")
 }
 
 func runTrace(cmd *cobra.Command, args []string) error {
@@ -138,9 +140,9 @@ func renderTrace(result *trace.TraceResult) ([]byte, error) {
 	case traceFull:
 		return json.MarshalIndent(result, "", "  ")
 	case traceJSON:
-		return json.MarshalIndent(trace.BuildOutline(result), "", "  ")
+		return json.MarshalIndent(trace.BuildOutline(result, traceWidth), "", "  ")
 	default:
-		return []byte(trace.RenderOutlineText(trace.BuildOutline(result))), nil
+		return []byte(trace.RenderOutlineText(trace.BuildOutline(result, traceWidth))), nil
 	}
 }
 
