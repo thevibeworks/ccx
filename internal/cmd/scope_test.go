@@ -179,7 +179,7 @@ func TestLatestTraceSessionIsNonInteractiveLatest(t *testing.T) {
 	}
 }
 
-func TestFindGitRootForSessionFallsBackWithWarning(t *testing.T) {
+func TestFindGitRootForSessionFallbackIsProvenanceNotWarning(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not found")
 	}
@@ -196,9 +196,56 @@ func TestFindGitRootForSessionFallsBackWithWarning(t *testing.T) {
 	}
 
 	stale := filepath.Join(dir, "missing")
-	root, warnings := findGitRootForSession(&parser.Session{CWD: stale})
+	root, resolvedFrom, warnings := findGitRootForSession(&parser.Session{CWD: stale})
 	if root != dir {
 		t.Fatalf("root = %q, want %q", root, dir)
+	}
+	if resolvedFrom != "process_cwd" {
+		t.Fatalf("resolvedFrom = %q, want process_cwd", resolvedFrom)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("successful fallback must not warn, got %+v", warnings)
+	}
+}
+
+func TestFindGitRootForSessionSessionCWDWins(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init")
+
+	root, resolvedFrom, warnings := findGitRootForSession(&parser.Session{CWD: dir})
+	if root != dir {
+		t.Fatalf("root = %q, want %q", root, dir)
+	}
+	if resolvedFrom != "session_cwd" {
+		t.Fatalf("resolvedFrom = %q, want session_cwd", resolvedFrom)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("direct resolution must not warn, got %+v", warnings)
+	}
+}
+
+func TestFindGitRootForSessionNothingResolvesWarns(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	nonRepo := t.TempDir()
+
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldwd) })
+	if err := os.Chdir(nonRepo); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := filepath.Join(nonRepo, "missing")
+	root, resolvedFrom, warnings := findGitRootForSession(&parser.Session{CWD: stale})
+	if root != "" || resolvedFrom != "" {
+		t.Fatalf("root = %q resolvedFrom = %q, want empty", root, resolvedFrom)
 	}
 	if len(warnings) != 1 || warnings[0].Kind != "session_git_root_missing" {
 		t.Fatalf("warnings = %+v, want session_git_root_missing", warnings)

@@ -139,7 +139,11 @@ type Sidechain struct {
 }
 
 type GitCorrelation struct {
-	RepoRoot         string           `json:"repo_root,omitempty"`
+	RepoRoot string `json:"repo_root,omitempty"`
+	// ResolvedFrom records how RepoRoot was found: "session_cwd" (the
+	// session's recorded cwd) or "process_cwd" (fallback — normal when
+	// the session was recorded under a path this host doesn't have).
+	ResolvedFrom     string           `json:"resolved_from,omitempty"`
 	Branch           string           `json:"branch,omitempty"`
 	Head             string           `json:"head,omitempty"`
 	Dirty            bool             `json:"dirty"`
