@@ -144,17 +144,18 @@ func TestHasVariantToken_DelimitedBoundaries(t *testing.T) {
 	}
 }
 
-func TestComputeCost_ReasoningTokensBilledAsOutput(t *testing.T) {
-	// Codex / GPT-5 reasoning tokens should be billed at the same
-	// rate as regular output tokens.
+func TestComputeCost_ReasoningTokensNotBilledSeparately(t *testing.T) {
+	// Codex reasoning tokens are a SUBSET of output tokens (OpenAI
+	// output_tokens_details) at the same rate — the output term already
+	// bills them. A separate reasoning term would double-bill.
 	pricing := &ModelPricing{InputPer1M: 10, OutputPer1M: 80}
 	usage := &MessageUsage{
 		InputTokens:     1_000_000, // $10
-		OutputTokens:    1_000_000, // $80
-		ReasoningTokens: 500_000,   // $40
+		OutputTokens:    1_000_000, // $80, of which 500k is reasoning
+		ReasoningTokens: 500_000,   // informational only
 	}
 	got := ComputeCost(usage, pricing)
-	want := 10.0 + 80.0 + 40.0 // 130 USD
+	want := 10.0 + 80.0 // 90 USD
 	if got != want {
 		t.Errorf("ComputeCost = %v, want %v", got, want)
 	}
