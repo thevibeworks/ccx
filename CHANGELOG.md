@@ -5,7 +5,6 @@ All notable changes to ccx are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
-<<<<<<< HEAD
 ## [Unreleased]
 
 ### Added
@@ -22,6 +21,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Fixed
 - **Git-root fallback is provenance, not a warning.** `session_git_root_missing` fired whenever the session's recorded cwd didn't resolve locally, even when the process-cwd fallback then found the right repo — the common case in containers, where every trace carried the warning despite correct correlation. A successful fallback now records `git.resolved_from` (`"session_cwd"` | `"process_cwd"`); the warning fires only when nothing resolves. (#22)
 - **Codex cost no longer double-bills cached input and reasoning tokens.** Codex usage fields are subsets, not disjoint categories: `input_tokens` includes `cached_input_tokens` (upstream: `non_cached_input = input - cached`) and `output_tokens` includes reasoning (OpenAI `output_tokens_details`) — ccx billed every field separately, overstating a real 36-minute session 2.6x ($101.99 shown, $38.54 honest) and printing "6.6m in" for ~206k of uncached input while Claude's `in` excludes cache. The Codex backend now normalizes to the exclusive semantics the rest of ccx assumes; `ComputeCost` drops the reasoning term; cache format bumped so upgrades reparse. Found by the first cross-provider field eval. (#27)
+
+### Changed
+- **Web UI wears terminal material now** — cctrace's design language ported onto ccx's markup (every selector and JS hook kept, values rewritten). 13px `ui-monospace` body replaces 17px system sans ('Courier New' led the old mono stack); warm-tinted neutrals with terracotta as the single accent plus a five-hue semantic set (green/red/amber/purple/blue) replace ~12 stray hues; pastel role bubbles become hairline surfaces with faint washes — user turns get the cctrace anchor mechanic (space above + accent-washed header row); thinking is muted italic. Chrome details: thin scrollbars, accent selection, visible focus, tinted shadows, one radius scale. Second side-stripe purge caught what 0.11 missed (tool blocks, outline active item, agent turns, doctor/memory cards). Devlog: `docs/devlog/2026-07-29-web-terminal-material.org`.
+- **Long tool outputs clamp with an explicit "show all" expander** instead of an inner scrollbar — the mouse wheel never gets trapped inside a pane (cctrace's msg-clamp mechanic). Progressive enhancement: JS measures overflow and adds the fade mask + button; panes inside collapsed details clamp lazily on first open; without JS the old scroll behavior remains.
+
 ## [0.12.0] - 2026-07-24
 
 Both changes answer the second field report — the first one produced by ccx tracing itself: a user audited a live session's trace and caught its two headline numbers lying. Findings 3-5 from the same report are tracked in issues #21-#23.
