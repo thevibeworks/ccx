@@ -696,29 +696,38 @@ func countToolCalls(content any) int {
 // files. Returns nil if the subagents directory doesn't exist or is
 // empty.
 func loadSidechainFiles(mainSessionPath string) []*Message {
+	var allMsgs []*Message
+	for _, filePath := range SubagentFiles(mainSessionPath) {
+		allMsgs = append(allMsgs, parseSidechainFile(filePath)...)
+	}
+	return allMsgs
+}
+
+// SubagentFiles returns the sub-agent transcript files recorded
+// alongside a main session file (layout above), in directory order.
+// Nil when the session has none. This is the one place that knows the
+// on-disk sidechain layout; consumers (session parsing, content
+// search) go through it.
+func SubagentFiles(mainSessionPath string) []string {
 	sessionID := extractSessionID(mainSessionPath)
 	if sessionID == "" {
 		return nil
 	}
-	dir := filepath.Dir(mainSessionPath)
-	subagentsDir := filepath.Join(dir, sessionID, "subagents")
-
+	subagentsDir := filepath.Join(filepath.Dir(mainSessionPath), sessionID, "subagents")
 	entries, err := os.ReadDir(subagentsDir)
 	if err != nil {
 		return nil // directory doesn't exist — no sidechains
 	}
 
-	var allMsgs []*Message
+	var files []string
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".jsonl") || !strings.HasPrefix(name, "agent-") {
 			continue
 		}
-		filePath := filepath.Join(subagentsDir, name)
-		msgs := parseSidechainFile(filePath)
-		allMsgs = append(allMsgs, msgs...)
+		files = append(files, filepath.Join(subagentsDir, name))
 	}
-	return allMsgs
+	return files
 }
 
 // parseSidechainFile reads a single agent-*.jsonl and returns its

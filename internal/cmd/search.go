@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -175,7 +176,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 			// files. Grep parity by design — no parse, so it works for
 			// every provider's format and misses nothing grep would find.
 			if searchContent {
-				if n := contentMatches(s.FilePath, query); n > 0 {
+				if n := countContentMatches(s.FilePath, query); n > 0 {
 					results = append(results, searchResult{
 						Type:     "content",
 						Project:  projDisplay,
@@ -214,16 +215,18 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Sort by priority, then by match count within content results
-	sort.Slice(results, func(i, j int) bool {
+	// Sort by priority, then by match count within content results.
+	// Stable so equal-rank results keep discovery order across runs.
+	sort.SliceStable(results, func(i, j int) bool {
 		if results[i].Priority != results[j].Priority {
 			return results[i].Priority < results[j].Priority
 		}
 		return results[i].Matches > results[j].Matches
 	})
 
-	// Limit results
+	// Limit results — never silently.
 	if searchLimit > 0 && len(results) > searchLimit {
+		fmt.Fprintf(os.Stderr, "showing %d of %d results (raise with -n)\n", searchLimit, len(results))
 		results = results[:searchLimit]
 	}
 
@@ -301,47 +304,46 @@ func truncateID(id string, max int) string {
 	return id[:max]
 }
 
-// contentMatches counts transcript lines containing query across the
-// main session file and any subagent files beside it (Claude Code
-// layout: <id>/subagents/agent-*.jsonl next to <id>.jsonl; other
-// providers simply have no such directory).
-func contentMatches(sessionPath, query string) int {
+// countContentMatches counts transcript lines containing query across
+// the main session file and any subagent files beside it (layout
+// knowledge lives in parser.SubagentFiles; providers without subagent
+// files simply contribute none).
+func countContentMatches(sessionPath, query string) int {
 	if sessionPath == "" {
 		return 0
 	}
 	count := countMatchingLines(sessionPath, query)
-	sessionID := strings.TrimSuffix(filepath.Base(sessionPath), filepath.Ext(sessionPath))
-	subDir := filepath.Join(filepath.Dir(sessionPath), sessionID, "subagents")
-	entries, err := os.ReadDir(subDir)
-	if err != nil {
-		return count
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
-			continue
-		}
-		count += countMatchingLines(filepath.Join(subDir, entry.Name()), query)
+	for _, f := range parser.SubagentFiles(sessionPath) {
+		count += countMatchingLines(f, query)
 	}
 	return count
 }
 
 // countMatchingLines streams one JSONL file and counts lines matching
-// query case-insensitively. A line past the 10MB scanner budget stops
-// the scan; the count so far still stands.
+// query case-insensitively. bufio.Reader, not Scanner: transcript
+// lines carrying embedded images exceed any fixed budget, and a
+// silent early stop is exactly the false-negative class --content
+// exists to kill. Unreadable files warn instead of lying "0 hits".
 func countMatchingLines(path, query string) int {
 	file, err := os.Open(path)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: skipping unreadable %s: %v\n", filepath.Base(path), err)
 		return 0
 	}
 	defer file.Close()
 
 	count := 0
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	for scanner.Scan() {
-		if strings.Contains(strings.ToLower(scanner.Text()), query) {
+	reader := bufio.NewReaderSize(file, 64*1024)
+	for {
+		line, err := reader.ReadString('\n')
+		if line != "" && strings.Contains(strings.ToLower(line), query) {
 			count++
 		}
+		if err != nil {
+			if err != io.EOF {
+				fmt.Fprintf(os.Stderr, "warning: read error in %s: %v\n", filepath.Base(path), err)
+			}
+			return count
+		}
 	}
-	return count
 }
