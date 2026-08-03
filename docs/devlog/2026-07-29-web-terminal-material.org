@@ -1,0 +1,58 @@
+* [2026-07-29] Dev Log: Web UI terminal material                :WEB:DESIGN:
+
+** Context
+Eric's verdict on the web UI: cctrace's session UI is the taste
+reference ("good taste especially on the session concepts and UX, the
+timeline, reply etc"); ccx's "color/font, layouts, interactions,
+details are looking bad". Direction: adopt cctrace's design language,
+keep ccx's single-binary Go architecture and information architecture.
+
+** Why
+The old surface was a pastel chat app: 17px system sans body, role-
+tinted bubbles (user warm / assistant green / tool yellow / error
+red), ~12 stray hues (#e9a, #a80, #5a9, #fa0, #d55, #c55, #86c,
+blue/violet/cyan context accents), 'Courier New' first in the mono
+stack, radii from 3 to 12px, pure-black shadows. cctrace reads as a
+well-kept terminal: 13px ui-monospace, one accent, a small semantic
+set, hairline surfaces, quiet chrome.
+
+** What
+- =CHANGE= Material swap in place: every selector and JS hook kept;
+  values rewritten. 13px ui-monospace body (Courier New gone),
+  10/11/12/13 sub-scale, 18px page h1.
+- =CHANGE= Palette: warm-tinted neutrals (kiln: tint neutrals toward
+  brand hue — light #fcfbfa ground, dark #131110), terracotta as the
+  ONE accent (#c65d3e light / #e08662 dark, deepened for contrast),
+  semantic set green/red/amber/purple/blue. All stray hues collapsed
+  onto tokens; provider + event tokens ride the set.
+- =CHANGE= Bubbles -> hairline material. Role backgrounds are faint
+  washes (color-mix 6-9%) or transparent; user turns get cctrace's
+  anchor mechanic: extra space above + accent-washed header row in a
+  hairline box. Thinking is muted italic (was amber + pastel ground).
+- =FIX= Side-stripe purge, round 2 (kiln permanent anti-pattern; the
+  0.11 pass missed these): tool blocks (2px blue), outline active item
+  (2px cyan), agent turns (2px purple), doctor/memory/settings cards
+  (3px). Now hairline full borders, tinted where identity matters.
+- =CHANGE= Chrome details from cctrace: thin scrollbars, accent
+  selection, :focus-visible outlines, two shadow tokens (tinted, not
+  black), radius scale 6/4/999.
+- =FIX= Uppercase role labels exempt command names and agent types
+  (/init must not render /INIT).
+
+** How
+CSS-only where possible (style.css rewritten value-by-value), plus
+embedded page styles in templates.go (doctor, memory, settings,
+Tailwind @theme) and two inline hexes in server.go. Favicon x
+re-inked #c65d3e.
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp |
+| Terracotta stays the accent | Copy cctrace's GitHub blue | The badness was hue-scatter + pastels, not the brand hue; one warm accent on warm-tinted neutrals keeps ccx identity and avoids clone territory | claude | 2026-07-29 |
+| Warm-tinted neutrals, not GitHub blue-grays | Verbatim GitHub palette | Kiln L0: tint neutrals toward brand hue; blue-gray ground under a terracotta accent reads accidental | claude | 2026-07-29 |
+| Values swapped in place, selectors untouched | Rewrite templates to cctrace's markup | Same information architecture, zero JS breakage, reviewable diff; structural ports (clamp+expander, replay bar) are separate features | claude | 2026-07-29 |
+
+** Notes
+Not ported yet, candidates for follow-up: cctrace's msg-clamp (380px
+mask + explicit expander instead of inner scroll on long outputs),
+replay transport, tabular-nums pass on stat rows. Screenshots remain
+host-gated (no browser in deva).

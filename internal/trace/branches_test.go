@@ -60,7 +60,7 @@ func TestAnalyzeMarksBranchSiblings(t *testing.T) {
 		t.Fatal("active turns must not be marked superseded")
 	}
 
-	text := RenderOutlineText(BuildOutline(result))
+	text := RenderOutlineText(BuildOutline(result, DefaultHeadlineWidth))
 	if !strings.Contains(text, "2 turns (+1 superseded)") {
 		t.Fatalf("header must count active turns and disclose the branch:\n%s", text)
 	}

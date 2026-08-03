@@ -1674,11 +1674,11 @@ func handleInsights(w http.ResponseWriter, r *http.Request) {
 			size := fmt.Sprintf("%.0fKB", float64(rpt.Size)/1024)
 			b.WriteString(fmt.Sprintf(`<tr style="cursor:pointer" onclick="location='/insights/%s'">`,
 				rpt.Name))
-			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid #e5e5e0"><a href="/insights/%s" style="color:#da7756;text-decoration:none">%s</a></td>`,
+			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid var(--border)"><a href="/insights/%s" style="color:var(--primary);text-decoration:none">%s</a></td>`,
 				rpt.Name, rpt.Name))
-			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid #e5e5e0">%s</td>`, rpt.Scope))
-			b.WriteString(fmt.Sprintf(`<td style="text-align:right;padding:6px 8px;border-bottom:1px solid #e5e5e0;font-family:monospace">%s</td>`, size))
-			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid #e5e5e0">%s</td>`, formatAge(rpt.CreatedAt)))
+			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid var(--border)">%s</td>`, rpt.Scope))
+			b.WriteString(fmt.Sprintf(`<td style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border);font-family:monospace">%s</td>`, size))
+			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid var(--border)">%s</td>`, formatAge(rpt.CreatedAt)))
 			b.WriteString(`</tr>`)
 		}
 		b.WriteString(`</table>`)

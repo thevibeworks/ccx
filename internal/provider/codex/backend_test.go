@@ -189,7 +189,9 @@ func TestParseSessionBuildsUsableTranscript(t *testing.T) {
 	if session.Stats.ToolCalls != 1 {
 		t.Fatalf("session.Stats.ToolCalls = %d, want 1", session.Stats.ToolCalls)
 	}
-	if session.Stats.InputTokens != 10 || session.Stats.CacheReadTokens != 2 || session.Stats.OutputTokens != 5 {
+	// input_tokens=10 includes cached_input_tokens=2; ccx carries the
+	// non-cached 8 (Anthropic-style exclusive semantics).
+	if session.Stats.InputTokens != 8 || session.Stats.CacheReadTokens != 2 || session.Stats.OutputTokens != 5 {
 		t.Fatalf("unexpected token stats: %+v", session.Stats)
 	}
 	if session.Stats.CostUSD <= 0 {

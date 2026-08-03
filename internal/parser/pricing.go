@@ -256,10 +256,11 @@ func hasVariantToken(name, variant string) bool {
 // ComputeCost returns USD for the given token usage at the given pricing.
 // Returns 0 when pricing is nil.
 //
-// Cached reads and cached writes are billed at their discounted/
-// surcharged rates respectively. Reasoning tokens (Codex-only) are
-// billed at the output rate — OpenAI treats extended-thinking output
-// as regular output for pricing purposes.
+// The four billed categories are disjoint by the MessageUsage contract
+// (input excludes cache reads). ReasoningTokens are NOT billed here:
+// they are a subset of OutputTokens (OpenAI output_tokens_details) at
+// the same rate, so the output term already covers them — adding a
+// reasoning term would bill them twice.
 func ComputeCost(u *MessageUsage, p *ModelPricing) float64 {
 	if u == nil || p == nil {
 		return 0
@@ -270,7 +271,6 @@ func ComputeCost(u *MessageUsage, p *ModelPricing) float64 {
 	cost += float64(u.OutputTokens) * p.OutputPer1M / perMillion
 	cost += float64(u.CacheReadTokens) * p.CacheReadPer1M / perMillion
 	cost += float64(u.CacheCreateTokens) * p.CacheWritePer1M / perMillion
-	cost += float64(u.ReasoningTokens) * p.OutputPer1M / perMillion
 	return cost
 }
 

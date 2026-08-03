@@ -672,9 +672,14 @@ func (b *Backend) quickParseSession(filePath string) (*parser.Session, error) {
 			case "token_count":
 				var payload tokenCountPayload
 				if err := json.Unmarshal(rollout.Payload, &payload); err == nil && payload.Info != nil {
-					stats.InputTokens = payload.Info.TotalTokenUsage.InputTokens
-					stats.CacheReadTokens = payload.Info.TotalTokenUsage.CachedInputTokens
-					stats.OutputTokens = payload.Info.TotalTokenUsage.OutputTokens
+					// Codex input_tokens INCLUDES cached_input_tokens
+					// (upstream: non_cached_input = input - cached); ccx
+					// carries input exclusive of cache reads, matching
+					// Anthropic semantics.
+					total := payload.Info.TotalTokenUsage
+					stats.InputTokens = clampNonNegative(total.InputTokens - total.CachedInputTokens)
+					stats.CacheReadTokens = total.CachedInputTokens
+					stats.OutputTokens = total.OutputTokens
 				}
 
 			case "thread_name_updated":
@@ -1175,8 +1180,13 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 						}
 					}
 					// Session-level aggregate (latest snapshot wins — Codex
-					// always emits running totals, not deltas).
-					stats.InputTokens = total.InputTokens
+					// always emits running totals, not deltas). Codex
+					// input_tokens INCLUDES cached_input_tokens (upstream:
+					// non_cached_input = input - cached); ccx carries input
+					// exclusive of cache reads, matching Anthropic
+					// semantics, so cost and display never bill a cached
+					// token twice.
+					stats.InputTokens = clampNonNegative(total.InputTokens - total.CachedInputTokens)
 					stats.CacheReadTokens = total.CachedInputTokens
 					stats.OutputTokens = total.OutputTokens
 
@@ -1192,10 +1202,12 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 					// turn sums all its messages. Without this fix, only
 					// the latest assistant got tokens and all earlier
 					// ones in the burst showed $0.00.
+					inputDelta := clampNonNegative(total.InputTokens - previousTotals.InputTokens)
+					cachedDelta := clampNonNegative(total.CachedInputTokens - previousTotals.CachedInputTokens)
 					delta := parser.MessageUsage{
-						InputTokens:     clampNonNegative(total.InputTokens - previousTotals.InputTokens),
+						InputTokens:     clampNonNegative(inputDelta - cachedDelta),
 						OutputTokens:    clampNonNegative(total.OutputTokens - previousTotals.OutputTokens),
-						CacheReadTokens: clampNonNegative(total.CachedInputTokens - previousTotals.CachedInputTokens),
+						CacheReadTokens: cachedDelta,
 						ReasoningTokens: clampNonNegative(total.ReasoningOutputTokens - previousTotals.ReasoningOutputTokens),
 					}
 					if delta.Total() > 0 && usageWatermark <= len(messages) {

@@ -47,7 +47,7 @@ func TestActiveTimeCapsGaps(t *testing.T) {
 		t.Fatal("wall span must remain reported alongside active time")
 	}
 
-	outline := BuildOutline(result)
+	outline := BuildOutline(result, DefaultHeadlineWidth)
 	if outline.Turns[0].ActiveSecs != wantActive {
 		t.Fatalf("outline turn active = %vs, want %vs", outline.Turns[0].ActiveSecs, wantActive)
 	}
@@ -75,7 +75,7 @@ func TestRenderOutlineHeaderStatesActiveAndTimezone(t *testing.T) {
 		},
 	}
 
-	text := RenderOutlineText(BuildOutline(Analyze(session)))
+	text := RenderOutlineText(BuildOutline(Analyze(session), DefaultHeadlineWidth))
 	if !strings.Contains(text, "| active 3m |") {
 		t.Fatalf("header must state active time, got:\n%s", text)
 	}

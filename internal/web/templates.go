@@ -2542,7 +2542,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 		if !pc.Enabled {
 			status = "disabled"
 		}
-		b.WriteString(fmt.Sprintf(`<div class="provider-status-card" style="border-left: 3px solid %s">`, accentColor))
+		b.WriteString(fmt.Sprintf(`<div class="provider-status-card" style="--prov-accent: %s">`, accentColor))
 		b.WriteString(fmt.Sprintf(`<div class="prov-header"><strong>%s</strong>`, html.EscapeString(pc.DisplayName)))
 		b.WriteString(fmt.Sprintf(`<span class="prov-badge prov-%s">%s</span></div>`, status, status))
 		b.WriteString(fmt.Sprintf(`<div class="prov-detail"><code>%s</code></div>`, html.EscapeString(prov.home)))
@@ -2684,12 +2684,13 @@ func settingsPageCSS() string {
 .provider-status-card {
   background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 12px 16px; min-width: 220px; flex: 1;
+  border-color: color-mix(in srgb, var(--prov-accent, var(--border)) 35%, var(--border));
 }
 .prov-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .prov-badge { font-size: 11px; padding: 1px 6px; border-radius: 3px; }
-.prov-active { background: #16a34a22; color: #16a34a; }
-.prov-missing { background: #eab30822; color: #eab308; }
-.prov-disabled { background: #64748b22; color: #64748b; }
+.prov-active { background: color-mix(in srgb, var(--green) 13%, transparent); color: var(--green); }
+.prov-missing { background: color-mix(in srgb, var(--amber) 13%, transparent); color: var(--amber); }
+.prov-disabled { background: color-mix(in srgb, var(--text-muted) 13%, transparent); color: var(--text-muted); }
 .prov-detail { font-size: 13px; color: var(--text-muted); }
 .prov-detail code { font-size: 12px; }
 .count { color: var(--text-muted); font-weight: normal; font-size: 12px; }
@@ -2781,8 +2782,8 @@ func settingsPageCSS() string {
 .file-content .fmt a { color: var(--primary); text-decoration: none; }
 .file-content .fmt a:hover { text-decoration: underline; }
 .file-content .fmt strong { font-weight: 600; }
-.agent-card { border-left: 3px solid #86c; }
-.skill-card { border-left: 3px solid var(--primary); }
+.agent-card { border-color: color-mix(in srgb, var(--purple) 35%, var(--border)); }
+.skill-card { border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); }
 </style>
 <script>
 document.querySelectorAll('.file-card').forEach(card => {
@@ -2894,7 +2895,7 @@ func memSectionCSS() string {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-secondary);
-  border-left: 3px solid #eab308;
+  border-color: color-mix(in srgb, var(--amber) 35%, var(--border));
 }
 .mem-section-header {
   padding: 10px 14px;
@@ -2908,9 +2909,9 @@ func memSectionCSS() string {
   user-select: none;
 }
 .mem-section-header:hover { background: var(--bg-tertiary); border-radius: var(--radius); }
-.mem-icon { color: #eab308; font-size: 12px; }
+.mem-icon { color: var(--amber); font-size: 12px; }
 .mem-badge {
-  background: #eab30818; color: #eab308;
+  background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber);
   font-size: 11px; font-weight: 600;
   padding: 1px 7px; border-radius: 10px;
   margin-left: auto;
@@ -2940,8 +2941,8 @@ func memSectionCSS() string {
 }
 .mem-file .expand-icon { font-size: 9px; color: var(--text-muted); transition: transform 0.15s; flex-shrink: 0; }
 .mem-file[open] .expand-icon { transform: rotate(90deg); }
-.mem-file-cc { border-left: 2px solid #da7756; }
-.mem-file-cx { border-left: 2px solid #3b82f6; }
+.mem-file-cc { border-color: color-mix(in srgb, var(--accent-cc) 35%, var(--border)); }
+.mem-file-cx { border-color: color-mix(in srgb, var(--accent-cx) 35%, var(--border)); }
 .mem-file .file-viewer { border-top: 1px solid var(--border); }
 .mem-file .file-toolbar {
   display: flex; gap: 4px; padding: 6px 10px;
@@ -3179,10 +3180,10 @@ func memoryPageCSS() string {
 }
 .mem-project-path { font-size: 11px; color: var(--text-muted); margin-left: auto; }
 .prov-pill { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600; }
-.prov-pill-cc { background: #da775622; color: #da7756; }
-.prov-pill-cx { background: #3b82f622; color: #3b82f6; }
-.mem-card-cc { border-left: 3px solid #da7756; }
-.mem-card-cx { border-left: 3px solid #3b82f6; }
+.prov-pill-cc { background: color-mix(in srgb, var(--accent-cc) 13%, transparent); color: var(--accent-cc); }
+.prov-pill-cx { background: color-mix(in srgb, var(--accent-cx) 13%, transparent); color: var(--accent-cx); }
+.mem-card-cc { border-color: color-mix(in srgb, var(--accent-cc) 35%, var(--border)); }
+.mem-card-cx { border-color: color-mix(in srgb, var(--accent-cx) 35%, var(--border)); }
 .empty-state { color: var(--text-muted); font-style: italic; padding: 24px 0; }
 </style>`
 }
@@ -3271,8 +3272,8 @@ func pageHeader(title, theme string) string {
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 <style type="text/tailwindcss">
 @theme {
-  --color-ccx: #da7756;
-  --color-ccx-dark: #c5634a;
+  --color-ccx: #c65d3e;
+  --color-ccx-dark: #a94e33;
 }
 @utility scrollbar-thin {
   scrollbar-width: thin;
@@ -3366,7 +3367,7 @@ func renderNotFoundPage(w http.ResponseWriter, r *http.Request, kind, detail str
 
 func faviconLink() string {
 	// Bold favicon: cc in white, x in coral
-	return `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23111'/%3E%3Ctext x='3' y='23' font-family='ui-monospace,monospace' font-weight='800' font-size='14'%3E%3Ctspan fill='%23fff'%3Ecc%3C/tspan%3E%3Ctspan fill='%23da7756'%3Ex%3C/tspan%3E%3C/text%3E%3C/svg%3E">`
+	return `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23111'/%3E%3Ctext x='3' y='23' font-family='ui-monospace,monospace' font-weight='800' font-size='14'%3E%3Ctspan fill='%23fff'%3Ecc%3C/tspan%3E%3Ctspan fill='%23c65d3e'%3Ex%3C/tspan%3E%3C/text%3E%3C/svg%3E">`
 }
 
 func pageFooter() string {
@@ -3612,6 +3613,45 @@ document.addEventListener('click', function(e) {
   }
 });
 
+// Clamp long panes: an explicit expander instead of an inner
+// scrollbar, so the mouse wheel never gets trapped inside a tool
+// output (cctrace's msg-clamp mechanic). Progressive enhancement:
+// panes keep their overflow scroll until JS measures them. Panes
+// inside closed <details> measure as 0 — the toggle listener clamps
+// them lazily on first open.
+(function() {
+  const CLAMP_SEL = '.block-content, .block-result, .long-output .output-full, .compact-content';
+  function clampPane(el) {
+    if (el.dataset.clampChecked) return;
+    if (el.clientHeight === 0) return; // hidden; measure on reveal
+    el.dataset.clampChecked = '1';
+    if (el.scrollHeight <= el.clientHeight + 40) return;
+    el.classList.add('clamped');
+    const btn = document.createElement('button');
+    btn.className = 'clamp-more';
+    btn.type = 'button';
+    btn.textContent = '▾ show all';
+    btn.addEventListener('click', function() {
+      const open = el.classList.toggle('unclamped');
+      el.classList.toggle('clamped', !open);
+      btn.textContent = open ? '▴ collapse' : '▾ show all';
+    });
+    el.insertAdjacentElement('afterend', btn);
+  }
+  function scanClamps(root) {
+    (root || document).querySelectorAll(CLAMP_SEL).forEach(clampPane);
+  }
+  document.addEventListener('toggle', function(e) {
+    if (e.target.open) scanClamps(e.target);
+  }, true);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { scanClamps(); });
+  } else {
+    scanClamps();
+  }
+  window.ccxClampPanes = scanClamps;
+})();
+
 // Reveal a message/tool block: open every enclosing <details> so the
 // target is actually visible, scroll it centered, and flash-highlight.
 // Used by ?turn=N deep links and turn-evidence jump links.
@@ -3661,6 +3701,10 @@ document.getElementById('show-tools')?.addEventListener('change', function() {
   });
   document.querySelectorAll('.block-result').forEach(el => {
     el.style.display = this.checked ? 'block' : 'none';
+    const next = el.nextElementSibling;
+    if (next && next.classList.contains('clamp-more')) {
+      next.style.display = this.checked ? 'block' : 'none';
+    }
   });
 });
 

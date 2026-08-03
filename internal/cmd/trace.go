@@ -47,6 +47,7 @@ var (
 	traceJSON    bool
 	traceTurn    int
 	traceFull    bool
+	traceWidth   int
 )
 
 func init() {
@@ -60,6 +61,7 @@ func addTraceFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&traceJSON, "json", false, "outline as JSON")
 	cmd.Flags().IntVar(&traceTurn, "turn", 0, "full evidence for one turn (JSON)")
 	cmd.Flags().BoolVar(&traceFull, "full", false, "complete trace bundle (JSON)")
+	cmd.Flags().IntVar(&traceWidth, "width", trace.DefaultHeadlineWidth, "outline headline width in runes (0 = untruncated)")
 }
 
 func runTrace(cmd *cobra.Command, args []string) error {
@@ -80,9 +82,10 @@ func runTrace(cmd *cobra.Command, args []string) error {
 
 	result := trace.Analyze(fullSession)
 
-	repoDir, gitRootWarnings := findGitRootForSession(fullSession)
+	repoDir, resolvedFrom, gitRootWarnings := findGitRootForSession(fullSession)
 	result.Warnings = append(result.Warnings, gitRootWarnings...)
 	if repoDir != "" {
+		result.Git.ResolvedFrom = resolvedFrom
 		if err := trace.CorrelateGit(result, repoDir); err != nil {
 			result.Warnings = append(result.Warnings, trace.TraceWarning{
 				Kind:    "git_correlation_failed",
@@ -137,9 +140,9 @@ func renderTrace(result *trace.TraceResult) ([]byte, error) {
 	case traceFull:
 		return json.MarshalIndent(result, "", "  ")
 	case traceJSON:
-		return json.MarshalIndent(trace.BuildOutline(result), "", "  ")
+		return json.MarshalIndent(trace.BuildOutline(result, traceWidth), "", "  ")
 	default:
-		return []byte(trace.RenderOutlineText(trace.BuildOutline(result))), nil
+		return []byte(trace.RenderOutlineText(trace.BuildOutline(result, traceWidth))), nil
 	}
 }
 
@@ -197,24 +200,32 @@ func resolveTraceSession(backend provider.Backend, args []string) (*parser.Sessi
 	return session, nil
 }
 
-func findGitRootForSession(session *parser.Session) (string, []trace.TraceWarning) {
-	var warnings []trace.TraceWarning
-	if session != nil && session.CWD != "" {
-		if root := findGitRootFrom(session.CWD); root != "" {
-			return root, nil
+// findGitRootForSession resolves the repo for git correlation: the
+// session's recorded cwd first, then the process cwd. A successful
+// fallback is normal in containerized/remote setups (the session was
+// recorded under a host path), so it is reported as provenance on the
+// git block, not as a warning. Warnings fire only when nothing resolves.
+func findGitRootForSession(session *parser.Session) (string, string, []trace.TraceWarning) {
+	sessionCWD := ""
+	if session != nil {
+		sessionCWD = session.CWD
+	}
+	if root := findGitRootFrom(sessionCWD); root != "" {
+		return root, "session_cwd", nil
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if root := findGitRootFrom(cwd); root != "" {
+			return root, "process_cwd", nil
 		}
+	}
+	var warnings []trace.TraceWarning
+	if sessionCWD != "" {
 		warnings = append(warnings, trace.TraceWarning{
 			Kind:    "session_git_root_missing",
-			Message: fmt.Sprintf("session cwd %q is missing or not inside a git repository; falling back to current working directory", session.CWD),
+			Message: fmt.Sprintf("session cwd %q is missing or not inside a git repository", sessionCWD),
 		})
 	}
-	cwd, err := os.Getwd()
-	if err == nil {
-		if root := findGitRootFrom(cwd); root != "" {
-			return root, warnings
-		}
-	}
-	return "", warnings
+	return "", "", warnings
 }
 
 func findGitRootFrom(dir string) string {
