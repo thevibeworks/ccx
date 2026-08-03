@@ -8,6 +8,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ## [Unreleased]
 
 ### Added
+- **`ccx search --content` scans transcript lines.** Search covered names, paths, and summaries only, so the main session-mining question — "what did we discuss about X" — fell back to raw `grep -r` over the store, losing session identity, provider abstraction, and date filters. `--content` streams every candidate session file plus its subagent files (grep parity by design: raw-line match, no parse, so every provider's format works and nothing grep finds is missed), ranks results by hit count, and composes with `--after`/`--before`/`-p`/`--model`. It is a crawl (~15s over a multi-GB store) because no message index exists yet; a content index is the follow-up that would make it a query.
+
+### Fixed
+- **Trace sidechain reports are whole in JSON evidence.** `--full` and `--turn` capped `sidechains[].summary` at 240 runes — for research sessions the subagent final report IS the value, so the "complete trace bundle" was incomplete exactly where it mattered, and the recovery path (`view --show-agents` + manual ANSI strip) was the friction the other fixes address. The top-level sidechains list now carries the untruncated (ANSI-stripped) report; step-level entries stay bounded light refs keyed by `agent_id`, as documented.
+- **`ccx view` respects pipes: `--color=auto|always|never`.** ANSI codes were emitted unconditionally, so piped output read as binary to grep — silent false-negatives unless you knew to add `-a`. `auto` (the default) follows whether stdout is a terminal; detection is stdlib-only (`os.ModeCharDevice`), keeping the zero-dependency stance.
+- **`ccx view` no longer indents sequential messages ever-deeper.** Every message nested one level under its `parentUuid` predecessor, so a long linear conversation drifted right without bound (400+ columns by the end of an 8.5k-line session). Sequential messages are siblings; indentation now marks only real branch descent — main chain into sidechain, or one agent into another.
+
+### Added
 - goal attribution (#24): `ccx sessions` joins deva launch receipts
   (`$XDG_DATA_HOME/ccx/launches/*.jsonl`, written by `deva --goal`,
   thevibeworks/deva#499) to sessions by cwd + time. A receipt stamps
