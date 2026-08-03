@@ -39,6 +39,7 @@ var (
 	viewFlat         bool
 	viewBrief        bool
 	viewAll          bool
+	viewColor        string
 )
 
 func init() {
@@ -48,6 +49,23 @@ func init() {
 	viewCmd.Flags().BoolVar(&viewShowAgents, "show-agents", false, "show agent sidechains")
 	viewCmd.Flags().BoolVar(&viewFlat, "flat", false, "disable tree rendering")
 	viewCmd.Flags().BoolVarP(&viewBrief, "brief", "b", false, "conversation only: human input, agent responses, compactions")
+	viewCmd.Flags().StringVar(&viewColor, "color", "auto", "colorize output: auto, always, never")
+}
+
+// resolveColorMode maps --color to a concrete decision; auto follows
+// whether stdout is a terminal, so piped output stays grep-clean.
+func resolveColorMode(mode string) (bool, error) {
+	switch mode {
+	case "auto":
+		info, err := os.Stdout.Stat()
+		return err == nil && info.Mode()&os.ModeCharDevice != 0, nil
+	case "always":
+		return true, nil
+	case "never":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid --color %q (valid: auto, always, never)", mode)
+	}
 }
 
 func runView(cmd *cobra.Command, args []string) error {
@@ -87,10 +105,16 @@ func runView(cmd *cobra.Command, args []string) error {
 		fullSession = render.BriefSession(fullSession)
 	}
 
+	color, err := resolveColorMode(viewColor)
+	if err != nil {
+		return err
+	}
+
 	opts := render.TerminalOptions{
 		ShowThinking: viewShowThinking,
 		ShowAgents:   viewShowAgents,
 		FlatMode:     viewFlat,
+		Color:        color,
 		Theme:        config.Theme(),
 	}
 

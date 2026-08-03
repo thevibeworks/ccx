@@ -11,22 +11,52 @@ type TerminalOptions struct {
 	ShowThinking bool
 	ShowAgents   bool
 	FlatMode     bool
+	Color        bool
 	Theme        string
 }
 
 const (
-	colorReset   = "\033[0m"
-	colorBold    = "\033[1m"
-	colorDim     = "\033[2m"
-	colorUser    = "\033[34m" // Blue
-	colorAssist  = "\033[32m" // Green
-	colorTool    = "\033[35m" // Magenta
-	colorThink   = "\033[33m" // Yellow
-	colorError   = "\033[31m" // Red
-	colorCompact = "\033[36m" // Cyan
+	ansiReset   = "\033[0m"
+	ansiBold    = "\033[1m"
+	ansiDim     = "\033[2m"
+	ansiUser    = "\033[34m" // Blue
+	ansiAssist  = "\033[32m" // Green
+	ansiTool    = "\033[35m" // Magenta
+	ansiThink   = "\033[33m" // Yellow
+	ansiError   = "\033[31m" // Red
+	ansiCompact = "\033[36m" // Cyan
 )
 
+// Rendering reads colors through package vars so piped output can drop
+// ANSI entirely (escapes make grep treat the output as binary). The CLI
+// renders one session per process, so this never races.
+var (
+	colorReset   = ansiReset
+	colorBold    = ansiBold
+	colorDim     = ansiDim
+	colorUser    = ansiUser
+	colorAssist  = ansiAssist
+	colorTool    = ansiTool
+	colorThink   = ansiThink
+	colorError   = ansiError
+	colorCompact = ansiCompact
+)
+
+func setColors(enabled bool) {
+	if enabled {
+		colorReset, colorBold, colorDim = ansiReset, ansiBold, ansiDim
+		colorUser, colorAssist, colorTool = ansiUser, ansiAssist, ansiTool
+		colorThink, colorError, colorCompact = ansiThink, ansiError, ansiCompact
+		return
+	}
+	colorReset, colorBold, colorDim = "", "", ""
+	colorUser, colorAssist, colorTool = "", "", ""
+	colorThink, colorError, colorCompact = "", "", ""
+}
+
 func Terminal(session *parser.Session, opts TerminalOptions) error {
+	setColors(opts.Color)
+
 	fmt.Printf("%s%sSession: %s%s\n", colorBold, colorUser, session.ID, colorReset)
 	fmt.Printf("%sStarted: %s | Messages: %d | Tools: %d%s\n\n",
 		colorDim, session.StartTime.Format("2006-01-02 15:04"),
@@ -68,7 +98,14 @@ func printMessage(msg *parser.Message, depth int, opts TerminalOptions) {
 
 	if !opts.FlatMode {
 		for _, child := range msg.Children {
-			printMessage(child, depth+1, opts)
+			// Sequential messages are siblings on the parentUuid chain,
+			// not nesting; indent only when descending into a different
+			// agent's branch (main -> sidechain, agent -> other agent).
+			childDepth := depth
+			if child.IsSidechain != msg.IsSidechain || child.AgentID != msg.AgentID {
+				childDepth = depth + 1
+			}
+			printMessage(child, childDepth, opts)
 		}
 	}
 }
