@@ -56,3 +56,13 @@ back out of session history:
   67 goose matches in the piped view, no =-a= needed.
 - =view= still truncates tool results to 10 lines by design; --content
   search is the tool for exhaustive content questions, not view+grep.
+- Two-axis review follow-ups applied: content control chars scrubbed in
+  every color mode (spec asked for the audit; embedded escapes leaked),
+  =--content= switched to unbounded line reads (10MB scanner budget
+  silently dropped matches past image-carrying lines), subagent layout
+  knowledge moved to =parser.SubagentFiles= with =agent-= prefix parity.
+- Deferred, known: file-based subagent transcripts parse as extra root
+  messages, so =view= renders sidechains flat after the main chain
+  rather than nested under the spawning call. Correct nesting needs a
+  parser tree change (affects turns/web) — separate issue, not a
+  release blocker.
