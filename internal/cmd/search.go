@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,11 +23,16 @@ var searchCmd = &cobra.Command{
 	Short: "Search across projects and sessions",
 	Long: `Search for projects and sessions by name or summary.
 
+With --content, also scan transcript lines inside session files
+(including subagent files) — grep parity, but with session identity,
+provider abstraction, and date filters.
+
 Examples:
-  ccx search auth          # Find sessions about authentication
-  ccx search myproject     # Find project by name
-  ccx search "fix bug"     # Multi-word search
-  ccx search -t session    # Only search sessions`,
+  ccx search auth            # Find sessions about authentication
+  ccx search myproject       # Find project by name
+  ccx search "fix bug"       # Multi-word search
+  ccx search -t session      # Only search sessions
+  ccx search --content goose # Scan message content (slower)`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runSearch,
 }
@@ -38,6 +45,7 @@ var (
 	searchAfter    string
 	searchBefore   string
 	searchModel    string
+	searchContent  bool
 )
 
 func init() {
@@ -48,6 +56,7 @@ func init() {
 	searchCmd.Flags().StringVar(&searchAfter, "after", "", "sessions after date (YYYY-MM-DD)")
 	searchCmd.Flags().StringVar(&searchBefore, "before", "", "sessions before date (YYYY-MM-DD)")
 	searchCmd.Flags().StringVar(&searchModel, "model", "", "filter by model name substring")
+	searchCmd.Flags().BoolVar(&searchContent, "content", false, "also scan message content in session files (slower)")
 
 	rootCmd.AddCommand(searchCmd)
 }
@@ -58,6 +67,7 @@ type searchResult struct {
 	Session  string `json:"session,omitempty"`
 	Summary  string `json:"summary"`
 	Time     string `json:"time,omitempty"`
+	Matches  int    `json:"matches,omitempty"`
 	Priority int    `json:"-"`
 }
 
@@ -159,6 +169,24 @@ func runSearch(cmd *cobra.Command, args []string) error {
 					Time:     formatAge(s.StartTime),
 					Priority: 2,
 				})
+				continue
+			}
+
+			// Content scan: raw transcript lines, main file plus subagent
+			// files. Grep parity by design — no parse, so it works for
+			// every provider's format and misses nothing grep would find.
+			if searchContent {
+				if n := countContentMatches(s.FilePath, query); n > 0 {
+					results = append(results, searchResult{
+						Type:     "content",
+						Project:  projDisplay,
+						Session:  truncateID(s.ID, 8),
+						Summary:  fmt.Sprintf("%d hits · %s", n, sessionSummaryPreview(s.Summary, 48)),
+						Time:     formatAge(s.StartTime),
+						Matches:  n,
+						Priority: 3,
+					})
+				}
 			}
 		}
 	}
@@ -187,13 +215,18 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Sort by priority
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Priority < results[j].Priority
+	// Sort by priority, then by match count within content results.
+	// Stable so equal-rank results keep discovery order across runs.
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Priority != results[j].Priority {
+			return results[i].Priority < results[j].Priority
+		}
+		return results[i].Matches > results[j].Matches
 	})
 
-	// Limit results
+	// Limit results — never silently.
 	if searchLimit > 0 && len(results) > searchLimit {
+		fmt.Fprintf(os.Stderr, "showing %d of %d results (raise with -n)\n", searchLimit, len(results))
 		results = results[:searchLimit]
 	}
 
@@ -269,4 +302,48 @@ func truncateID(id string, max int) string {
 		return id
 	}
 	return id[:max]
+}
+
+// countContentMatches counts transcript lines containing query across
+// the main session file and any subagent files beside it (layout
+// knowledge lives in parser.SubagentFiles; providers without subagent
+// files simply contribute none).
+func countContentMatches(sessionPath, query string) int {
+	if sessionPath == "" {
+		return 0
+	}
+	count := countMatchingLines(sessionPath, query)
+	for _, f := range parser.SubagentFiles(sessionPath) {
+		count += countMatchingLines(f, query)
+	}
+	return count
+}
+
+// countMatchingLines streams one JSONL file and counts lines matching
+// query case-insensitively. bufio.Reader, not Scanner: transcript
+// lines carrying embedded images exceed any fixed budget, and a
+// silent early stop is exactly the false-negative class --content
+// exists to kill. Unreadable files warn instead of lying "0 hits".
+func countMatchingLines(path, query string) int {
+	file, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: skipping unreadable %s: %v\n", filepath.Base(path), err)
+		return 0
+	}
+	defer file.Close()
+
+	count := 0
+	reader := bufio.NewReaderSize(file, 64*1024)
+	for {
+		line, err := reader.ReadString('\n')
+		if line != "" && strings.Contains(strings.ToLower(line), query) {
+			count++
+		}
+		if err != nil {
+			if err != io.EOF {
+				fmt.Fprintf(os.Stderr, "warning: read error in %s: %v\n", filepath.Base(path), err)
+			}
+			return count
+		}
+	}
 }

@@ -2,31 +2,76 @@ package render
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/thevibeworks/ccx/internal/parser"
 )
 
+// Session content is untrusted terminal input: tool results can embed
+// their own ANSI sequences and control bytes, which retitle windows,
+// flip grep into binary mode even under --color=never, and corrupt
+// piped output. Strip well-formed escapes first, then any stray
+// control chars (keeping \n and \t).
+var (
+	contentAnsiPattern    = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07\x1b]*(?:\x07|\x1b\\))`)
+	contentControlPattern = regexp.MustCompile("[\x00-\x08\x0b-\x1f\x7f]")
+)
+
+func sanitizeContent(s string) string {
+	return contentControlPattern.ReplaceAllString(contentAnsiPattern.ReplaceAllString(s, ""), "")
+}
+
 type TerminalOptions struct {
 	ShowThinking bool
 	ShowAgents   bool
 	FlatMode     bool
+	Color        bool
 	Theme        string
 }
 
 const (
-	colorReset   = "\033[0m"
-	colorBold    = "\033[1m"
-	colorDim     = "\033[2m"
-	colorUser    = "\033[34m" // Blue
-	colorAssist  = "\033[32m" // Green
-	colorTool    = "\033[35m" // Magenta
-	colorThink   = "\033[33m" // Yellow
-	colorError   = "\033[31m" // Red
-	colorCompact = "\033[36m" // Cyan
+	ansiReset   = "\033[0m"
+	ansiBold    = "\033[1m"
+	ansiDim     = "\033[2m"
+	ansiUser    = "\033[34m" // Blue
+	ansiAssist  = "\033[32m" // Green
+	ansiTool    = "\033[35m" // Magenta
+	ansiThink   = "\033[33m" // Yellow
+	ansiError   = "\033[31m" // Red
+	ansiCompact = "\033[36m" // Cyan
 )
 
+// Rendering reads colors through package vars so piped output can drop
+// ANSI entirely (escapes make grep treat the output as binary). The CLI
+// renders one session per process, so this never races.
+var (
+	colorReset   = ansiReset
+	colorBold    = ansiBold
+	colorDim     = ansiDim
+	colorUser    = ansiUser
+	colorAssist  = ansiAssist
+	colorTool    = ansiTool
+	colorThink   = ansiThink
+	colorError   = ansiError
+	colorCompact = ansiCompact
+)
+
+func setColors(enabled bool) {
+	if enabled {
+		colorReset, colorBold, colorDim = ansiReset, ansiBold, ansiDim
+		colorUser, colorAssist, colorTool = ansiUser, ansiAssist, ansiTool
+		colorThink, colorError, colorCompact = ansiThink, ansiError, ansiCompact
+		return
+	}
+	colorReset, colorBold, colorDim = "", "", ""
+	colorUser, colorAssist, colorTool = "", "", ""
+	colorThink, colorError, colorCompact = "", "", ""
+}
+
 func Terminal(session *parser.Session, opts TerminalOptions) error {
+	setColors(opts.Color)
+
 	fmt.Printf("%s%sSession: %s%s\n", colorBold, colorUser, session.ID, colorReset)
 	fmt.Printf("%sStarted: %s | Messages: %d | Tools: %d%s\n\n",
 		colorDim, session.StartTime.Format("2006-01-02 15:04"),
@@ -68,7 +113,14 @@ func printMessage(msg *parser.Message, depth int, opts TerminalOptions) {
 
 	if !opts.FlatMode {
 		for _, child := range msg.Children {
-			printMessage(child, depth+1, opts)
+			// Sequential messages are siblings on the parentUuid chain,
+			// not nesting; indent only when descending into a different
+			// agent's branch (main -> sidechain, agent -> other agent).
+			childDepth := depth
+			if child.IsSidechain != msg.IsSidechain || child.AgentID != msg.AgentID {
+				childDepth = depth + 1
+			}
+			printMessage(child, childDepth, opts)
 		}
 	}
 }
@@ -77,7 +129,7 @@ func printContentBlock(block parser.ContentBlock, indent string, opts TerminalOp
 	switch block.Type {
 	case "text":
 		if block.Text != "" {
-			text := wrapText(block.Text, 80-len(indent))
+			text := wrapText(sanitizeContent(block.Text), 80-len(indent))
 			for _, line := range strings.Split(text, "\n") {
 				fmt.Printf("%s%s\n", indent, line)
 			}
@@ -86,7 +138,7 @@ func printContentBlock(block parser.ContentBlock, indent string, opts TerminalOp
 	case "thinking":
 		if opts.ShowThinking && block.Text != "" {
 			fmt.Printf("\n%s%s[THINKING]%s\n", indent, colorThink, colorReset)
-			text := wrapText(block.Text, 80-len(indent))
+			text := wrapText(sanitizeContent(block.Text), 80-len(indent))
 			for _, line := range strings.Split(text, "\n") {
 				fmt.Printf("%s%s%s%s\n", indent, colorDim, line, colorReset)
 			}
@@ -121,7 +173,7 @@ func printCompacted(msg *parser.Message, indent string) {
 	fmt.Printf("\n%s%s═══ [COMPACTED] ═══%s\n", indent, colorCompact, colorReset)
 	for _, block := range msg.Content {
 		if block.Type == "text" && block.Text != "" {
-			summary := block.Text
+			summary := sanitizeContent(block.Text)
 			if len(summary) > 200 {
 				summary = summary[:197] + "..."
 			}
@@ -138,13 +190,14 @@ func printToolInput(input any, indent string) {
 			if key == "content" || key == "input" {
 				continue
 			}
-			valStr := fmt.Sprintf("%v", val)
+			valStr := sanitizeContent(fmt.Sprintf("%v", val))
 			if len(valStr) > 60 {
 				valStr = valStr[:57] + "..."
 			}
 			fmt.Printf("%s%s: %s\n", indent, key, valStr)
 		}
 	case string:
+		v = sanitizeContent(v)
 		if len(v) > 100 {
 			v = v[:97] + "..."
 		}
@@ -155,7 +208,7 @@ func printToolInput(input any, indent string) {
 func printToolResult(result any, indent string) {
 	switch v := result.(type) {
 	case string:
-		lines := strings.Split(v, "\n")
+		lines := strings.Split(sanitizeContent(v), "\n")
 		maxLines := 10
 		if len(lines) > maxLines {
 			for _, line := range lines[:maxLines] {
@@ -174,7 +227,7 @@ func printToolResult(result any, indent string) {
 			}
 		}
 	default:
-		fmt.Printf("%s%s%v%s\n", indent, colorDim, v, colorReset)
+		fmt.Printf("%s%s%s%s\n", indent, colorDim, sanitizeContent(fmt.Sprintf("%v", v)), colorReset)
 	}
 }
 

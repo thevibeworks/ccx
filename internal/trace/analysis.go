@@ -270,13 +270,14 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 				summary.Status = msg.SubAgentResult.Status
 			}
 			if summary.Summary == "" {
-				summary.Summary = summarizeEvidenceText(firstText(msg))
+				summary.Summary = firstText(msg)
 			}
 			if msg.SubAgentResult.TotalToolUseCount > summary.ToolCalls {
 				summary.ToolCalls = msg.SubAgentResult.TotalToolUseCount
 			}
 			// Light reference on the step; full evidence lives once in
 			// the top-level sidechains list, keyed by agent_id.
+			summary.Summary = summarizeEvidenceText(summary.Summary)
 			summary.ToolCallEvidence = nil
 			summary.FilesEdited = nil
 			summary.FilesRead = nil
@@ -449,7 +450,10 @@ func collectSidechainEvidence(messages []*parser.Message) map[string]Sidechain {
 			summary.OutputTokens += msg.Usage.OutputTokens
 			summary.CostUSD += msg.Usage.CostUSD
 		}
-		if text := summarizeEvidenceText(firstText(msg)); text != "" {
+		// The final report is often the sidechain's whole value (research
+		// agents); keep it untruncated here, ANSI-stripped only. Step-level
+		// refs bound it on attach.
+		if text := stripANSI(firstText(msg)); text != "" {
 			summary.Summary = text
 		}
 
@@ -689,12 +693,15 @@ var (
 	}
 )
 
+func stripANSI(text string) string {
+	return strings.TrimSpace(ansiEscapePattern.ReplaceAllString(text, ""))
+}
+
 // cleanBoundedText normalizes one evidence text field: ANSI escapes
 // stripped, command XML condensed, and length bounded to maxRunes.
 // The bool reports whether content was omitted.
 func cleanBoundedText(text string, maxRunes int) (string, bool) {
-	text = ansiEscapePattern.ReplaceAllString(text, "")
-	text = condenseCommandText(text)
+	text = condenseCommandText(stripANSI(text))
 	return boundText(text, maxRunes)
 }
 

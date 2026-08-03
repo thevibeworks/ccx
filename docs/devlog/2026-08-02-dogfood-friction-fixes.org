@@ -1,0 +1,68 @@
+* [2026-08-02] Dev Log: Dogfood friction fixes                :TRACE:VIEW:SEARCH:
+
+** Context
+A topic-mining session used ccx as its primary instrument against the
+real session store (fixture: a 12-hour research session — 3 sidechains,
+8.5k-line view) and filed four friction findings. All four were
+reproducible; all four are fixed here.
+
+** Why
+Each flaw broke the same workflow ccx exists for — getting evidence
+back out of session history:
+1. =trace --full= capped sidechain summaries at 240 runes; for research
+   sessions the subagent final report IS the value.
+2. =view= piped ANSI to non-TTYs; grep saw binary and silently missed.
+3. =search= covered names/summaries only; content questions fell back
+   to raw grep, losing session identity and filters.
+4. =view= indented every message under its parentUuid predecessor;
+   linear sessions drifted 400+ columns right.
+
+** What
+- =FIX= trace: top-level =sidechains[].summary= untruncated
+  (ANSI-stripped) in =--full=/=--turn=; step refs stay bounded.
+- =FEAT= =ccx view --color=auto|always|never=; auto = stdout is a TTY.
+- =FIX= view tree: siblings share depth; indent only on branch descent
+  (main -> sidechain, agent -> other agent).
+- =FEAT= =ccx search --content=: streaming raw-line scan over session +
+  subagent files, ranked by hit count, composing with date/provider
+  filters.
+
+** How
+- =internal/trace/analysis.go=: =collectSidechainEvidence= keeps the
+  full final report; =buildTurn= bounds the step-level light ref at
+  attach time. Full evidence lives once, keyed by agent_id — the shape
+  the code already claimed.
+- =internal/render/terminal.go=: color constants became package vars
+  behind =setColors(enabled)=; =printMessage= computes child depth from
+  the =IsSidechain=/=AgentID= boundary instead of unconditional +1.
+- =internal/cmd/view.go=: =resolveColorMode= maps the flag; auto uses
+  =os.ModeCharDevice= (stdlib; no isatty dependency).
+- =internal/cmd/search.go=: =contentMatches= scans =<id>.jsonl= plus
+  =<id>/subagents/*.jsonl= with the 10MB scanner budget.
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp |
+| Grep-parity raw-line matching for --content | parse each line, match text fields only | The complaint was false negatives vs grep; raw scan is provider-agnostic, cheap, and misses nothing grep finds. Structure-key false positives are rare for real topic queries. | agent | 2026-08-02 |
+| Content scan is a crawl (~15s full store) | build SQLite FTS index first | No message index exists (db = stars/tags only); index lifecycle is its own feature. Crawl lands the workflow now; index is the follow-up. | agent | 2026-08-02 |
+| Step-level sidechain refs stay bounded | untruncate everywhere | Light refs exist to keep turns readable; full evidence lives once at top level, keyed by agent_id. | agent | 2026-08-02 |
+| Depth = agent-boundary crossings only | cap depth at N; keep +1 per message | Sequential messages are siblings in fact; a cap would hide, not fix, the wrong model. | agent | 2026-08-02 |
+
+** Notes
+- The friction report's "SQLite index presumably makes content search
+  cheap" was wrong — the db stores stars/tags only. Worth an FTS issue.
+- Verification detour: the harness shell aliased =grep= to a function
+  that swallowed matched output, which briefly looked like a fifth bug
+  (messages missing from view). =/usr/bin/grep= restored reality:
+  67 goose matches in the piped view, no =-a= needed.
+- =view= still truncates tool results to 10 lines by design; --content
+  search is the tool for exhaustive content questions, not view+grep.
+- Two-axis review follow-ups applied: content control chars scrubbed in
+  every color mode (spec asked for the audit; embedded escapes leaked),
+  =--content= switched to unbounded line reads (10MB scanner budget
+  silently dropped matches past image-carrying lines), subagent layout
+  knowledge moved to =parser.SubagentFiles= with =agent-= prefix parity.
+- Deferred, known: file-based subagent transcripts parse as extra root
+  messages, so =view= renders sidechains flat after the main chain
+  rather than nested under the spawning call. Correct nesting needs a
+  parser tree change (affects turns/web) — separate issue, not a
+  release blocker.

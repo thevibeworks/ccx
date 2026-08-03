@@ -179,6 +179,51 @@ func TestAnalyzeAttachesSidechainEvidence(t *testing.T) {
 	}
 }
 
+// TestAnalyzeSidechainReportStaysWhole guards the evidence contract for
+// research sessions: the subagent's final report is often the whole
+// value, so the top-level sidechain entry must carry it untruncated
+// (ANSI-stripped), while the step-level light ref stays bounded.
+func TestAnalyzeSidechainReportStaysWhole(t *testing.T) {
+	now := time.Now()
+	report := "\x1b[1mFindings:\x1b[0m " + strings.Repeat("evidence sentence. ", 200) // ~3800 runes
+	session := &parser.Session{
+		ID:        "sidechain-report",
+		StartTime: now,
+		EndTime:   now.Add(10 * time.Minute),
+		Stats:     parser.SessionStats{AgentSidechains: 1},
+		RootMessages: []*parser.Message{
+			{UUID: "u1", Kind: parser.KindUserPrompt, Type: "user", Timestamp: now,
+				Content: []parser.ContentBlock{{Type: "text", Text: "Research the topic"}}},
+			{UUID: "a1", Kind: parser.KindAssistant, Type: "assistant", Timestamp: now.Add(time.Minute),
+				Content: []parser.ContentBlock{
+					{Type: "text", Text: "Spawning a researcher."},
+					{Type: "tool_use", ToolName: "Agent", ToolID: "tool-1", ToolInput: map[string]any{"subagent_type": "Explore"}},
+				}},
+			{UUID: "tr1", Kind: parser.KindToolResult, Type: "user", Timestamp: now.Add(2 * time.Minute),
+				Content:        []parser.ContentBlock{{Type: "tool_result", ToolID: "tool-1"}},
+				SubAgentResult: &parser.SubAgentResultData{AgentID: "agent-1", AgentType: "Explore", Status: "completed"}},
+			{UUID: "sc-a1", Kind: parser.KindAssistant, Type: "assistant", IsSidechain: true, AgentID: "agent-1", Timestamp: now.Add(3 * time.Minute),
+				Content: []parser.ContentBlock{{Type: "text", Text: report}}},
+		},
+	}
+
+	result := Analyze(session)
+	if len(result.Sidechains) != 1 {
+		t.Fatalf("top-level sidechains: got %d, want 1", len(result.Sidechains))
+	}
+	top := result.Sidechains[0]
+	if len([]rune(top.Summary)) < 3000 {
+		t.Fatalf("top-level summary truncated: %d runes", len([]rune(top.Summary)))
+	}
+	if strings.Contains(top.Summary, "\x1b") {
+		t.Fatal("top-level summary must be ANSI-stripped")
+	}
+	ref := result.Turns[0].Steps[0].Sidechains[0]
+	if got := len([]rune(ref.Summary)); got > 250 {
+		t.Fatalf("step ref summary must stay bounded, got %d runes", got)
+	}
+}
+
 func TestExtractPathsFromPatchAndBashRedirect(t *testing.T) {
 	patch := `*** Begin Patch
 *** Add File: src/new.go
