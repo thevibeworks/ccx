@@ -22,6 +22,7 @@ ccx
 │   └── --search QUERY            # Search summaries
 │   └── --after DATE              # After date (YYYY-MM-DD)
 │   └── --sort time|messages|prompts  # Sort order (prompts = human-turn count)
+│   └── --goal SLUG               # Filter by launch-receipt goal (deva --goal)
 ├── view [session]                # View session in terminal
 │   └── --brief                   # Conversation only
 ├── export [session]              # Export session
