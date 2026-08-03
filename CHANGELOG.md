@@ -7,6 +7,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-02
+
 ### Added
 - goal attribution (#24): `ccx sessions` joins deva launch receipts
   (`$XDG_DATA_HOME/ccx/launches/*.jsonl`, written by `deva --goal`,
