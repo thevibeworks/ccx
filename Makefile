@@ -9,6 +9,10 @@ GOBIN := $(or $(shell go env GOBIN),$(shell go env GOPATH)/bin)
 # Default: build for current OS/arch
 build:
 	@go build $(LDFLAGS) -o bin/ccx ./cmd/ccx
+	@# A bare `go build ./cmd/ccx` drops ./ccx at the repo root and
+	@# .gitignore hides it; refresh it so a stale copy can't shadow
+	@# this build.
+	@if [ -f ccx ]; then cp -f bin/ccx ccx; fi
 	@echo ""
 	@echo "  ccx built successfully"
 	@echo "  ─────────────────────────────────────"
