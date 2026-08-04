@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -49,7 +52,7 @@ func init() {
 	sessionsCmd.Flags().StringVar(&sessionsSort, "sort", "time", "sort by: time, messages, prompts")
 	sessionsCmd.Flags().IntVar(&sessionsLimit, "limit", 20, "limit number of sessions (0 = no limit)")
 	sessionsCmd.Flags().BoolVar(&sessionsJSON, "json", false, "output as JSON")
-	sessionsCmd.Flags().StringVarP(&sessionsProvider, "provider", "p", "", "filter by provider: cc, cx, all")
+	sessionsCmd.Flags().StringVarP(&sessionsProvider, "provider", "p", "", "filter by provider: cc, cx, gx, all")
 	sessionsCmd.Flags().StringVarP(&sessionsSearch, "search", "s", "", "search in session summaries")
 	sessionsCmd.Flags().StringVar(&sessionsAfter, "after", "", "sessions after date (YYYY-MM-DD)")
 	sessionsCmd.Flags().StringVar(&sessionsBefore, "before", "", "sessions before date (YYYY-MM-DD)")
@@ -133,7 +136,25 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		sessions = matched
 	}
 	if len(sessions) == 0 {
-		fmt.Println("No sessions found.")
+		// Sessions are keyed by exact session cwd, so a query one
+		// level below the real workspace root would dead-end here.
+		// Walk up parent directories before giving up.
+		start := walkStartPath(query, projectName)
+		if start != "" {
+			if recovered, root := sessionsFromParents(backend, query, start); len(recovered) > 0 {
+				fmt.Fprintf(os.Stderr, "note: no sessions keyed at %s; showing workspace %s\n", start, root)
+				sessions = recovered
+			}
+		}
+	}
+	if len(sessions) == 0 {
+		if projectName != "" {
+			fmt.Printf("No sessions found for %q.\n", projectName)
+			suggestClosestProjects(backend, projectName)
+		} else {
+			fmt.Println("No sessions found.")
+		}
+		fmt.Fprintln(os.Stderr, "hint: `ccx projects` lists project slugs and paths; `ccx sessions --all` spans all projects")
 		return nil
 	}
 
@@ -142,6 +163,109 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	}
 
 	return printSessionsTable(sessions, projectName == "" && sessionsAll)
+}
+
+// walkStartPath decides where a parent-directory walk starts after a
+// zero-hit query: the workspace path for a bare invocation, or a
+// path-like project argument (absolute, contains a separator, or an
+// existing local directory). A plain project slug never walks.
+func walkStartPath(query catalog.SessionQuery, projectName string) string {
+	if projectName == "" {
+		if query.Scope == catalog.ScopeWorkspace {
+			return query.WorkspacePath
+		}
+		return ""
+	}
+	pathLike := filepath.IsAbs(projectName) || strings.ContainsRune(projectName, filepath.Separator)
+	if !pathLike {
+		info, err := os.Stat(projectName)
+		if err != nil || !info.IsDir() {
+			return ""
+		}
+	}
+	abs, err := filepath.Abs(projectName)
+	if err != nil {
+		return ""
+	}
+	return abs
+}
+
+// sessionLister is the slice of provider.Backend the zero-hit
+// recovery needs; narrowed so tests can stub it.
+type sessionLister interface {
+	ListSessions(query catalog.SessionQuery) ([]*parser.Session, error)
+}
+
+// projectDiscoverer is the slice of provider.Backend the slug
+// suggestions need; narrowed so tests can stub it.
+type projectDiscoverer interface {
+	DiscoverProjects() ([]*parser.Project, error)
+}
+
+// sessionsFromParents retries the session query at each ancestor of
+// start, nearest first, until the filesystem root. Returns the
+// sessions plus the ancestor that matched.
+func sessionsFromParents(backend sessionLister, base catalog.SessionQuery, start string) ([]*parser.Session, string) {
+	for dir := filepath.Dir(filepath.Clean(start)); ; dir = filepath.Dir(dir) {
+		q := base
+		q.Scope = catalog.ScopeWorkspace
+		q.ProjectName = ""
+		q.WorkspacePath = dir
+		sessions, err := backend.ListSessions(q)
+		if err == nil && len(sessions) > 0 {
+			return sessions, dir
+		}
+		if dir == filepath.Dir(dir) {
+			return nil, ""
+		}
+	}
+}
+
+// suggestClosestProjects prints up to three project slugs sharing a
+// token with the query, so a near-miss doesn't dead-end in a guessing
+// game against `ccx projects`.
+func suggestClosestProjects(backend projectDiscoverer, name string) {
+	projects, err := backend.DiscoverProjects()
+	if err != nil {
+		return
+	}
+	base := catalog.SlugifyProjectQuery(filepath.Base(name))
+	if base == "" {
+		return
+	}
+	tokens := strings.Split(base, "-")
+	type scored struct {
+		name  string
+		score int
+	}
+	var candidates []scored
+	for _, p := range projects {
+		if p == nil {
+			continue
+		}
+		slug := catalog.SlugifyProjectQuery(p.Name)
+		score := 0
+		for _, tok := range tokens {
+			if len(tok) >= 3 && strings.Contains(slug, tok) {
+				score++
+			}
+		}
+		if score > 0 {
+			candidates = append(candidates, scored{name: p.Name, score: score})
+		}
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].score > candidates[j].score })
+	if len(candidates) > 3 {
+		candidates = candidates[:3]
+	}
+	names := make([]string, len(candidates))
+	for i, c := range candidates {
+		names[i] = c.name
+	}
+	fmt.Fprintf(os.Stderr, "closest projects: %s\n", strings.Join(names, ", "))
 }
 
 func providerTag(p string) string {

@@ -49,7 +49,7 @@ func init() {
 	insightCmd.Flags().StringVar(&insightUntil, "until", "", "end date (YYYY-MM-DD)")
 	insightCmd.Flags().BoolVar(&insightJSON, "json", false, "output aggregated data as JSON (for LLM skill)")
 	insightCmd.Flags().BoolVar(&insightAll, "all", false, "across all projects")
-	insightCmd.Flags().StringVarP(&insightProvider, "provider", "p", "", "filter by provider: cc, cx, all")
+	insightCmd.Flags().StringVarP(&insightProvider, "provider", "p", "", "filter by provider: cc, cx, gx, all")
 	insightCmd.Flags().StringVarP(&insightOutput, "output", "o", "", "output file path (default: insights dir)")
 }
 

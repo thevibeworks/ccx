@@ -104,7 +104,10 @@ func runTrace(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(os.Stderr, "warning: workspace context failed: %v\n", err)
 			}
 		}
-	} else {
+	} else if len(gitRootWarnings) == 0 {
+		// The session-cwd warning already says everything this one
+		// would; emit the generic line only when there was no session
+		// cwd to blame (one line per run, not two).
 		result.Warnings = append(result.Warnings, trace.TraceWarning{
 			Kind:    "git_root_missing",
 			Message: "no git repository found from session cwd or current working directory",

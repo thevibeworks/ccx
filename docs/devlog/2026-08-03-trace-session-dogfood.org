@@ -1,0 +1,126 @@
+* [2026-08-03] Dev Log: Dogfood findings — tracing the claudex watch sessions :TRACE:SEARCH:
+
+** Context
+Dogfood task: build latest ccx (worktree @ d01a53a + uncommitted
+search --content work) and trace the sessions that added the new
+statusline + pace-advisor algorithms to claudex/claude.py. The
+answer was found (project 260715-ccx-session-watch, sessions
+d8618ef2 / 80d112e0 / 1ee2a82b / 420b622a / af319072 / d22aa3ae),
+but the path there had friction. Findings recorded, not fixed.
+
+** Findings
+1. =make build= stamps VERSION=dev. A from-source binary reports
+   =ccx version dev= — indistinguishable from any other dev build
+   when debugging "which ccx am I running". Makefile has
+   =VERSION ?= dev= and never consults git.
+   Fix direction: default VERSION to =git describe --tags --dirty=.
+2. =ccx sessions <path>= dead-ends on subdirectories. Sessions are
+   keyed by exact session cwd, so a path one level below the real
+   workspace root returns a bare "No sessions found" — no hint, no
+   parent-walk, no nearest-slug suggestion. Recovery required
+   =ccx projects= plus guessing that
+   =WIP/260715_ccx-session-watch= maps to slug
+   =260715-ccx-session-watch=. =ccx projects= shows slugs only, no
+   path column, so the mapping is opaque.
+   Fix direction: walk up parent dirs; on zero hits suggest closest
+   project slugs; add path to =projects= output.
+3. Multi-word query is a literal substring match, sold as search.
+   =ccx search "claude.py statusline"= → 0 results while each term
+   alone hits. Help's example comment says "Multi-word search",
+   implying term-level matching that doesn't exist. Zero-result
+   output gives no guidance (split terms? try --content?).
+   Fix direction: document phrase semantics, or AND the terms;
+   print a hint on 0 results.
+4. Date filter and TIME column disagree. =search --content
+   claude.py --after 2026-07-19= returns d8618ef2 displayed as
+   2026-07-15. The session is a 7-day container (started 07-15,
+   ended 07-22): the filter passes on end/activity time, the column
+   shows start time. Reads as a broken filter until you trace the
+   session.
+   Fix direction: display the timestamp the filter matched on, or
+   label the column.
+5. Warning noise repeats per invocation. Every command against an
+   archived workspace prints both =session_git_root_missing= and
+   =git_root_missing= — two lines saying one thing (cwd gone),
+   every time. Expected state for archived projects, not a warning
+   worth two lines each run.
+   Fix direction: collapse to one line.
+6. =trace= has no time or turn-range slicing. d8618ef2 spans 7 days,
+   24 turns, 205 steps; finding "what happened Jul 21" meant piping
+   the outline through =sed -n '60,130p'=. =log= slices by time but
+   =trace= can't; =--turn N= is single-turn only.
+   Fix direction: =--turns N-M= and/or =--since/--until= on trace.
+7. =-p/--provider= help says "cc, cx, all" — gx is supported (works,
+   documented in the skill) but missing from the flag help.
+
+** Addendum [2026-08-03, second run of the same task]
+Task re-run end-to-end on a fresh build. Findings 2, 3, and 5
+reproduced verbatim (claudex subdir → bare "No sessions found";
+="statusline claude.py"= → 0 hits while each term alone hits;
+double git-root warning on every command against the archived
+workspace). Worked around finding 1 by stamping the version via
+ldflags (=dev-d01a53a-dirty=) — Makefile still doesn't do this.
+New findings:
+8. =trace <id>= and =trace <id> --turn N= disagree on audience.
+   The outline is a human-readable terminal view; the only
+   drill-down from it is =--turn N=, which emits the raw
+   ccx.turn.v1 JSON bundle where per-edit mutation records
+   (message_id, tool_id, timestamps) bury the turn's user text and
+   final response. There is no human-shaped middle layer between
+   "one narration line per step" and "full JSON evidence" — the
+   natural next question after reading an outline is "show me turn
+   N like the outline, but complete".
+   Fix direction: make =--turn N= render human-readable by default
+   (user text, step narrations, final text, files edited);
+   keep the JSON bundle behind =--json=, consistent with how the
+   outline itself already treats =--json=.
+9. =search= exits 1 on zero results ("No results found."). Grep
+   parity, but it is undocumented in --help and combines badly
+   with finding 3: a phrase query silently over-narrowed to zero
+   now also fails the invocation, so scripted report pipelines
+   under =set -e= die on what is really a query-semantics problem.
+   Fix direction: document the exit contract; pair with the
+   0-result hint from finding 3.
+
+** Resolution [2026-08-03]
+Adopted and fixed in fix/dogfood-friction-20260803:
+1. Makefile defaults VERSION to =git describe --tags --dirty
+   --always= (falls back to =dev= outside a checkout); releases
+   still override VERSION.
+2. Three-part fix: (a) =projects= grew a PATH column (table and
+   =--json=), so the slug ↔ directory mapping is visible; (b)
+   project-name lookup slug-folds both sides (every
+   non-alphanumeric run → =-=, lowercased), so
+   =260715_ccx-session-watch= finds =260715-ccx-session-watch=
+   without guessing; (c) on zero hits, =sessions= walks up parent
+   directories (sessions are keyed by exact cwd) and shows the
+   nearest ancestor workspace with a note; if still empty it
+   suggests the closest project slugs by token overlap.
+3. Help now states phrase semantics ("adjacent and in order");
+   zero results print hints (single term, =--content=).
+5. The generic =git_root_missing= warning is emitted only when
+   there is no session-cwd warning already saying the same thing:
+   one line per run, not two.
+7. =-p= help says =cc, cx, gx, all= for =sessions=, =search=,
+   =insight=. NOT for =log=: =ccx log= genuinely has no grok
+   source wired (=validLogProvider=, =logSources=) — advertising
+   =gx= there would be a lie. Wiring grok into =log= is a real
+   feature, left open.
+4. =search= results now display last-activity time (header =LAST=)
+   — the same timestamp =--after=/=--before= filter on and results
+   sort by, so a filtered row can no longer display a date outside
+   the requested window. (=sessions= already labels its column
+   STARTED; its filter still matches on end time, judged tolerable
+   because the label is truthful.)
+
+Corrected:
+9. Does not reproduce: =search= exits 0 on zero results, both at
+   v0.13.0 and in this tree (verified empirically). The exit-1
+   claim likely came from a =| grep= in the repro pipeline. The
+   documentation half was adopted anyway: --help now states the
+   exit contract.
+
+Deferred (follow-up issues, with FTS index + sidechain nesting):
+6. =trace= turn-range/time slicing (=--turns N-M=, =--since/--until=).
+8. Human-readable =trace --turn N= (outline-shaped single-turn
+   view; JSON stays behind =--json=).

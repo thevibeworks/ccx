@@ -62,19 +62,29 @@ func runProjects(cmd *cobra.Command, args []string) error {
 
 func printProjectsTable(projects []*parser.Project) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PROJECT\tSESSIONS\tLAST MODIFIED")
+	fmt.Fprintln(w, "PROJECT\tSESSIONS\tLAST MODIFIED\tPATH")
 
 	for _, p := range projects {
 		age := formatAge(p.LastModified)
-		fmt.Fprintf(w, "%s\t%d\t%s\n", p.Name, len(p.Sessions), age)
+		fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", p.Name, len(p.Sessions), age, projectPath(p))
 	}
 
 	return w.Flush()
 }
 
+// projectPath resolves the workspace path a project's slug encodes;
+// without it the slug ↔ directory mapping is a guessing game.
+func projectPath(p *parser.Project) string {
+	if p.Path != "" {
+		return p.Path
+	}
+	return parser.DecodePath(p.EncodedName)
+}
+
 type projectJSON struct {
 	Name         string `json:"name"`
 	EncodedName  string `json:"encoded_name"`
+	Path         string `json:"path,omitempty"`
 	Sessions     int    `json:"sessions"`
 	LastModified string `json:"last_modified"`
 }
@@ -85,6 +95,7 @@ func printProjectsJSON(projects []*parser.Project) error {
 		items[i] = projectJSON{
 			Name:         p.Name,
 			EncodedName:  p.EncodedName,
+			Path:         projectPath(p),
 			Sessions:     len(p.Sessions),
 			LastModified: p.LastModified.Format(time.RFC3339),
 		}

@@ -24,6 +24,11 @@ var searchCmd = &cobra.Command{
 	Short: "Search across projects and sessions",
 	Long: `Search for projects and sessions by name or summary.
 
+The query is one case-insensitive phrase: multiple words must appear
+adjacent and in order ("fix bug" won't match "bug ... fix"). For
+term-level matching, run one search per term. Exits 0 either way;
+zero matches just prints "No results found."
+
 With --content, also scan conversation text inside session files
 (including subagent files): user prompts and assistant replies,
 ranked by hit count with a matched-text preview. Injected noise —
@@ -35,7 +40,7 @@ no parse, misses nothing grep would find.
 Examples:
   ccx search auth              # Find sessions about authentication
   ccx search myproject         # Find project by name
-  ccx search "fix bug"         # Multi-word search
+  ccx search "fix bug"         # Phrase match: adjacent words, in order
   ccx search -t session        # Only search sessions
   ccx search --content goose   # Scan conversation text (slower)
   ccx search --raw goose       # Grep parity over raw lines`,
@@ -59,7 +64,7 @@ func init() {
 	searchCmd.Flags().StringVarP(&searchType, "type", "t", "", "filter by type: project, session")
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "n", 20, "max results")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "output as JSON")
-	searchCmd.Flags().StringVarP(&searchProvider, "provider", "p", "", "filter by provider: cc, cx, all")
+	searchCmd.Flags().StringVarP(&searchProvider, "provider", "p", "", "filter by provider: cc, cx, gx, all")
 	searchCmd.Flags().StringVar(&searchAfter, "after", "", "sessions after date (YYYY-MM-DD)")
 	searchCmd.Flags().StringVar(&searchBefore, "before", "", "sessions before date (YYYY-MM-DD)")
 	searchCmd.Flags().StringVar(&searchModel, "model", "", "filter by model name substring")
@@ -177,7 +182,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 					Session:  truncateID(s.ID, 8),
 					Path:     s.FilePath,
 					Summary:  sessionSummaryPreview(s.Summary, 64),
-					Time:     formatAge(s.StartTime),
+					Time:     formatAge(s.EndTime),
 					Priority: 0,
 				})
 				continue
@@ -191,7 +196,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 					Session:  truncateID(s.ID, 8),
 					Path:     s.FilePath,
 					Summary:  sessionSummaryPreview(s.Summary, 64),
-					Time:     formatAge(s.StartTime),
+					Time:     formatAge(s.EndTime),
 					Priority: 2,
 				})
 				continue
@@ -214,7 +219,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 							Session:  truncateID(s.ID, 8),
 							Path:     s.FilePath,
 							Summary:  fmt.Sprintf("%d hits · %s", n, sessionSummaryPreview(s.Summary, 48)),
-							Time:     formatAge(s.StartTime),
+							Time:     formatAge(s.EndTime),
 							Matches:  n,
 							Priority: 3,
 						})
@@ -241,7 +246,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 					Session:  truncateID(s.ID, 8),
 					Path:     s.FilePath,
 					Summary:  summary,
-					Time:     formatAge(s.StartTime),
+					Time:     formatAge(s.EndTime),
 					Matches:  n,
 					Previews: previews,
 					Priority: 3,
@@ -291,6 +296,12 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	if len(results) == 0 {
 		fmt.Println("No results found.")
+		if strings.Contains(query, " ") {
+			fmt.Fprintln(os.Stderr, "hint: multi-word queries match as one exact phrase; try a single term")
+		}
+		if !searchContent {
+			fmt.Fprintln(os.Stderr, "hint: --content scans conversation text inside sessions")
+		}
 		return nil
 	}
 
@@ -305,7 +316,10 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 func printSearchResults(results []searchResult) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TYPE\tPROJECT\tSESSION\tSUMMARY\tTIME")
+	// LAST = last activity (session end time): the same timestamp
+	// --after/--before filter on and results sort by, so a filtered
+	// row never displays a date outside the requested window.
+	fmt.Fprintln(w, "TYPE\tPROJECT\tSESSION\tSUMMARY\tLAST")
 
 	for _, r := range results {
 		session := r.Session
