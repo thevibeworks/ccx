@@ -7,6 +7,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-03
+
 ### Changed
 - **`ccx search` shows last-activity time, labeled `LAST`.** The old `TIME` column showed session start while `--after`/`--before` filter on end time, so a 7-day session could pass `--after 2026-07-19` yet display `2026-07-15` — reading as a broken filter until you traced the session. The column now shows the timestamp the filter matches and results sort by. (dogfood finding, docs/devlog/2026-08-03-trace-session-dogfood.org)
 - **`ccx search --content` now ranks conversation, not boilerplate.** The v0.13.0 raw-line scan counted every transcript line, so injected noise dominated ranking: a Stop-hook line fired every turn put a 327-hit session first while the session where the topic was actually designed ranked #3 (docs/devlog/2026-08-03-content-search-noise.org). The default now parses each candidate session (all providers, sidechains included) and counts only conversation text — user prompts and assistant text/thinking; hook attachments, tool results, command echoes, and meta lines contribute zero. New `--raw` keeps the old behavior verbatim: grep parity over raw lines, no parse, misses nothing grep would find. A cheap raw-line prefilter keeps the default at par with `--raw` speed (only hit files pay the parse); queries whose bytes JSON-escaping could hide (`"`, `\`, non-ASCII) skip the prefilter for correctness.
