@@ -7,6 +7,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Changed
+- **`ccx search --content` now ranks conversation, not boilerplate.** The v0.13.0 raw-line scan counted every transcript line, so injected noise dominated ranking: a Stop-hook line fired every turn put a 327-hit session first while the session where the topic was actually designed ranked #3 (docs/devlog/2026-08-03-content-search-noise.org). The default now parses each candidate session (all providers, sidechains included) and counts only conversation text — user prompts and assistant text/thinking; hook attachments, tool results, command echoes, and meta lines contribute zero. New `--raw` keeps the old behavior verbatim: grep parity over raw lines, no parse, misses nothing grep would find. A cheap raw-line prefilter keeps the default at par with `--raw` speed (only hit files pay the parse); queries whose bytes JSON-escaping could hide (`"`, `\`, non-ASCII) skip the prefilter for correctness.
+
+### Added
+- **Content results show what matched and where the file lives.** Each `--content` result now carries a role-labeled matched-text snippet (`[user]`/`[assistant]`/`[agent]`) in the table, and `--json` gains `path` (session/content results) plus up to 3 `previews` — noise is distinguishable from signal, and drill-down no longer needs `find` + `grep` outside ccx.
+
+### Fixed
+- **`make build` refreshes a stale root `./ccx`.** A bare `go build ./cmd/ccx` drops `./ccx` at the repo root where `.gitignore` hides it; `make build` writes `bin/ccx`, so the root copy silently went stale and shadowed fresh builds ("built unknown"). `make build` now overwrites the root copy when one exists.
+
 ## [0.13.0] - 2026-08-02
 
 ### Added

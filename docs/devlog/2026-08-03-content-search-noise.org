@@ -1,0 +1,81 @@
+* [2026-08-03] Dev Log: Dogfood findings — content search noise      :SEARCH:
+
+** Context
+Topic-mining session: find where "deadman" / "auto-handoff" were
+actually discussed across the session store, using the fresh
+integration build (9bbbab3). The answer was findable, but only by
+dropping out of ccx to raw grep — the exact fallback =search
+--content= was built to remove. Findings recorded, not fixed.
+
+** Findings
+1. Hit-count ranking is noise-dominated. =search --content deadman=
+   ranks a session with 327 hits first; classification of the raw
+   file showed 100% of those hits are Stop-hook boilerplate
+   ("deadman armed: auto-handoff in 50m..." fired every turn as a
+   =hook_system_message= attachment). The session where deadman was
+   actually designed and shipped (ac342f0d, deva-chore) ranked #3.
+   "deadman" and "auto-handoff" return near-identical result lists
+   because the same injected sentence contains both terms. A search
+   that ranks boilerplate above the answer fails its one job.
+2. No matched-line preview. Results show hit count + session summary
+   only; noise is indistinguishable from signal without leaving ccx.
+   Repro: the 327-hit result and the 13-hit real-discussion result
+   look the same modulo the number.
+3. Results don't carry the session file path — even =--json= (only
+   type/project/session/summary/time/matches). Drill-down meant
+   =find ~/.claude/projects -name '<id>*.jsonl'= + =/usr/bin/grep=,
+   losing all of ccx's provider abstraction.
+4. search/view can't cross-verify: search reports 327 hits in
+   e1a0fa78; =ccx view e1a0fa78= renders zero occurrences (hits live
+   in hook attachments and raw tool-result lines that view never
+   renders). No in-ccx way to see what a content hit matched.
+5. Stale-binary trap: =make build= writes =bin/ccx=, but a previous
+   build sits at repo root as =./ccx= and README/help examples use
+   =./ccx=. First run picked up yesterday's binary ("built
+   unknown"). One canonical output path, or have =make build=
+   refresh both.
+
+** Fix directions (for the FTS follow-up issue)
+- The planned FTS index issue (HANDOFF Next #1, plugs in at
+  internal/cmd/search.go:countContentMatches) should cover relevance,
+  not just speed: a scan that defaults to user/assistant text and
+  gates attachments/tool-results/hook lines behind =--raw= would have
+  put ac342f0d at #1 for this query.
+- Matched-line previews (grep =-m 3= style) per result; include
+  =path= in =--json=.
+- A drill-down that stays inside ccx, e.g. =view --grep= or
+  =search --content --show <id>= printing matching lines with role
+  labels.
+
+** Resolution [2026-08-03]
+Findings 1-3 and 5 adopted and shipped on feat/search-content-signal;
+finding 4 (in-ccx drill-down) and the FTS index stay as follow-up
+issues.
+- =CHANGE= --content default now parses candidate sessions and counts
+  only conversation text (KindUserPrompt/KindAssistant text+thinking
+  blocks; sidechains included, role-labeled =agent=). Hook
+  attachments, tool results, command echoes, meta: zero. New =--raw=
+  is the old scan verbatim (implies --content).
+- =FEAT= role-labeled matched-text preview per result; =--json= gains
+  =path= (session+content) and =previews= (max 3).
+- =FIX= =make build= refreshes a stale root =./ccx= when present.
+- Perf: cheap raw-line prefilter gates the parse; only hit files pay
+  it. Skipped when the query contains bytes JSON escaping could hide
+  (=\"=, =\\=, non-ASCII) — a zero-hit raw scan proves nothing there.
+- Acceptance rerun on the live store: =search --content deadman= now
+  ranks ac342f0d #1 (27 hits, preview shows the naming verdict); the
+  boilerplate session e1a0fa78 (330 raw hits) is absent from default
+  output and still #1 under =--raw=. Timing at par: 20s signal vs 23s
+  raw. The ~20s floor is the crawl itself — FTS issue's territory.
+- Decision: the "grep parity by design" default (v0.13.0, 428defd)
+  lost its first real dogfood test — parity moved to =--raw=,
+  relevance became the default. Recall is preserved, just not silent:
+  help text says what each mode reads.
+
+** Notes
+- Evidence classification one-liner:
+  =/usr/bin/grep -o -E '.{60}deadman.{60}' <file> | sort | uniq -c |
+  sort -rn= — 109x "deadman armed" attachment + 109x its stdout twin
+  accounted for the top session's count.
+- Prior friction round (2026-08-02) is fully closed: PR #32 merged in
+  v0.13.0. These are new, post-release findings.
