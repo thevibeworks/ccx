@@ -1,7 +1,9 @@
 .PHONY: build build-all build-darwin-arm64 build-darwin-amd64 build-linux-amd64 build-linux-arm64
 .PHONY: test clean install lint fmt deps run dev run-projects run-doctor tools skill verify-pricing audit-schema
 
-VERSION ?= dev
+# Stamp from-source builds with the real commit so `ccx --version`
+# can answer "which ccx am I running"; releases override VERSION.
+VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
 GOBIN := $(or $(shell go env GOBIN),$(shell go env GOPATH)/bin)

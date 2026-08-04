@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -148,8 +149,37 @@ func ProjectMatchesName(project *parser.Project, name string) bool {
 			}
 		}
 	}
-	return strings.Contains(nameLower, query) || strings.Contains(pathLower, query)
+	if strings.Contains(nameLower, query) || strings.Contains(pathLower, query) {
+		return true
+	}
+	// Slug-normalized fallback: claude-code encodes every
+	// non-alphanumeric as '-', so a directory named
+	// "260715_ccx-session-watch" must find the project slug
+	// "260715-ccx-session-watch" without the user guessing the
+	// mapping.
+	slugQuery := SlugifyProjectQuery(name)
+	if slugQuery == "" {
+		return false
+	}
+	return strings.Contains(SlugifyProjectQuery(project.Name), slugQuery) ||
+		strings.Contains(SlugifyProjectQuery(project.Path), slugQuery)
 }
+
+// SlugifyProjectQuery folds a name or path onto claude-code's project
+// slug alphabet (every non-alphanumeric run becomes '-'), lowercased,
+// so lookups survive the _ vs - vs / differences between directory
+// names and encoded project slugs. Returns "" when nothing
+// alphanumeric remains.
+func SlugifyProjectQuery(s string) string {
+	slug := nonAlnumRun.ReplaceAllString(strings.ToLower(strings.TrimSpace(s)), "-")
+	slug = strings.Trim(slug, "-")
+	if slug == "" {
+		return ""
+	}
+	return slug
+}
+
+var nonAlnumRun = regexp.MustCompile(`[^a-z0-9]+`)
 
 func ProjectMatchesWorkspace(project *parser.Project, workspacePath string) bool {
 	if project == nil {
