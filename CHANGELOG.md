@@ -7,6 +7,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-11
+
 ### Added
 - **Global sessions page: `/sessions` lists every session across every project.** The web UI could only list sessions per project, so "what ran yesterday, everywhere" meant visiting each project page. The new page is the cross-project cockpit: filter by text (summary substring or session-ID prefix), provider, project, model, and date range; group by project, day, provider, or model under sticky headers with per-group aggregates (count, projects, tokens); sort by recency, messages, prompts, or tokens. Dense two-line rows keep every sort key visible as an aligned column (design: docs/design/0003-global-sessions.md). State lives entirely in the URL so filtered views are shareable; active filters render as chips clearable per-param; the whole control bar is a real GET form that works without JavaScript. Default window is 100 sessions with an honest `Showing X of Y` footer and explicit show-more links.
 - **`GET /api/sessions` (no project suffix) serves the same query as JSON** — filter/group/sort/limit params identical to the page, wrapped in an envelope with `total` and `shown` so truncation is visible. The per-project `/api/sessions/<project>` keeps its existing bare-array shape.
