@@ -138,3 +138,21 @@ func TestValidateSessionSortRejectsUnknownSort(t *testing.T) {
 		t.Fatal("ValidateSessionSort(bogus) returned nil, want error")
 	}
 }
+
+func TestSortSessionsTokensRanksByInputPlusOutput(t *testing.T) {
+	sessions := []*parser.Session{
+		{ID: "small", Stats: parser.SessionStats{InputTokens: 100, OutputTokens: 50}},
+		{ID: "big", Stats: parser.SessionStats{InputTokens: 5000, OutputTokens: 2000}},
+		{ID: "cache-heavy", Stats: parser.SessionStats{InputTokens: 10, OutputTokens: 5, CacheReadTokens: 999999}},
+	}
+
+	SortSessions(sessions, SortTokens)
+
+	if sessions[0].ID != "big" || sessions[1].ID != "small" || sessions[2].ID != "cache-heavy" {
+		t.Fatalf("token sort = [%s %s %s], want [big small cache-heavy]",
+			sessions[0].ID, sessions[1].ID, sessions[2].ID)
+	}
+	if err := ValidateSessionSort(SortTokens); err != nil {
+		t.Fatalf("ValidateSessionSort(tokens) = %v, want nil", err)
+	}
+}

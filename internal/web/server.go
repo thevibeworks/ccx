@@ -86,6 +86,7 @@ func Serve(addr string, backend provider.Backend) error {
 
 	// Pages
 	mux.HandleFunc("/", handleIndex)
+	mux.HandleFunc("/sessions", handleSessionsPage)
 	mux.HandleFunc("/project/", handleProject)
 	mux.HandleFunc("/session/", handleSession)
 	mux.HandleFunc("/settings", handleSettings)
@@ -96,6 +97,7 @@ func Serve(addr string, backend provider.Backend) error {
 
 	// API
 	mux.HandleFunc("/api/projects", handleAPIProjects)
+	mux.HandleFunc("/api/sessions", handleAPISessions)
 	mux.HandleFunc("/api/sessions/", handleAPISessions)
 	mux.HandleFunc("/api/session/", handleAPISession)
 	mux.HandleFunc("/api/stats", handleAPIStats)
@@ -702,7 +704,12 @@ func handleAPIProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPISessions(w http.ResponseWriter, r *http.Request) {
-	encodedName := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	encodedName := strings.TrimPrefix(r.URL.Path, "/api/sessions")
+	encodedName = strings.TrimPrefix(encodedName, "/")
+	if encodedName == "" {
+		handleAPISessionsGlobal(w, r)
+		return
+	}
 	project, err := sessionProvider.FindProject(encodedName)
 	if err != nil || project == nil {
 		http.NotFound(w, r)

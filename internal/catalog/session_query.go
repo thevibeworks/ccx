@@ -24,6 +24,7 @@ const (
 	SortTime     SessionSort = "time"
 	SortMessages SessionSort = "messages"
 	SortPrompts  SessionSort = "prompts"
+	SortTokens   SessionSort = "tokens"
 )
 
 type SessionQuery struct {
@@ -86,6 +87,13 @@ func SortSessions(sessions []*parser.Session, sortBy SessionSort) {
 		sort.SliceStable(sessions, func(i, j int) bool {
 			return sessions[i].Stats.UserPrompts > sessions[j].Stats.UserPrompts
 		})
+	case SortTokens:
+		// Input+output only, matching what the UIs display; cache
+		// tokens would double-count long sessions.
+		sort.SliceStable(sessions, func(i, j int) bool {
+			return sessions[i].Stats.InputTokens+sessions[i].Stats.OutputTokens >
+				sessions[j].Stats.InputTokens+sessions[j].Stats.OutputTokens
+		})
 	default:
 		sort.SliceStable(sessions, func(i, j int) bool {
 			return sessions[i].EndTime.After(sessions[j].EndTime)
@@ -95,10 +103,10 @@ func SortSessions(sessions []*parser.Session, sortBy SessionSort) {
 
 func ValidateSessionSort(sortBy SessionSort) error {
 	switch sortBy {
-	case "", SortTime, SortMessages, SortPrompts:
+	case "", SortTime, SortMessages, SortPrompts, SortTokens:
 		return nil
 	default:
-		return fmt.Errorf("invalid sort %q (want time, messages, or prompts)", sortBy)
+		return fmt.Errorf("invalid sort %q (want time, messages, prompts, or tokens)", sortBy)
 	}
 }
 
