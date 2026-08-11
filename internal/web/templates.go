@@ -3184,7 +3184,7 @@ func memoryPageCSS() string {
 .prov-pill-cx { background: color-mix(in srgb, var(--accent-cx) 13%, transparent); color: var(--accent-cx); }
 .mem-card-cc { border-color: color-mix(in srgb, var(--accent-cc) 35%, var(--border)); }
 .mem-card-cx { border-color: color-mix(in srgb, var(--accent-cx) 35%, var(--border)); }
-.empty-state { color: var(--text-muted); font-style: italic; padding: 24px 0; }
+/* .empty-state lives in style.css (shared with /sessions). */
 </style>`
 }
 
@@ -3233,6 +3233,7 @@ func renderSidebar(active string) string {
 		href, label, key string
 	}{
 		{"/", "Projects", "projects"},
+		{"/sessions", "Sessions", "sessions"},
 		{"/search", "Search", "search"},
 		{"/insights", "Insights", "insights"},
 		{"/memory", "Memory", "memory"},

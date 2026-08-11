@@ -214,6 +214,8 @@ code, pre, .session-id, .model-badge {
 .provider-CC { background: var(--accent-cc); color: #fff; }
 .provider-CX { background: var(--accent-cx); color: #fff; }
 .provider-GX { background: var(--accent-gx); color: #fff; }
+/* Dark accents are light hues; white text on them is ~2.1:1. */
+[data-theme="dark"] .provider-badge { color: var(--bg); }
 .search-loading, .search-empty {
   padding: 16px;
   color: var(--text-muted);
@@ -2704,4 +2706,88 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
     scroll-behavior: auto !important;
   }
   .msg-target { outline-color: var(--primary); animation: none; }
+}
+
+/* ---- Global sessions page (/sessions) ----
+ * Spec: docs/design/0003-global-sessions.md. Dense two-line rows,
+ * hairline grid, sticky group headers. Everything rides the tokens. */
+.empty-state { color: var(--text-muted); font-style: italic; padding: 24px 0; }
+
+.controls-wrap { flex-wrap: wrap; row-gap: 8px; }
+.filter-more { flex-basis: 100%; font-size: 12px; }
+.filter-more > summary { cursor: pointer; color: var(--text-muted); }
+.filter-more-body { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding-top: 8px; }
+.filter-field { display: flex; align-items: center; gap: 6px; }
+.filter-input {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+.filter-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -8px 0 16px; align-items: center; }
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.filter-chip b { color: var(--text); font-weight: 600; }
+.filter-chip-x { border-left: 1px solid var(--border); padding-left: 6px; color: var(--text-faint); text-decoration: none; }
+.filter-chip-x:hover { color: var(--primary); }
+.filter-clear { color: var(--primary); text-decoration: none; font-size: 12px; }
+
+.sgroup { margin-bottom: 16px; }
+.sgroup-head {
+  position: sticky;
+  top: 48px;
+  z-index: 5;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.sgroup-label { font-size: 12px; font-weight: 600; color: var(--text); text-decoration: none; }
+a.sgroup-label:hover { color: var(--primary); }
+.sgroup-day-hint { color: var(--text-faint); font-weight: 400; }
+.sgroup-meta { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+
+.session-rows { display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.sgroup-head + .session-rows { border-top: none; }
+.srow {
+  display: block;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  color: inherit;
+}
+.srow:hover, .srow:focus { background: var(--hover); }
+.srow-top { display: flex; align-items: baseline; gap: 8px; }
+.srow-label { flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow-time { flex-shrink: 0; width: 10ch; text-align: right; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.srow-meta { display: flex; gap: 12px; margin-top: 2px; font-size: 11px; color: var(--text-muted); }
+.srow-project { width: 22ch; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow-model { width: 20ch; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow-stat { width: 11ch; flex-shrink: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.srow-none { color: var(--text-faint); }
+.list-footer { display: flex; align-items: center; gap: 12px; padding: 12px 0; font-size: 12px; color: var(--text-muted); }
+.list-footer a { color: var(--primary); text-decoration: none; }
+
+@media (max-width: 1024px) {
+  .srow-model { display: none; }
+}
+@media (max-width: 700px) {
+  .controls-wrap .search-wrap { max-width: none; flex-basis: 100%; }
+  .srow-project { width: auto; flex: 1; }
+  .srow-stat-prompts { display: none; }
+  .sgroup-meta-extra { display: none; }
 }
