@@ -771,15 +771,17 @@ func sessionsJS() string {
   // One debounced path for typing AND selects: Firefox fires change
   // while arrow-keying through a closed select, so instant submit
   // would navigate away mid-choice.
+  // Empty fields would submit as ?q=&model= — strip them.
+  function stripEmpty() {
+    form.querySelectorAll('input, select').forEach(el => { if (!el.value) el.disabled = true; });
+  }
   function submitSoon() {
     clearTimeout(t);
     document.getElementById('search-spinner')?.classList.add('loading');
-    t = setTimeout(() => {
-      // Empty fields would submit as ?q=&model= — strip them.
-      form.querySelectorAll('input, select').forEach(el => { if (!el.value) el.disabled = true; });
-      form.submit();
-    }, 400);
+    t = setTimeout(() => { stripEmpty(); form.submit(); }, 400);
   }
+  // Native submit (Enter in a text field) must strip too.
+  form.addEventListener('submit', stripEmpty);
   form.querySelectorAll('select').forEach(el => el.addEventListener('change', submitSoon));
   form.querySelectorAll('input[type="date"]').forEach(el => el.addEventListener('change', submitSoon));
   form.querySelectorAll('input[type="text"]').forEach(el => el.addEventListener('input', submitSoon));

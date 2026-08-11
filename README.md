@@ -31,6 +31,7 @@ ccx reads session files from `~/.claude/`, `~/.codex/`, and `~/.grok/` and gives
 
 - **Multi-provider** — Claude Code + Codex + Grok sessions merged by project, with provider badges
 - **Two-panel navigation** — Projects → Sessions → Conversation tree
+- **Global sessions** — `/sessions` lists every session across projects; filter by text/provider/project/model/date, group by project/day/provider/model, sort by recency/messages/prompts/tokens
 - **Live tail** — Watch active sessions update in real-time
 - **In-session search** — Filter by User, Response, Tools, Agents, Thinking
 - **Memory inspector** — View CLAUDE.md, MEMORY.md, AGENTS.md per project

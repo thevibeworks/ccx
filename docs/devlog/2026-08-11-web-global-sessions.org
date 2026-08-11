@@ -1,0 +1,63 @@
+* [2026-08-11] Dev Log: Global sessions page (/sessions)          :WEB:UX:
+
+** Context
+The web UI listed sessions only per project. With ~1,800 main
+sessions across ~50 projects, "what ran yesterday, everywhere" meant
+visiting every project page. The CLI already answered this
+(=ccx sessions --all=) through catalog.SessionQuery; the web had no
+equivalent surface.
+
+** Why
+Cross-project session listing with filter by / group by / order by
+is the auditor's cockpit view. Design mandate: spec the UX against
+the existing material contract (0002 quiet-terminal token plan)
+before building — an Opus 5 design pass via the design-system skill
+produced docs/design/0003-global-sessions.md, then implementation
+followed its 12-row delta table.
+
+** What
+- =FEAT= /sessions page: filter q (summary OR ID prefix), provider,
+  project, model, after/before; group project/day/provider/model
+  with sticky aggregate headers; sort time/messages/prompts/tokens;
+  limit=100 default with Showing X of Y footer and show-more links.
+- =FEAT= GET /api/sessions global endpoint, envelope {sessions,
+  total, shown}; per-project endpoint keeps its bare-array shape.
+- =FEAT= catalog SortTokens — CLI gains =--sort tokens= for free.
+- =FIX= dark-mode provider badge contrast (white on light accent,
+  ~2.1:1 → ground-color text).
+- =FIX= .empty-state promoted from memSectionCSS to style.css.
+- =FIX= the advertised-but-unbound =d= theme shortcut (this page).
+
+** How
+Reuse over reimplementation: the handler builds a
+catalog.SessionQuery (ScopeAll / ScopeProject) and applies the same
+filter the CLI uses; the page-only "summary OR ID prefix" q
+semantics run as a post-filter so SessionFilter.Query (shared with
+the CLI) stays untouched. Grouping is a presentation transform:
+first-encounter buckets, then groups ordered by most-recent session
+(provider mode: fixed CC/CX/GX). Rows are dense two-line =.srow=
+entries — every sort key is a visible column; tools/duration move to
+the row tooltip. Controls are one GET form; JS adds a 400ms
+debounced auto-submit and strips empty params, chips give per-param
+removal as plain links, so zero-JS remains fully usable.
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp |
+|----------+--------------+-----------+-----+-----------|
+| Rows, not cards | reuse .session-card | 2,300-session scan needs density + column alignment; cards halve rows/screen | design pass | 2026-08-11 |
+| q = summary OR ID prefix, post-filter | widen SessionFilter.Query | CLI shares SessionFilter; web-only semantics stay web-local | design pass | 2026-08-11 |
+| limit before grouping | group full match set | grouping is a view of what you look at, not a second query | design pass | 2026-08-11 |
+| groups ordered by most recent session | order by sort aggregate | one predictable rule for all four modes | design pass | 2026-08-11 |
+| no pagination | offset paging | auditors narrow with filters; limit + show-all covers the tail | design pass | 2026-08-11 |
+
+** Notes
+- Session.Title is populated on the full-parse path only; the row
+  label precedence (Title else Summary) is written and inert until
+  quick-parse carries Title (SessionMeta + quickParseListableSession
+  + CacheFormatVersion bump — follow-up, Eric-gated).
+- Deferred repo-wide flags from the design audit: Tailwind CDN in
+  pageHeader() contradicts single-binary; sidebar hides at 900px
+  vs the 0002 two-breakpoint rule; index/project =/= focus behavior
+  contradicts its own placeholder copy.
+- Verified live against the real store: default page 200KB/~40ms,
+  limit=0 (1,808 sessions) 2.4MB — opt-in, labeled "(slower)".

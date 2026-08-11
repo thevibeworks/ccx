@@ -7,6 +7,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- **Global sessions page: `/sessions` lists every session across every project.** The web UI could only list sessions per project, so "what ran yesterday, everywhere" meant visiting each project page. The new page is the cross-project cockpit: filter by text (summary substring or session-ID prefix), provider, project, model, and date range; group by project, day, provider, or model under sticky headers with per-group aggregates (count, projects, tokens); sort by recency, messages, prompts, or tokens. Dense two-line rows keep every sort key visible as an aligned column (design: docs/design/0003-global-sessions.md). State lives entirely in the URL so filtered views are shareable; active filters render as chips clearable per-param; the whole control bar is a real GET form that works without JavaScript. Default window is 100 sessions with an honest `Showing X of Y` footer and explicit show-more links.
+- **`GET /api/sessions` (no project suffix) serves the same query as JSON** — filter/group/sort/limit params identical to the page, wrapped in an envelope with `total` and `shown` so truncation is visible. The per-project `/api/sessions/<project>` keeps its existing bare-array shape.
+- **`--sort tokens` for `ccx sessions`.** The web sort landed in the shared catalog layer, so the CLI gains it too: ranks by input+output tokens (cache reads excluded — they would double-count long sessions).
+
+### Fixed
+- **Dark-mode provider badges were white-on-light (~2.1:1 contrast).** Dark-theme accent hues are light; badge text now uses the page ground color in dark mode.
+- **`.empty-state` only existed inside the memory-section CSS**, so any other page rendering it got unstyled body text. Promoted to the shared stylesheet.
+- **The advertised `d` theme shortcut now works on `/sessions`.** The top-nav button has said "Toggle theme (d)" since the shell redesign, but no page bound the key.
+
 ## [0.14.0] - 2026-08-03
 
 ### Changed
