@@ -1386,3 +1386,72 @@ func TestHandleAPIFile_DeniesSymlinkEscape(t *testing.T) {
 		t.Fatalf("handleAPIFile returned %d, want %d. Body: %s", w.Code, http.StatusForbidden, w.Body.String())
 	}
 }
+
+// /api/related/<project>/<session> returns the ccx.related.v1 envelope
+// with the anchor's connections; two sessions in one workspace where
+// the later one reads what the earlier one wrote relate as builds_on.
+func TestHandleAPIRelated(t *testing.T) {
+	dir := setupTestDir(t)
+	projectDir := filepath.Join(dir, "projects", "-test-project")
+	later := `{"type":"user","timestamp":"2024-01-02T10:00:00Z","uuid":"u2","sessionId":"later-456","cwd":"/test/project","message":{"content":"continue"}}
+{"type":"assistant","timestamp":"2024-01-02T10:00:01Z","uuid":"a2","parentUuid":"u2","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/test/project/main.go"}}]}}
+`
+	earlier := `{"type":"user","timestamp":"2024-01-01T10:00:00Z","uuid":"u1","sessionId":"test-session-123","cwd":"/test/project","message":{"content":"Hello"}}
+{"type":"assistant","timestamp":"2024-01-01T10:00:01Z","uuid":"a1","parentUuid":"u1","message":{"content":[{"type":"tool_use","id":"t0","name":"Write","input":{"file_path":"/test/project/main.go","content":"x"}}]}}
+`
+	if err := os.WriteFile(filepath.Join(projectDir, "test-session-123.jsonl"), []byte(earlier), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "later-456.jsonl"), []byte(later), 0644); err != nil {
+		t.Fatal(err)
+	}
+	setTestBackend(dir)
+
+	req := httptest.NewRequest("GET", "/api/related/-test-project/later-456", nil)
+	w := httptest.NewRecorder()
+	handleAPIRelated(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Kind    string `json:"kind"`
+		Total   int    `json:"total"`
+		Related []struct {
+			SessionID string `json:"session_id"`
+			Strength  string `json:"strength"`
+			Relations []struct {
+				Kind  string   `json:"kind"`
+				Paths []string `json:"paths"`
+			} `json:"relations"`
+		} `json:"related"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v: %s", err, w.Body.String())
+	}
+	if resp.Kind != "ccx.related.v1" || resp.Total != 1 || len(resp.Related) != 1 {
+		t.Fatalf("envelope: %+v", resp)
+	}
+	r := resp.Related[0]
+	if r.SessionID != "test-session-123" || r.Strength != "medium" {
+		t.Fatalf("related: %+v", r)
+	}
+	kinds := map[string]bool{}
+	for _, rel := range r.Relations {
+		kinds[rel.Kind] = true
+	}
+	if !kinds["builds_on"] || !kinds["previous"] {
+		t.Fatalf("relations: %+v", r.Relations)
+	}
+
+	// Unknown session -> 404; malformed path -> 404.
+	w = httptest.NewRecorder()
+	handleAPIRelated(w, httptest.NewRequest("GET", "/api/related/-test-project/nope", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown session status %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	handleAPIRelated(w, httptest.NewRequest("GET", "/api/related/only-one-part", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("malformed path status %d", w.Code)
+	}
+}
