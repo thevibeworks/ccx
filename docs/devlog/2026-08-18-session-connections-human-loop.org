@@ -1,0 +1,90 @@
+* [2026-08-18] Dev Log: Session connections, human interventions, citations walk   :TRACE:LOG:SEARCH:RELATED:
+
+** Context
+Eric's brief: "continue to think and improve ccx; inspired by
+MineContext" with the core values spelled out — session trajectory,
+how decisions were made, traceable tool calls, long context folded
+short, the whole timeline and the humans in the loop, all agent
+context, and the connections between sessions. Autonomous run,
+commit-and-continue. Two references studied: semantica-agi/semantica
+(design 0005: every fact carries a quote + location; supersedes vs
+derives-from; bands not decimals) and volcengine/MineContext (capture
+-> process -> consume; for ccx capture is free, the missing layer was
+*connect*).
+
+** Why
+Against the value list, the store answered "what happened in this
+session" well and "how sessions relate", "where did the human step
+in", and "walk me to that citation" badly or not at all:
+- sessions were islands: forks, handoffs, parallel agents, and
+  "see 736a7bac" mentions were in the transcripts, uncomputed;
+- "[Request interrupted by user]" parsed as a prompt and opened a fake
+  turn; permission rejections counted as tool errors; Codex
+  turn_aborted was invisible — 650 + 145 + 144 human interventions in
+  one real store, none named;
+- =ccx log= reported 233 "prompts" for one day, 79 typed by a human,
+  and rendered Codex 0.147 conversations as bare =item_completed=;
+- search/trace handed out message ids nothing could open;
+- prompts older than the oldest session file were unreachable.
+
+** What
+- =FEAT= =ccx related [session]= + =related= in =trace --full= +
+  =GET /api/related/<project>/<session>= (design 0006): forked_from /
+  fork_of (shared message uuids), mentions / mentioned_by (id prefix in
+  conversation text, quoted), handoff_from / handoff_to (baton file
+  written by one, read by the other later), builds_on / built_on_by,
+  overlaps, previous / next. Strength bands; capped path lists with
+  count + truncated; evidence = session, message id, time, path,
+  quote. =trace.RelateWorkspace= shared by CLI and web.
+- =FEAT= human interventions: parser =KindInterrupt= (Claude
+  "[Request interrupted by user…]", Codex =turn_aborted(interrupted)=)
+  and =IsToolDenial=; trace counts interrupts/denials on turn, step,
+  stats; denied calls marked =denied= (not errors); outline header and
+  badges; log kinds =interrupt= / =tool_denied=.
+- =FEAT= =ccx log --kind K1,K2= and =--match PHRASE [-w]= — the firehose
+  becomes a timeline: "the humans in the loop, today" is
+  =ccx log --scope today --all --kind user_prompt=.
+- =FEAT= =ccx view <session> --at <message_id> [--context N]= — walk from
+  a citation to its context (open since 08-03 finding 4).
+- =FEAT= prompt history (=~/.claude/history.jsonl=, =~/.codex/history.jsonl=)
+  as a =search --content= source, type =prompt=, only for prompts whose
+  session file is gone.
+- =FIX= =ccx log= applies the parser's rules: Claude command markers /
+  echoes / notifications / meta / compaction are not prompts; Codex
+  0.147 item_completed rows are the conversation, raw response_item
+  and duplicated legacy events demoted (=model_input= /
+  =model_output= / =legacy_message=); metrics count once; tool_result
+  rows preview content.
+- =FIX= heredoc bodies were scanned as shell redirects (=if n > 0=
+  inside =python3 - <<'EOF'= became an "edited file").
+- =CHANGE= narration-less trace steps get "(no narration) Bash x3,
+  Read" instead of a bare badge row (08-17 finding 3).
+
+** How
+Commits, in order: 8819774 related · afa3785 log kinds + filters ·
+3a8644f interventions + step labels · 8d8f77a view --at · bb9f07f
+history source · c0d07a5 skills/roadmap · 0f79cba /api/related +
+RelateWorkspace · a1307a3 codex interrupts. Each with symptom-named
+tests; =go test ./...= green throughout.
+
+** Decisions
+| Decision | Alternatives | Rationale | DRI | Timestamp |
+| relations recomputed from transcripts, no graph store | SQLite edge table | the transcripts are the store; ccx is read-only over them (0005 rejected list) | Fable 5 | 2026-08-18 |
+| strength = bands, never floats | similarity scores | 0005 principle 7; a fork or a handoff is strong by kind, not by arithmetic | Fable 5 | 2026-08-18 |
+| history prompts only when the session is gone | always list | one prompt, one citation; the session file is the better anchor while it exists | Fable 5 | 2026-08-18 |
+| interrupt is a Kind, not a flag on user_prompt | flag | it must never anchor a turn; renderers' default branches handle it | Fable 5 | 2026-08-18 |
+| /api/related endpoint only, no web panel yet | panel now | no display here to verify a UI change against the 0002 shell contract | Fable 5 | 2026-08-18 |
+
+** Dogfood findings (open)
+1. =--match -w X= is a footgun: cobra takes =-w= as the value of
+   =--match=. Documented as =--match X -w=; a =--match= that rejects
+   values starting with =-= would be kinder.
+2. Web session page does not yet show =related= or interrupt/denial
+   badges; the API and trace fields are there. Needs a visual pass.
+3. Codex approval rejections (the counterpart of Claude's denial) were
+   not found as a distinct event in the store; only interrupts are
+   covered for Codex.
+4. =related= scans every session of the workspace; a workspace with
+   thousands of sessions will feel it on a cold cache (progress shows,
+   parse cache makes the second run ~1s). A time window flag would
+   bound it if that bites.
