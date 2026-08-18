@@ -39,7 +39,10 @@ With --content, also scan conversation text inside session files
 (including subagent files): user prompts and assistant replies,
 ranked by hit count with a matched-text preview and the time of the
 earliest match (FIRST). Injected noise — tool results, hook
-attachments, command echoes — doesn't count.
+attachments, command echoes — doesn't count. Prompt history
+(~/.claude/history.jsonl, ~/.codex/history.jsonl) is scanned too and
+surfaces as type "prompt" for prompts whose session file is gone —
+the longest-lived evidence, past session cleanup.
 
 Add --raw to match every raw transcript line instead: grep parity,
 no parse, misses nothing grep would find.
@@ -347,6 +350,17 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	searcher := sessionSearcher{m: m, content: searchContent, raw: searchRaw, hits: searchHits, parser: backend}
 	for _, r := range searcher.matchAll(candidates, searchWorkers(searchContent)) {
 		results = append(results, *r)
+	}
+
+	// Prompt history: prompts whose session file is gone (cleanup)
+	// still exist here; the only place "when did we first say X" can
+	// be answered past the session horizon.
+	if searchContent && searchType != "project" {
+		settings := config.Load()
+		known := knownSessionIDs(candidates)
+		for _, h := range scanPromptHistory(promptHistoryFiles(settings.ClaudeHome, settings.CodexHome), m, known) {
+			results = append(results, promptResult(h))
+		}
 	}
 
 	if searchHits {
@@ -744,7 +758,11 @@ func printSearchHits(hits []searchHit) error {
 		if id == "" {
 			id = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t, h.Session, h.Role, truncateID(id, 8), cleanDisplayText(h.Quote))
+		session := h.Session
+		if session == "" {
+			session = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t, session, h.Role, truncateID(id, 8), cleanDisplayText(h.Quote))
 	}
 	return w.Flush()
 }

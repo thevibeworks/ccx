@@ -484,3 +484,63 @@ func TestSessionSearcherHits(t *testing.T) {
 		t.Fatalf("collectHits order: %v", ids)
 	}
 }
+
+// Prompt history is the search source that outlives session cleanup:
+// both providers' formats decode, only prompts whose session is not in
+// the store surface (no double citations), and each hit carries a
+// file:line anchor and time.
+func TestScanPromptHistory(t *testing.T) {
+	dir := t.TempDir()
+	claude := filepath.Join(dir, "claude-history.jsonl")
+	codex := filepath.Join(dir, "codex-history.jsonl")
+	if err := os.WriteFile(claude, []byte(strings.Join([]string{
+		`{"display":"tell me about semantica","pastedContents":{},"timestamp":1759046069307,"project":"/Users/x/wrk/old-proj","sessionId":"gone-1111"}`,
+		`{"display":"semantically fine, ignore","timestamp":1759046070000,"project":"/Users/x/wrk/old-proj","sessionId":"gone-2222"}`,
+		`{"display":"semantica again, still in store","timestamp":1759046071000,"project":"/Users/x/wrk/live","sessionId":"live-3333"}`,
+		`{"display":"no session id but semantica","timestamp":1759046072000,"project":"/Users/x/wrk/anon"}`,
+		`not json`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codex, []byte(strings.Join([]string{
+		`{"session_id":"cx-gone","ts":1754596435,"text":"Semantica in codex"}`,
+		`{"session_id":"cx-live","ts":1754596436,"text":"semantica in a live codex session"}`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{"claude-code": claude, "codex": codex}
+	known := map[string]bool{"live-3333": true, "cx-live": true}
+
+	hits := scanPromptHistory(files, word("semantica"), known)
+	if len(hits) != 3 {
+		t.Fatalf("hits: got %d, want 3 (gone-1111, anon, cx-gone): %+v", len(hits), hits)
+	}
+	h := hits[0]
+	if h.Provider != "claude-code" || h.Project != "old-proj" || h.SessionID != "gone-1111" || h.Line != 1 || h.Matches != 1 {
+		t.Fatalf("first hit: %+v", h)
+	}
+	if !h.Time.Equal(time.UnixMilli(1759046069307).UTC()) || !strings.Contains(h.Quote, "semantica") {
+		t.Fatalf("first hit time/quote: %+v", h)
+	}
+	if hits[1].SessionID != "" || hits[1].Project != "anon" {
+		t.Fatalf("anonymous prompt: %+v", hits[1])
+	}
+	if hits[2].Provider != "codex" || hits[2].SessionID != "cx-gone" || !hits[2].Time.Equal(time.Unix(1754596435, 0).UTC()) {
+		t.Fatalf("codex hit: %+v", hits[2])
+	}
+	// Substring mode also takes "semantically".
+	if got := len(scanPromptHistory(files, sub("semantica"), known)); got != 4 {
+		t.Fatalf("substring hits: got %d, want 4", got)
+	}
+	// Missing files are not an error.
+	if got := scanPromptHistory(map[string]string{"claude-code": filepath.Join(dir, "nope.jsonl")}, sub("x"), nil); len(got) != 0 {
+		t.Fatalf("missing history: %+v", got)
+	}
+
+	// As a result row: type prompt, priority after content, first-hit
+	// set, one citation hit with a line anchor.
+	r := promptResult(hits[0])
+	if r.Type != "prompt" || r.Priority != 4 || r.FirstHit == "" || len(r.hits) != 1 || r.hits[0].MessageID != "line:1" || r.hits[0].Role != "user" {
+		t.Fatalf("prompt result: %+v", r)
+	}
+}
