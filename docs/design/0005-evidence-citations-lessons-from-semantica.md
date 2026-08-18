@@ -54,20 +54,23 @@ principles we adopt, how each maps onto ccx, and what we reject.
   (~10x) with progress; `-n` shorthand on `sessions`/`projects`/`log`.
   Devlog: `docs/devlog/2026-08-18-search-word-boundary-dogfood.org`.
 
-## Roadmap (small, ordered)
+## Roadmap (small, ordered) — status 2026-08-18
 
-1. `ccx log --match QUERY [-w]`: records containing a term inside a time
-   window — the bi-temporal slice (`search --hits` is unbounded in
-   time; `log` is bounded but cannot filter by term). Reuse
-   `textMatcher`.
-2. `ccx view <session> --at <message_id>` (or `--grep`): walk from a
-   citation to its surrounding context without leaving ccx (open since
-   `docs/devlog/2026-08-03-content-search-noise.org` finding 4).
-3. `~/.claude/history.jsonl` as a `type: prompt` search source: the
-   longest-lived evidence (prompts back to 2025-09) for "when did we
-   first say X" once session files have been cleaned up.
-4. Session lineage: `fork`/`resume` parents as derives-from edges in
-   `sessions --json` and `trace`, so a decision chain can cross
-   session boundaries.
-5. Readability contract test for `trace`: every step carries
-   human-readable narration or a mutation summary, never only ids.
+1. DONE `ccx log --match QUERY [-w]` + `--kind`: records containing a
+   term inside a time window — the bi-temporal slice (`search --hits`
+   is unbounded in time). Commit afa3785.
+2. DONE `ccx view <session> --at <message_id> [--context N]`: walk from
+   a citation to its context. Commit 8d8f77a.
+3. DONE prompt history (`~/.claude/history.jsonl`, `~/.codex/history.jsonl`)
+   as a `type: prompt` search source, deduplicated against live
+   sessions. Commit bb9f07f.
+4. DONE session connections: `ccx related` and `related` in
+   `trace --full` (docs/design/0006-session-connections.md). Commit
+   8819774. Human interventions (interrupts/denials) as first-class
+   trace/log facts: 3a8644f.
+5. DONE `trace` labels narration-less steps ("(no narration) Bash x3,
+   Read"); a step never renders as a bare badge row. 3a8644f.
+
+Next candidates: web session page shows `related` and intervention
+badges (needs a visual pass); Codex approval rejections as denials;
+`sessions --json` carrying interrupts/denials from quick parse.
