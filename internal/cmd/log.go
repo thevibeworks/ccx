@@ -24,11 +24,19 @@ Sessions can run for days or months, so time-scoped review must use log
 records, not just session end times. This command emits the evidence layer
 for scoped insight: records inside the window plus session overlap metadata.
 
+--kind narrows to record kinds (comma-separated: user_prompt,
+assistant_message, tool_call, tool_result, reasoning, ...); --match
+keeps records whose raw transcript line contains a phrase (-w for
+whole words). Together they turn the firehose into a timeline:
+every human prompt today, across every session, in order.
+
 Examples:
   ccx log --scope yesterday --tz +8 --all --json
   ccx log --since 2026-05-21 --until 2026-05-22 --tz +8 --all --json
   ccx log --scope week --provider cx --json
-  ccx log /path/to/repo --scope yesterday --json --raw`,
+  ccx log /path/to/repo --scope yesterday --json --raw
+  ccx log --scope today --all --kind user_prompt        # the humans in the loop, today
+  ccx log --scope month --all --match semantica -w      # when a term came up, in a window`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runLog,
 }
@@ -43,6 +51,9 @@ var (
 	logAll      bool
 	logProvider string
 	logLimit    int
+	logKinds    string
+	logMatch    string
+	logWord     bool
 	logLocation *time.Location
 )
 
@@ -56,6 +67,9 @@ func init() {
 	logCmd.Flags().BoolVar(&logAll, "all", false, "slice logs across all projects")
 	logCmd.Flags().StringVarP(&logProvider, "provider", "p", "", "filter by provider: cc, cx, all")
 	logCmd.Flags().IntVarP(&logLimit, "limit", "n", 0, "limit records in JSON output (0 = no limit)")
+	logCmd.Flags().StringVar(&logKinds, "kind", "", "keep only these record kinds (comma-separated, e.g. user_prompt,assistant_message)")
+	logCmd.Flags().StringVar(&logMatch, "match", "", "keep only records whose raw transcript line contains this phrase")
+	logCmd.Flags().BoolVarP(&logWord, "word", "w", false, "--match whole words only")
 }
 
 func runLog(cmd *cobra.Command, args []string) error {
@@ -86,6 +100,16 @@ func runLog(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --provider %q (want cc, cx, claude-code, codex, or all)", logProvider)
 	}
 
+	var kinds []string
+	if strings.TrimSpace(logKinds) != "" {
+		kinds = strings.Split(logKinds, ",")
+	}
+	var match func(string) bool
+	if strings.TrimSpace(logMatch) != "" {
+		m := newTextMatcher(logMatch, logWord)
+		match = m.matches
+	}
+
 	settings := config.Load()
 	bundle, err := sessionlog.Collect(logSources(settings, providerFilter), sessionlog.Options{
 		Start:         start,
@@ -99,6 +123,8 @@ func runLog(cmd *cobra.Command, args []string) error {
 		Limit:         logLimit,
 		IncludeRaw:    logRaw,
 		Now:           time.Now().In(loc),
+		Kinds:         kinds,
+		Match:         match,
 	})
 	if err != nil {
 		return err
@@ -178,8 +204,11 @@ func printLogTable(bundle *sessionlog.Bundle) error {
 	}
 	fmt.Printf("ccx log · %s · %s\n", bundle.Scope.Label, bundle.Scope.TimeZone)
 	recordsLabel := fmt.Sprintf("records %d", bundle.Metrics.Records)
-	if bundle.Metrics.RecordsReturned != bundle.Metrics.Records {
-		recordsLabel = fmt.Sprintf("records %d · showing %d", bundle.Metrics.Records, bundle.Metrics.RecordsReturned)
+	if bundle.Metrics.RecordsMatched > 0 || len(bundle.Records) == 0 && bundle.Metrics.Records > 0 && bundle.Metrics.RecordsReturned == 0 {
+		recordsLabel = fmt.Sprintf("records %d · matched %d", bundle.Metrics.Records, bundle.Metrics.RecordsMatched)
+	}
+	if bundle.Metrics.RecordsReturned != bundle.Metrics.Records && bundle.Metrics.RecordsReturned != bundle.Metrics.RecordsMatched {
+		recordsLabel += fmt.Sprintf(" · showing %d", bundle.Metrics.RecordsReturned)
 	}
 	fmt.Printf("%s to %s · source log files %d · %s\n\n",
 		bundle.Scope.Start.Format("2006-01-02 15:04"),

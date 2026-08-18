@@ -256,11 +256,11 @@ func classifyMessage(msg *Message, raw rawMessage) MessageKind {
 		if len(msg.Content) > 0 && msg.Content[0].Type == "text" {
 			text = msg.Content[0].Text
 		}
-		kind, ok := classifyUserText(text)
+		kind, ok := ClassifyUserText(text)
 		if !ok {
 			if str, isStr := raw.Message.Content.(string); isStr {
 				text = str
-				kind, ok = classifyUserText(text)
+				kind, ok = ClassifyUserText(text)
 			}
 		}
 		if ok {
@@ -279,11 +279,13 @@ func classifyMessage(msg *Message, raw rawMessage) MessageKind {
 	return KindUnknown
 }
 
-// classifyUserText recognizes harness-generated XML wrappers in a
+// ClassifyUserText recognizes harness-generated XML wrappers in a
 // user-role message. These all masquerade as human turns in the raw
 // JSONL but carry no human input: slash-command markers, local command
 // stdout/stderr/caveat echoes, and background-task notifications.
-func classifyUserText(text string) (MessageKind, bool) {
+// Exported so line-streaming surfaces (sessionlog) classify a
+// user-role line exactly as the full parser does.
+func ClassifyUserText(text string) (MessageKind, bool) {
 	t := strings.TrimSpace(text)
 	switch {
 	case strings.HasPrefix(t, "<command-"):
@@ -616,7 +618,7 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 				// Skip harness wrappers (commands, command output,
 				// notifications) so list counts match computeStats,
 				// which only counts KindUserPrompt.
-				if _, harness := classifyUserText(extractTextFromContent(raw.Message.Content)); !harness {
+				if _, harness := ClassifyUserText(extractTextFromContent(raw.Message.Content)); !harness {
 					stats.MessageCount++
 					stats.UserPrompts++
 				}

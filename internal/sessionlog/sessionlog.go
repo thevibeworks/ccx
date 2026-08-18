@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/thevibeworks/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/provider/codex"
 )
 
 const (
@@ -37,6 +38,14 @@ type Options struct {
 	Limit         int
 	IncludeRaw    bool
 	Now           time.Time
+	// Kinds keeps only records of these kinds (empty = all). Match
+	// keeps only records whose raw transcript line matches (nil =
+	// all); it sees the raw line, not the bounded Text, so a term
+	// past the text budget still matches — grep parity. Sessions,
+	// their Kinds, and Metrics.Records stay scope-wide; only the
+	// records list (and the aggregates built from it) narrow.
+	Kinds []string
+	Match func(rawLine string) bool
 }
 
 type Bundle struct {
@@ -85,6 +94,7 @@ type Metrics struct {
 	Workspaces          int  `json:"workspaces"`
 	SourceFiles         int  `json:"source_files"`
 	Records             int  `json:"records"`
+	RecordsMatched      int  `json:"records_matched,omitempty"` // after --kind/--match, before limit
 	RecordsReturned     int  `json:"records_returned"`
 	Limit               int  `json:"limit,omitempty"`
 	Truncated           bool `json:"truncated"`
@@ -122,6 +132,8 @@ type ScopeRelation struct {
 }
 
 type Record struct {
+	matched bool // passed Options.Kinds/Match; unexported, filtered out in Collect
+
 	Timestamp   time.Time       `json:"timestamp"`
 	Provider    string          `json:"provider"`
 	SessionID   string          `json:"session_id"`
@@ -143,16 +155,18 @@ type Record struct {
 }
 
 type rawLine struct {
-	Timestamp   string          `json:"timestamp"`
-	Type        string          `json:"type"`
-	SessionID   string          `json:"sessionId"`
-	UUID        string          `json:"uuid"`
-	ParentUUID  string          `json:"parentUuid"`
-	IsSidechain bool            `json:"isSidechain"`
-	CWD         string          `json:"cwd"`
-	Summary     string          `json:"summary"`
-	Message     json.RawMessage `json:"message"`
-	Payload     json.RawMessage `json:"payload"`
+	Timestamp        string          `json:"timestamp"`
+	Type             string          `json:"type"`
+	SessionID        string          `json:"sessionId"`
+	UUID             string          `json:"uuid"`
+	ParentUUID       string          `json:"parentUuid"`
+	IsSidechain      bool            `json:"isSidechain"`
+	IsMeta           bool            `json:"isMeta"`
+	IsCompactSummary bool            `json:"isCompactSummary"`
+	CWD              string          `json:"cwd"`
+	Summary          string          `json:"summary"`
+	Message          json.RawMessage `json:"message"`
+	Payload          json.RawMessage `json:"payload"`
 }
 
 type fileScan struct {
@@ -266,12 +280,43 @@ func Collect(sources []Source, opts Options) (*Bundle, error) {
 		}
 		return bundle.Records[i].Timestamp.Before(bundle.Records[j].Timestamp)
 	})
+	filtered := len(opts.Kinds) > 0 || opts.Match != nil
+	if filtered {
+		bundle.Records = filterRecords(bundle.Records, opts.Kinds)
+	}
+	matched := len(bundle.Records)
 	bundle.Days, bundle.Providers, bundle.Workspaces = aggregateRecords(bundle.Records, now.Location())
 	if opts.Limit > 0 && len(bundle.Records) > opts.Limit {
 		bundle.Records = bundle.Records[:opts.Limit]
 	}
 	bundle.Metrics = metricsFor(bundle.Sessions, len(bundle.Records), opts.Limit, opts.Start, opts.End)
+	if filtered {
+		bundle.Metrics.RecordsMatched = matched
+	}
 	return bundle, nil
+}
+
+// filterRecords keeps records that passed Match and are of one of the
+// kinds (kind demotion has already run, so "user_prompt" means the
+// visible conversation on every provider).
+func filterRecords(records []Record, kinds []string) []Record {
+	want := make(map[string]bool, len(kinds))
+	for _, k := range kinds {
+		if k = strings.TrimSpace(k); k != "" {
+			want[k] = true
+		}
+	}
+	out := records[:0]
+	for _, r := range records {
+		if !r.matched {
+			continue
+		}
+		if len(want) > 0 && !want[r.Kind] {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // aggregateRecords buckets records by calendar day (in loc), provider,
@@ -441,6 +486,7 @@ func scanFile(source Source, filePath string, opts Options) (*fileScan, error) {
 		if opts.IncludeRaw {
 			record.RawJSON = json.RawMessage([]byte(line))
 		}
+		record.matched = opts.Match == nil || opts.Match(line)
 		scan.Records = append(scan.Records, record)
 		scan.Kinds[record.Kind]++
 		if scan.Preview == "" && record.Text != "" && (record.Kind == "user_prompt" || record.Kind == "assistant_message") {
@@ -452,6 +498,19 @@ func scanFile(source Source, filePath string, opts Options) (*fileScan, error) {
 	}
 	if len(scan.Records) == 0 {
 		return nil, nil
+	}
+	if source.Provider == "codex" && demoteLegacyCodexMessages(scan.Records) {
+		// Kinds and preview were tallied while streaming; redo them
+		// against the demoted kinds so metrics count the conversation
+		// once and the preview is a visible prompt, not an envelope.
+		scan.Kinds = make(map[string]int)
+		scan.Preview = ""
+		for _, record := range scan.Records {
+			scan.Kinds[record.Kind]++
+			if scan.Preview == "" && record.Text != "" && (record.Kind == "user_prompt" || record.Kind == "assistant_message") {
+				scan.Preview = record.Text
+			}
+		}
 	}
 	for i := range scan.Records {
 		if (scan.Records[i].SessionID == "" || scan.Records[i].SessionID == fallbackSessionID(filePath)) && scan.SessionID != "" {
@@ -550,10 +609,26 @@ func normalizeClaudeRecord(raw rawLine) Record {
 
 	switch raw.Type {
 	case "user":
-		if contentHasType(content, "tool_result") {
+		// Same rules as the full parser (parser.classifyMessage): a
+		// user-role line is a human prompt only when it is not a
+		// compaction carrier, an injected meta message (skill bodies,
+		// system instructions), a tool result, or a harness XML
+		// wrapper (slash-command markers, local command echoes,
+		// task notifications). Otherwise "the humans in the loop"
+		// shows things no human typed.
+		switch {
+		case raw.IsCompactSummary:
+			record.Kind = "compact_summary"
+		case raw.IsMeta:
+			record.Kind = "meta"
+		case contentHasType(content, "tool_result"):
 			record.Kind = "tool_result"
-		} else {
-			record.Kind = "user_prompt"
+		default:
+			if kind, ok := parser.ClassifyUserText(userTextForClassify(content)); ok {
+				record.Kind = string(kind)
+			} else {
+				record.Kind = "user_prompt"
+			}
 		}
 	case "assistant":
 		if contentHasType(content, "tool_use") {
@@ -570,6 +645,28 @@ func normalizeClaudeRecord(raw rawLine) Record {
 		record.Kind = "system"
 	}
 	return record
+}
+
+// userTextForClassify returns the leading text of a user-role content
+// value the way the parser sees it: the first text block, or the raw
+// string content.
+func userTextForClassify(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		for _, item := range v {
+			block, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if stringField(block, "type") == "text" {
+				return stringField(block, "text")
+			}
+			return ""
+		}
+	}
+	return ""
 }
 
 func normalizeCodexRecord(raw rawLine) Record {
@@ -595,6 +692,20 @@ func normalizeCodexRecord(raw rawLine) Record {
 		record.Text = joinNonEmpty(" ", "turn", record.TurnID, stringField(payload, "model"), record.Workspace)
 	case "event_msg":
 		record.Type = joinNonEmpty(":", raw.Type, payloadType)
+		if payloadType == "item_completed" {
+			// Codex 0.147: the visible transcript is item_completed
+			// UserMessage/AgentMessage TurnItems (docs/design/0004).
+			if message, ok := codex.DecodeCompletedTurnMessage(raw.Payload); ok {
+				record.UUID = message.ID
+				record.Role = message.Role
+				record.Kind = "assistant_message"
+				if message.Role == "user" {
+					record.Kind = "user_prompt"
+				}
+				record.Text = truncateText(cleanText(message.Text), 1000)
+				break
+			}
+		}
 		normalizeCodexEvent(&record, payload, payloadType)
 	case "response_item":
 		record.Type = joinNonEmpty(":", raw.Type, payloadType)
@@ -692,6 +803,42 @@ func normalizeCodexResponseItem(record *Record, payload map[string]any, payloadT
 		record.Kind = emptyDefault(payloadType, "response_item")
 		record.Text = truncateText(cleanText(contentPreview(payload)), 1000)
 	}
+}
+
+// demoteLegacyCodexMessages applies the parser's one-source-per-rollout
+// rule (docs/design/0004) to a rollout's records: when the file carries
+// completed TurnItem messages, the legacy event_msg user_message /
+// agent_message events and the raw response_item messages are model
+// I/O or duplicates, not the conversation. They stay in the log as
+// records — nothing is dropped — but no longer count as prompts or
+// replies, so a 0.147 rollout is not double-counted and an injected
+// instruction envelope is not shown as something the human typed.
+func demoteLegacyCodexMessages(records []Record) bool {
+	hasCompleted := false
+	for i := range records {
+		if records[i].Type == "event_msg:item_completed" && (records[i].Kind == "user_prompt" || records[i].Kind == "assistant_message") {
+			hasCompleted = true
+			break
+		}
+	}
+	if !hasCompleted {
+		return false
+	}
+	for i := range records {
+		r := &records[i]
+		switch r.Type {
+		case "event_msg:user_message", "event_msg:agent_message":
+			r.Kind = "legacy_message"
+		case "response_item:message":
+			switch r.Kind {
+			case "user_prompt":
+				r.Kind = "model_input"
+			case "assistant_message":
+				r.Kind = "model_output"
+			}
+		}
+	}
+	return true
 }
 
 func relationFor(sessionStart, sessionEnd, scopeStart, scopeEnd time.Time) ScopeRelation {

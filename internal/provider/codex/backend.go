@@ -628,7 +628,7 @@ func (b *Backend) quickParseSession(filePath string) (*parser.Session, error) {
 				legacyMessageCount++
 
 			case "item_completed":
-				message, ok := decodeCompletedTurnMessage(rollout.Payload)
+				message, ok := DecodeCompletedTurnMessage(rollout.Payload)
 				if !ok || (message.ID != "" && seenCompletedMessageIDs[message.ID]) {
 					continue
 				}
@@ -963,7 +963,7 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 				if !useCompletedTurnMessages {
 					continue
 				}
-				message, ok := decodeCompletedTurnMessage(rollout.Payload)
+				message, ok := DecodeCompletedTurnMessage(rollout.Payload)
 				if !ok || (message.ID != "" && seenCompletedMessageIDs[message.ID]) {
 					continue
 				}

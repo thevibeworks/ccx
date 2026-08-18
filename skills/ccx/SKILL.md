@@ -44,6 +44,8 @@ ccx
 │   └── --since / --until TIME    # RFC3339 or YYYY-MM-DD
 │   └── --tz ZONE                 # IANA timezone, UTC, local, or offset like +8
 │   └── --json --raw              # Evidence bundle, optional raw JSONL
+│   └── --kind K1,K2              # Only these record kinds (user_prompt, assistant_message, tool_call, ...)
+│   └── --match PHRASE [-w]       # Only records whose raw line contains the phrase
 ├── insight [project]             # HTML/JSON data report from session logs
 │   └── --scope --tz --since --until --all
 │   └── --json                    # Aggregates: days[]/providers[]/workspaces[]
@@ -72,6 +74,8 @@ ccx view abc123           # View by session ID (prefix match)
 ccx export -f html        # Export to HTML
 ccx sessions --scope yesterday --tz +8 --all --json # Session containers by end time
 ccx log --scope yesterday --tz +8 --all --json
+ccx log --scope today --all --kind user_prompt   # The humans in the loop: every prompt today, all sessions, in order
+ccx log --scope month --all --match deadman -w   # When a term came up inside a window (raw-line match)
 ccx trace                 # Outline of the latest workspace session
 ccx trace abc123 --turn 5 # Full evidence for one turn
 ccx related abc123        # Sessions connected to this one: fork, handoff, mentions, shared files
