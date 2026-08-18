@@ -183,6 +183,10 @@ ccx search --raw "deploy"                # Grep parity over raw transcript lines
 
 `-w` matters when the term prefixes a common word ("semantica" vs
 "semantically"); `--json` carries `matches`, `previews`, `first_hit`.
+`--content` also scans prompt history (`~/.claude/history.jsonl`,
+`~/.codex/history.jsonl`): type `prompt` rows are prompts whose
+session file is gone — the only evidence past session cleanup, so
+"when did we first say X" reaches back further than the sessions do.
 Cite from `--hits --json` (`message_id`, `time`, `quote`) rather than
 from a session-level count when a claim needs evidence; walk to the
 context with `ccx view <session> --at <message_id>` (web:
