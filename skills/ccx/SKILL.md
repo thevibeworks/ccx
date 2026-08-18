@@ -25,6 +25,7 @@ ccx
 │   └── --goal SLUG               # Filter by launch-receipt goal (deva --goal)
 ├── view [session]                # View session in terminal
 │   └── --brief                   # Conversation only
+│   └── --at MSG_ID [--context N] # Walk from a citation (search --hits / trace message_id) to its context
 ├── export [session]              # Export session
 │   └── --format html|md|org|exec
 │   └── --shape full|brief|trace|exchange|human
@@ -183,7 +184,9 @@ ccx search --raw "deploy"                # Grep parity over raw transcript lines
 `-w` matters when the term prefixes a common word ("semantica" vs
 "semantically"); `--json` carries `matches`, `previews`, `first_hit`.
 Cite from `--hits --json` (`message_id`, `time`, `quote`) rather than
-from a session-level count when a claim needs evidence.
+from a session-level count when a claim needs evidence; walk to the
+context with `ccx view <session> --at <message_id>` (web:
+`/session/<project>/<id>#msg-<message_id>`).
 
 Web search supports provider prefixes: `cc: auth bug`, `cx: codex query`, `gx: grok query`
 
