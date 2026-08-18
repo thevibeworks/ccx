@@ -37,7 +37,7 @@ type Project struct {
 // struct versions silently, so without this stamp an upgraded binary
 // keeps serving parses produced by the old code until the source
 // session file itself happens to change.
-const CacheFormatVersion = 3
+const CacheFormatVersion = 4
 
 type Session struct {
 	ID           string
