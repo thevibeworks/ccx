@@ -75,6 +75,7 @@ ccx sessions --provider=cx       # Codex sessions in this workspace
 ccx sessions --after=2026-03-01  # Date filtered
 ccx sessions --scope yesterday --tz +8 --all --json # Session containers by end time
 ccx view [session]               # View in terminal
+ccx view [session] --at MSG_ID   # Around one cited message (search --hits / trace message_id)
 ccx export --shape brief         # Export conversation-only HTML
 ccx export --shape human         # Only the human's turns, citable
 ccx trace [session] -o trace.json # Extract evidence for context folding

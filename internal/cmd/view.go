@@ -27,7 +27,18 @@ SESSION can be:
   - Index: @1 (most recent), @2 (second most recent)
   - With project: myproject:e38536
 
-If SESSION is omitted, shows an interactive picker.`,
+If SESSION is omitted, shows an interactive picker.
+
+--at MESSAGE_ID walks from a citation to its context: the message
+with that id (a search --hits message_id, a trace step message_id;
+prefixes work) plus --context N messages before and after it,
+flattened. The target is always shown, even under --brief.
+
+Examples:
+  ccx view e38536                     Whole session
+  ccx view e38536 --brief             Conversation only
+  ccx view e38536 --at c8bd2144       Around one cited message
+  ccx view e38536 --at c8bd2144 --context 8`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runView,
 }
@@ -40,6 +51,8 @@ var (
 	viewBrief        bool
 	viewAll          bool
 	viewColor        string
+	viewAt           string
+	viewContext      int
 )
 
 func init() {
@@ -50,6 +63,8 @@ func init() {
 	viewCmd.Flags().BoolVar(&viewFlat, "flat", false, "disable tree rendering")
 	viewCmd.Flags().BoolVarP(&viewBrief, "brief", "b", false, "conversation only: human input, agent responses, compactions")
 	viewCmd.Flags().StringVar(&viewColor, "color", "auto", "colorize output: auto, always, never")
+	viewCmd.Flags().StringVar(&viewAt, "at", "", "show the message with this id (or unique prefix) and its context")
+	viewCmd.Flags().IntVar(&viewContext, "context", 3, "with --at: messages of context before and after the target")
 }
 
 // resolveColorMode maps --color to a concrete decision; auto follows
@@ -101,7 +116,17 @@ func runView(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse session: %w", err)
 	}
 
-	if viewBrief {
+	if viewAt != "" {
+		window, index, total, err := render.WindowSession(fullSession, viewAt, viewContext, viewContext)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "message %d of %d in %s · %d before / %d after\n", index, total, truncateID(fullSession.ID, 8), viewContext, viewContext)
+		if viewBrief {
+			window = briefKeeping(window, viewAt)
+		}
+		fullSession = window
+	} else if viewBrief {
 		fullSession = render.BriefSession(fullSession)
 	}
 
@@ -119,6 +144,38 @@ func runView(cmd *cobra.Command, args []string) error {
 	}
 
 	return render.Terminal(fullSession, opts)
+}
+
+// briefKeeping applies the brief filter to a window but never drops
+// the cited target itself: the point of --at is to see that message.
+func briefKeeping(window *parser.Session, target string) *parser.Session {
+	brief := render.BriefSession(window)
+	for _, m := range brief.RootMessages {
+		if strings.HasPrefix(m.UUID, target) {
+			return brief
+		}
+	}
+	// Re-insert the target at its wire position among the kept ones.
+	var out []*parser.Message
+	inserted := false
+	for _, m := range window.RootMessages {
+		if strings.HasPrefix(m.UUID, target) {
+			out = append(out, m)
+			inserted = true
+			continue
+		}
+		for _, k := range brief.RootMessages {
+			if k.UUID == m.UUID {
+				out = append(out, k)
+				break
+			}
+		}
+	}
+	if !inserted {
+		return brief
+	}
+	brief.RootMessages = out
+	return brief
 }
 
 func sessionLookupQuery(projectName string, all bool) (catalog.SessionQuery, error) {
