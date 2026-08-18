@@ -50,6 +50,14 @@ gaps, each capped at 5 minutes. Continuous work counts fully; an
 overnight gap counts as at most one cap. Use active time for "how
 long did this actually take"; use wall-span for calendar placement.
 
+### Human interventions
+
+`interrupts` (the "[Request interrupted by user]" marker: the human
+pressed stop) and `denials` (a tool call rejected at the permission
+prompt) are counted on turns, steps, and `stats`; a denied call carries
+`denied: true` on its evidence and is not counted as an error (it did
+not run). Neither is a prompt: an interrupt never opens a turn.
+
 ### Facts, not judgment
 
 Traces record what happened: text excerpts, tool calls, mutations,

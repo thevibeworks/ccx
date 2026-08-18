@@ -570,3 +570,100 @@ func TestExtractRedirectPathsIgnoresHeredocBodies(t *testing.T) {
 		t.Fatalf("unterminated heredoc: got %v", got)
 	}
 }
+
+// Human interventions inside a turn: the "[Request interrupted by
+// user]" marker and a permission-prompt rejection are counted on the
+// turn, the step, and the stats; the denied call is marked and is not
+// an error; the interrupt does not open a new turn (it once rendered
+// as a fake "u: [Request interrupted by user for tool use]" turn).
+func TestAnalyzeCountsInterruptsAndDenials(t *testing.T) {
+	now := time.Now()
+	session := &parser.Session{
+		ID: "human", StartTime: now, EndTime: now.Add(10 * time.Minute),
+		RootMessages: []*parser.Message{
+			{UUID: "u1", Kind: parser.KindUserPrompt, Type: "user", Timestamp: now,
+				Content: []parser.ContentBlock{{Type: "text", Text: "clean up the disk"}}},
+			{UUID: "a1", Kind: parser.KindAssistant, Type: "assistant", Timestamp: now.Add(time.Minute),
+				Content: []parser.ContentBlock{
+					{Type: "text", Text: "Deleting the caches."},
+					{Type: "tool_use", ToolName: "Bash", ToolID: "t1", ToolInput: map[string]any{"command": "rm -rf ~/Library/Caches"}},
+				}},
+			{UUID: "r1", Kind: parser.KindToolResult, Type: "user", Timestamp: now.Add(2 * time.Minute),
+				Content: []parser.ContentBlock{{Type: "tool_result", ToolID: "t1", IsError: true,
+					ToolResult: "The user doesn't want to proceed with this tool use. The tool use was rejected."}}},
+			{UUID: "a2", Kind: parser.KindAssistant, Type: "assistant", Timestamp: now.Add(3 * time.Minute),
+				Content: []parser.ContentBlock{
+					{Type: "text", Text: "Understood, listing instead."},
+					{Type: "tool_use", ToolName: "Bash", ToolID: "t2", ToolInput: map[string]any{"command": "du -sh ~/Library/*"}},
+				}},
+			{UUID: "r2", Kind: parser.KindToolResult, Type: "user", Timestamp: now.Add(4 * time.Minute),
+				Content: []parser.ContentBlock{{Type: "tool_result", ToolID: "t2", IsError: true,
+					ToolResult: []any{map[string]any{"type": "text", "text": "Exit code 137\n[Request interrupted by user for tool use]"}}}}},
+			{UUID: "i1", Kind: parser.KindInterrupt, Type: "user", Timestamp: now.Add(4*time.Minute + time.Second),
+				Content: []parser.ContentBlock{{Type: "text", Text: "[Request interrupted by user for tool use]"}}},
+			{UUID: "u2", Kind: parser.KindUserPrompt, Type: "user", Timestamp: now.Add(5 * time.Minute),
+				Content: []parser.ContentBlock{{Type: "text", Text: "just report sizes, do not delete"}}},
+		},
+	}
+	result := Analyze(session)
+	if result.Stats.TurnCount != 2 {
+		t.Fatalf("turns: got %d, want 2 (interrupt must not open a turn)", result.Stats.TurnCount)
+	}
+	turn := result.Turns[0]
+	if turn.Interrupts != 1 || turn.Denials != 1 {
+		t.Fatalf("turn interventions: interrupts=%d denials=%d", turn.Interrupts, turn.Denials)
+	}
+	// The denial is not an error; the killed command (exit 137) is.
+	if turn.Errors != 1 {
+		t.Fatalf("errors: got %d, want 1", turn.Errors)
+	}
+	if len(turn.Steps) != 2 || turn.Steps[0].Denials != 1 || turn.Steps[1].Interrupts != 1 {
+		t.Fatalf("step attribution: %+v", turn.Steps)
+	}
+	var denied *ToolCallEvidence
+	for i := range turn.Steps[0].Mutations {
+		if turn.Steps[0].Mutations[i].ToolID == "t1" {
+			denied = &turn.Steps[0].Mutations[i]
+		}
+	}
+	if denied == nil || !denied.Denied || denied.IsError {
+		t.Fatalf("denied call evidence: %+v", denied)
+	}
+	if result.Stats.Interrupts != 1 || result.Stats.Denials != 1 {
+		t.Fatalf("stats: %+v", result.Stats)
+	}
+	outline := BuildOutline(result, 80)
+	if outline.Turns[0].Interrupts != 1 || outline.Turns[0].Denials != 1 || outline.Turns[0].Steps[0].Denials != 1 {
+		t.Fatalf("outline: %+v", outline.Turns[0])
+	}
+	text := RenderOutlineText(outline)
+	if !strings.Contains(text, "1 interrupt, 1 denied") || !strings.Contains(text, "1 denied)") {
+		t.Fatalf("outline text must badge interventions:\n%s", text)
+	}
+}
+
+// A step with tools but no narration must still get a readable
+// headline in the outline (it rendered as a bare "[4t]" badge row).
+func TestOutlineLabelsToolOnlySteps(t *testing.T) {
+	now := time.Now()
+	session := &parser.Session{
+		ID: "tools-only", StartTime: now, EndTime: now.Add(time.Minute),
+		RootMessages: []*parser.Message{
+			{UUID: "u1", Kind: parser.KindUserPrompt, Type: "user", Timestamp: now,
+				Content: []parser.ContentBlock{{Type: "text", Text: "try open chrome"}}},
+			{UUID: "a1", Kind: parser.KindAssistant, Type: "assistant", Timestamp: now.Add(time.Second),
+				Content: []parser.ContentBlock{
+					{Type: "tool_use", ToolName: "Bash", ToolID: "t1", ToolInput: map[string]any{"command": "open -a chrome"}},
+					{Type: "tool_use", ToolName: "Bash", ToolID: "t2", ToolInput: map[string]any{"command": "which chrome"}},
+					{Type: "tool_use", ToolName: "Read", ToolID: "t3", ToolInput: map[string]any{"file_path": "/w/x"}},
+					{Type: "tool_use", ToolName: "Glob", ToolID: "t4", ToolInput: map[string]any{"pattern": "*"}},
+					{Type: "tool_use", ToolName: "Grep", ToolID: "t5", ToolInput: map[string]any{"pattern": "x"}},
+				}},
+		},
+	}
+	outline := BuildOutline(Analyze(session), 80)
+	got := outline.Turns[0].Steps[0].Headline
+	if got != "(no narration) Bash x2, Glob, Grep, +1 more" {
+		t.Fatalf("tool-only headline: %q", got)
+	}
+}

@@ -14,6 +14,7 @@ const (
 	KindCommand        MessageKind = "command"         // Slash command (/init, /compact, etc)
 	KindCommandOutput  MessageKind = "command_output"  // <local-command-stdout/stderr/caveat> harness echo
 	KindNotification   MessageKind = "notification"    // <task-notification> background-task event
+	KindInterrupt      MessageKind = "interrupt"       // [Request interrupted by user...] — the human stopped the agent
 	KindMeta           MessageKind = "meta"            // Meta/system instruction
 	KindCompactSummary MessageKind = "compact_summary" // Compacted context carrier
 	KindAssistant      MessageKind = "assistant"       // Assistant response

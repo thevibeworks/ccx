@@ -75,6 +75,7 @@ ccx export -f html        # Export to HTML
 ccx sessions --scope yesterday --tz +8 --all --json # Session containers by end time
 ccx log --scope yesterday --tz +8 --all --json
 ccx log --scope today --all --kind user_prompt   # The humans in the loop: every prompt today, all sessions, in order
+ccx log --scope today --all --kind interrupt,tool_denied  # Where humans stopped or refused the agent
 ccx log --scope month --all --match deadman -w   # When a term came up inside a window (raw-line match)
 ccx trace                 # Outline of the latest workspace session
 ccx trace abc123 --turn 5 # Full evidence for one turn
@@ -86,7 +87,8 @@ ccx web                   # Start web UI at localhost:8080
 
 `ccx trace` prints a terminal-readable outline: every turn (user
 intent) broken into steps (the agent's own narration), with tool,
-edit, error, active-time, and cost rollups. Read the outline whole,
+edit, error, interrupt/denial (human interventions), active-time, and
+cost rollups. Read the outline whole,
 then drill: `--turn N` for one turn's full evidence, `--full` for the
 complete bundle. JSON kinds and field semantics are documented in
 `docs/schema.md`; header times are local (stated as `times UTC+X`),

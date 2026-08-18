@@ -294,8 +294,21 @@ func ClassifyUserText(text string) (MessageKind, bool) {
 		return KindCommandOutput, true
 	case strings.HasPrefix(t, "<task-notification>"):
 		return KindNotification, true
+	case strings.HasPrefix(t, "[Request interrupted by user"):
+		// The human pressed stop: a harness marker, not a prompt. It
+		// belongs to the turn it interrupted (no new exchange).
+		return KindInterrupt, true
 	}
 	return KindUnknown, false
+}
+
+// IsToolDenial reports whether a tool result is the harness telling
+// the agent that the human rejected the call at the permission prompt
+// (Claude Code) — a human intervention, distinct from a tool error.
+func IsToolDenial(text string) bool {
+	t := strings.TrimSpace(text)
+	return strings.HasPrefix(t, "The user doesn't want to proceed with this tool use") ||
+		strings.HasPrefix(t, "The user doesn't want to take this action right now")
 }
 
 // extractCommandName extracts command name from <command-name>/foo</command-name>

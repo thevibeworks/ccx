@@ -623,6 +623,9 @@ func normalizeClaudeRecord(raw rawLine) Record {
 			record.Kind = "meta"
 		case contentHasType(content, "tool_result"):
 			record.Kind = "tool_result"
+			if parser.IsToolDenial(record.Text) {
+				record.Kind = "tool_denied"
+			}
 		default:
 			if kind, ok := parser.ClassifyUserText(userTextForClassify(content)); ok {
 				record.Kind = string(kind)
@@ -1009,6 +1012,14 @@ func contentPreview(value any) string {
 	case map[string]any:
 		for _, key := range []string{"text", "message", "output_text", "input_text", "summary", "name", "query", "command", "path"} {
 			if s := stringField(v, key); s != "" {
+				return s
+			}
+		}
+		// tool_result blocks carry their payload under "content" (a
+		// string or nested blocks); without this a Claude tool result
+		// previewed as the literal word "tool_result".
+		if nested, ok := v["content"]; ok {
+			if s := contentPreview(nested); s != "" {
 				return s
 			}
 		}
