@@ -55,7 +55,7 @@ func init() {
 	logCmd.Flags().BoolVar(&logRaw, "raw", false, "include raw JSONL lines in JSON output")
 	logCmd.Flags().BoolVar(&logAll, "all", false, "slice logs across all projects")
 	logCmd.Flags().StringVarP(&logProvider, "provider", "p", "", "filter by provider: cc, cx, all")
-	logCmd.Flags().IntVar(&logLimit, "limit", 0, "limit records in JSON output (0 = no limit)")
+	logCmd.Flags().IntVarP(&logLimit, "limit", "n", 0, "limit records in JSON output (0 = no limit)")
 }
 
 func runLog(cmd *cobra.Command, args []string) error {

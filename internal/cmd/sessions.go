@@ -50,7 +50,7 @@ var (
 
 func init() {
 	sessionsCmd.Flags().StringVar(&sessionsSort, "sort", "time", "sort by: time, messages, prompts, tokens")
-	sessionsCmd.Flags().IntVar(&sessionsLimit, "limit", 20, "limit number of sessions (0 = no limit)")
+	sessionsCmd.Flags().IntVarP(&sessionsLimit, "limit", "n", 20, "limit number of sessions (0 = no limit)")
 	sessionsCmd.Flags().BoolVar(&sessionsJSON, "json", false, "output as JSON")
 	sessionsCmd.Flags().StringVarP(&sessionsProvider, "provider", "p", "", "filter by provider: cc, cx, gx, all")
 	sessionsCmd.Flags().StringVarP(&sessionsSearch, "search", "s", "", "search in session summaries")

@@ -152,7 +152,16 @@ Features:
 ccx search "error handling"              # All providers
 ccx search --provider=cc "auth bug"      # Claude Code only
 ccx search --after=2026-03-01 "deploy"   # Date filtered
+ccx search --content "deploy"            # Also scan conversation text (user + assistant)
+ccx search --content -w --sort first X   # Whole word only, earliest mention first (FIRST column)
+ccx search --content -w --hits X         # Every mention as a citation: time, session, role, message id, quote
+ccx search --raw "deploy"                # Grep parity over raw transcript lines
 ```
+
+`-w` matters when the term prefixes a common word ("semantica" vs
+"semantically"); `--json` carries `matches`, `previews`, `first_hit`.
+Cite from `--hits --json` (`message_id`, `time`, `quote`) rather than
+from a session-level count when a claim needs evidence.
 
 Web search supports provider prefixes: `cc: auth bug`, `cx: codex query`, `gx: grok query`
 

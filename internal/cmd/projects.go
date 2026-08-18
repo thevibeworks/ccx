@@ -29,7 +29,7 @@ var (
 
 func init() {
 	projectsCmd.Flags().StringVar(&projectsSort, "sort", "time", "sort by: name, time, sessions")
-	projectsCmd.Flags().IntVar(&projectsLimit, "limit", 0, "limit number of projects (0 = no limit)")
+	projectsCmd.Flags().IntVarP(&projectsLimit, "limit", "n", 0, "limit number of projects (0 = no limit)")
 	projectsCmd.Flags().BoolVar(&projectsJSON, "json", false, "output as JSON")
 }
 
