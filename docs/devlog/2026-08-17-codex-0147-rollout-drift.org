@@ -1,0 +1,68 @@
+* [2026-08-17] Dev Log: Codex 0.147 rollout drift             :CODEX:RELIABILITY:
+
+** Context
+Codex 0.147 sessions appeared in ccx's lists but had =(no summary)=,
+zero messages, zero turns, and a blank web conversation. Tool calls
+still appeared, which made the failure look like a renderer bug.
+
+** Evidence
+- The rollout still uses =session_meta=, =turn_context=, =event_msg=,
+  and =response_item= top-level records.
+- The legacy =event_msg.user_message= and =agent_message= variants are
+  absent from a native 0.147 rollout.
+- Visible conversation records are now =event_msg.item_completed=
+  carrying =TurnItem::UserMessage= and =TurnItem::AgentMessage=.
+- Those items have stable IDs and typed content arrays. User text uses
+  =type: text=; agent text currently uses =type: Text=.
+- =response_item.message= is not the visible transcript contract. Its
+  user-role records can include injected instruction and environment
+  envelopes. Rendering those would expose harness context as if the
+  human typed it.
+
+This was a parser/source-selection regression, not an HTML problem.
+
+** Fix
+- Added a Codex-native TurnItem wire adapter in
+  =internal/provider/codex/turn_items.go=.
+- Full parse detects whether a rollout contains completed conversation
+  TurnItems, then selects exactly one message source for the whole
+  parse: completed TurnItems when present, legacy message events
+  otherwise. This prevents hybrid/migrated rollouts from rendering both.
+- Quick parse counts legacy and completed messages separately in one
+  scan, then selects the completed totals and summary when present.
+- Raw =response_item.message= records remain deliberately ignored;
+  response-item tool calls remain supported.
+- Completed item IDs become ccx message UUIDs instead of synthetic line
+  IDs, preserving stable anchors for export and drill-down.
+- Parse cache format bumped from 3 to 4.
+
+** Tests
+- Sanitized 0.147 fixture-in-code covers canonical item selection,
+  legacy/hybrid deduplication, summary and count parity, stable IDs,
+  model metadata, and instruction-envelope exclusion.
+- Existing Codex provider tests cover the legacy fallback.
+- Live read-only smoke covered =sessions=, =view --brief=, =trace=,
+  markdown export, the global sessions API, and the web session route.
+
+** Dogfood findings
+1. *Schema drift fails silently.* An unsupported conversation variant
+   degrades to =(no summary)= and zero messages with no parser warning.
+   This fix restores 0.147 but does not make the next drift loud.
+   Fix direction: provider parse diagnostics on =Session=, surfaced in
+   CLI/web, with unknown top-level/payload/item variant counts.
+2. *=ccx-audit-schema= is Claude-only.* The command audits Claude's
+   =rawMessage= fields and cannot audit Codex or Grok despite the
+   multi-provider product contract. Fix direction: a provider-dispatched
+   audit interface sharing each adapter's known wire variants.
+3. *=trace= can emit an unlabeled tool-only step.* The outline showed a
+   numbered step containing only a tool-count badge. Fix direction:
+   derive a bounded label from the tool sequence or attach it to the
+   adjacent narration step.
+
+The first two findings belong to the transcript-adapter work, not as
+more conditionals in the Codex parser. See
+=docs/design/0004-transcript-adapter-contract.md=.
+
+** Privacy
+No real session ID, transcript text, home path, raw rollout, or cost is
+committed. The regression fixture is synthetic and sanitized.

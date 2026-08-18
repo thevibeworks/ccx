@@ -545,6 +545,12 @@ func (b *Backend) quickParseSession(filePath string) (*parser.Session, error) {
 	var firstTime time.Time
 	var lastTime time.Time
 	seenToolCallIDs := make(map[string]bool)
+	seenCompletedMessageIDs := make(map[string]bool)
+	legacyMessageCount := 0
+	legacyUserPrompts := 0
+	completedMessageCount := 0
+	completedUserPrompts := 0
+	completedSummary := ""
 
 	countToolCall := func(callID string) {
 		callID = strings.TrimSpace(callID)
@@ -610,8 +616,8 @@ func (b *Backend) quickParseSession(filePath string) (*parser.Session, error) {
 
 			switch header.Type {
 			case "user_message":
-				stats.MessageCount++
-				stats.UserPrompts++
+				legacyMessageCount++
+				legacyUserPrompts++
 
 				var payload userMessagePayload
 				if err := json.Unmarshal(rollout.Payload, &payload); err == nil && summary == "" {
@@ -619,7 +625,23 @@ func (b *Backend) quickParseSession(filePath string) (*parser.Session, error) {
 				}
 
 			case "agent_message":
-				stats.MessageCount++
+				legacyMessageCount++
+
+			case "item_completed":
+				message, ok := decodeCompletedTurnMessage(rollout.Payload)
+				if !ok || (message.ID != "" && seenCompletedMessageIDs[message.ID]) {
+					continue
+				}
+				if message.ID != "" {
+					seenCompletedMessageIDs[message.ID] = true
+				}
+				completedMessageCount++
+				if message.Role == "user" {
+					completedUserPrompts++
+					if completedSummary == "" {
+						completedSummary = stripUserMessagePrefix(message.Text)
+					}
+				}
 
 			case "exec_command_end":
 				var payload execCommandEndPayload
@@ -727,6 +749,14 @@ func (b *Backend) quickParseSession(filePath string) (*parser.Session, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+	if completedMessageCount > 0 {
+		stats.MessageCount = completedMessageCount
+		stats.UserPrompts = completedUserPrompts
+		summary = completedSummary
+	} else {
+		stats.MessageCount = legacyMessageCount
+		stats.UserPrompts = legacyUserPrompts
+	}
 
 	if firstTime.IsZero() || lastTime.IsZero() {
 		if info, err := os.Stat(filePath); err == nil {
@@ -757,6 +787,10 @@ func (b *Backend) quickParseSession(filePath string) (*parser.Session, error) {
 }
 
 func (b *Backend) parseSession(filePath string, threadNames map[string]string) (*parser.Session, error) {
+	useCompletedTurnMessages, err := hasCompletedTurnMessages(filePath)
+	if err != nil {
+		return nil, err
+	}
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -774,6 +808,7 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 	var firstTime time.Time
 	var lastTime time.Time
 	var messages []*parser.Message
+	seenCompletedMessageIDs := make(map[string]bool)
 	pendingTools := make(map[string]pendingToolCall)
 	handledCallIDs := make(map[string]bool)
 	completedCallIDs := make(map[string]bool)
@@ -869,6 +904,9 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 
 			switch header.Type {
 			case "user_message":
+				if useCompletedTurnMessages {
+					continue
+				}
 				var payload userMessagePayload
 				if err := json.Unmarshal(rollout.Payload, &payload); err != nil {
 					continue
@@ -904,6 +942,9 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 				))
 
 			case "agent_message":
+				if useCompletedTurnMessages {
+					continue
+				}
 				var payload agentMessagePayload
 				if err := json.Unmarshal(rollout.Payload, &payload); err != nil {
 					continue
@@ -917,6 +958,51 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 					currentModel,
 					parser.ContentBlock{Type: "text", Text: payload.Message},
 				))
+
+			case "item_completed":
+				if !useCompletedTurnMessages {
+					continue
+				}
+				message, ok := decodeCompletedTurnMessage(rollout.Payload)
+				if !ok || (message.ID != "" && seenCompletedMessageIDs[message.ID]) {
+					continue
+				}
+				if message.ID != "" {
+					seenCompletedMessageIDs[message.ID] = true
+				}
+				messageID := message.ID
+				if messageID == "" {
+					messageID = fmt.Sprintf("codex-%s-%d", message.Role, lineNum)
+				}
+				if message.Role == "user" {
+					text := stripUserMessagePrefix(message.Text)
+					if text == "" {
+						text = "(empty)"
+					}
+					if firstUserSummary == "" {
+						firstUserSummary = text
+					}
+					stats.MessageCount++
+					stats.UserPrompts++
+					messages = append(messages, newMessage(
+						messageID,
+						"user",
+						parser.KindUserPrompt,
+						ts,
+						currentModel,
+						parser.ContentBlock{Type: "text", Text: text},
+					))
+				} else {
+					stats.MessageCount++
+					messages = append(messages, newMessage(
+						messageID,
+						"assistant",
+						parser.KindAssistant,
+						ts,
+						currentModel,
+						parser.ContentBlock{Type: "text", Text: message.Text},
+					))
+				}
 
 			case "agent_reasoning", "agent_reasoning_raw_content":
 				var payload agentReasoningPayload
