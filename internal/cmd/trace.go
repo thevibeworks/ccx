@@ -114,6 +114,19 @@ func runTrace(cmd *cobra.Command, args []string) error {
 		})
 	}
 
+	// Session connections cost a parse of every workspace session, so
+	// they ride only in the full bundle (docs/design/0006).
+	if traceFull {
+		related, warnings, err := relateSession(backend, session)
+		result.Warnings = append(result.Warnings, warnings...)
+		if err != nil {
+			result.Warnings = append(result.Warnings, trace.TraceWarning{Kind: "related_failed", Message: err.Error()})
+			fmt.Fprintf(os.Stderr, "warning: session connections failed: %v\n", err)
+		} else {
+			result.Related = related
+		}
+	}
+
 	output, err := renderTrace(result)
 	if err != nil {
 		return err

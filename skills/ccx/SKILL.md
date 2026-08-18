@@ -36,7 +36,9 @@ ccx
 ├── trace [session]               # What the agent did: turn/step outline
 │   └── --json                    # Outline as JSON (ccx.outline.v1)
 │   └── --turn N                  # Full evidence for one turn (ccx.turn.v1)
-│   └── --full                    # Complete trace bundle (ccx.trace.v2, large)
+│   └── --full                    # Complete trace bundle (ccx.trace.v2, large; includes related)
+├── related [session]             # Which sessions connect to this one, and how
+│   └── --json                    # Every relation with evidence (ccx.related.v1)
 ├── log [project]                 # Slice raw session logs by time scope
 │   └── --scope today|yesterday|week|month|quarter|year
 │   └── --since / --until TIME    # RFC3339 or YYYY-MM-DD
@@ -72,6 +74,7 @@ ccx sessions --scope yesterday --tz +8 --all --json # Session containers by end 
 ccx log --scope yesterday --tz +8 --all --json
 ccx trace                 # Outline of the latest workspace session
 ccx trace abc123 --turn 5 # Full evidence for one turn
+ccx related abc123        # Sessions connected to this one: fork, handoff, mentions, shared files
 ccx web                   # Start web UI at localhost:8080
 ```
 
@@ -85,6 +88,19 @@ complete bundle. JSON kinds and field semantics are documented in
 `docs/schema.md`; header times are local (stated as `times UTC+X`),
 JSON times are UTC. Session IDs resolve across all projects
 automatically; `ccx trace <id>` works from any directory.
+
+## Related: connections between sessions
+
+`ccx related [session]` joins the islands: which other sessions of the
+workspace connect to this one and how — `forked_from`/`fork_of`
+(shared message ids), `mentions`/`mentioned_by` (a session id named
+in text), `handoff_from`/`handoff_to` (a baton file such as HANDOFF.md,
+handoffs/, devlog written by one and read by the other later),
+`builds_on`/`built_on_by` (a file edited by one, then touched by the
+other), `overlaps` (concurrent), `previous`/`next`. Strength is a band
+(strong/medium/weak). `--json` carries the evidence per relation
+(session, message id, time, path, quote) — cite from that when a
+claim spans sessions. Also present as `related` in `ccx trace --full`.
 
 ## Multi-Provider
 

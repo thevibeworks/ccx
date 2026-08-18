@@ -42,6 +42,7 @@ CLI commands:
   ccx view                  View session in terminal
   ccx export -f html        Export to HTML/Markdown/Org
   ccx trace                 What the agent did: turn/step outline + drill-down
+  ccx related               Which sessions connect to this one, and how
   ccx log                   Slice raw session logs by time scope
   ccx skills install        Install bundled agent skills matching this binary
 
