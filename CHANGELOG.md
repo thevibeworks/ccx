@@ -7,6 +7,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- **`ccx search -w/--word` matches whole words.** Matching was substring-only, so a term that prefixes a common word was unanswerable: `search --content semantica` returned 47 sessions, 46 of them "semantic*ally*", and ccx alone could not tell 0 real hits from 46 (docs/devlog/2026-08-18-search-word-boundary-dogfood.org). `-w` demands an ASCII word boundary on each side of the query that starts/ends with a word character (so "semantica-agi" and "(semantica)" still hit; CJK queries are unaffected) and applies to names, summaries, conversation text, and `--raw` lines alike.
+- **`ccx search --hits` turns matches into citations.** One row per matching message — time, session, role, message id, quote — oldest first across sessions, `-n`-capped with a visible "showing N of M". The anchors are the same ones `trace` and `view` use, so a claim built on a search can point at its evidence (design: docs/design/0005-evidence-citations-lessons-from-semantica.md). Under `--raw` the unit is a transcript line, anchored by its own `uuid`/`type`/`timestamp`.
+- **`ccx search --content` reports when: `FIRST` column, `first_hit` in `--json`, `--sort first|last|hits`.** "When did we first mention X" needs the earliest matching message and an oldest-first order; results only carried session end time and ranked by hit count. Each content hit now records the timestamp of its earliest matching message (parsed messages by default; the raw line's top-level `timestamp` under `--raw`), printed as `FIRST` and sortable with `--sort first`; `--sort last` orders by session activity; `--sort hits` is the old order and the default.
+
+### Changed
+- **`ccx search --content` is ~10x faster and shows progress.** The scan ran on one core and lowercased every transcript line: 6m18s cold / 1m14s warm over a 3.5 GB store, silent throughout. Sessions now scan on a bounded worker pool (up to 8), the raw prefilter matches case-insensitively without allocating and stops at the first hit, and a `scanning N/M sessions` line ticks on stderr when it is a terminal. Same store, warm: 7.6s.
+
+### Fixed
+- **`-n` is the `--limit` shorthand everywhere.** Only `search` had it; `sessions -n 2` failed with "unknown shorthand flag". `sessions`, `projects`, and `log` now accept `-n` too.
+- **A session whose summary matched dropped its content evidence.** The summary hit short-circuited the content scan, so under `--content` the session where the term was actually discussed could be the one result with no hit count, previews, or first-hit time. Summary hits stay typed `session` but now carry the content fields.
+- **Codex 0.147 conversations render again.** Codex moved its UI-facing user and assistant records from legacy `event_msg.user_message` / `agent_message` events to canonical `event_msg.item_completed` TurnItems. The Codex adapter now selects one conversation source per rollout, reads stable `UserMessage` / `AgentMessage` item IDs and content, keeps legacy rollouts working, and never mistakes raw `response_item` model input (which can contain injected instruction envelopes) for a human prompt. Discovery metadata, terminal view, web, export, search, and trace now agree; the parse-cache format is bumped so upgrades cannot serve blank cached sessions.
+
 ## [0.15.0] - 2026-08-11
 
 ### Added

@@ -80,6 +80,8 @@ ccx export --shape human         # Only the human's turns, citable
 ccx trace [session] -o trace.json # Extract evidence for context folding
 ccx log --scope yesterday --tz +8 --all --json # Time-sliced log evidence
 ccx search "auth bug"            # Search across sessions + memory
+ccx search --content -w --sort first goose # Whole-word content hits, earliest first
+ccx search --content -w --hits goose      # Every mention, quoted + anchored (time, session, message id)
 ccx run ccx-recap --agent claude # Run a bundled skill via an agent CLI
 ccx fork abc123                  # Fork session to current project
 ccx doctor                       # Check setup

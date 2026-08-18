@@ -1,0 +1,92 @@
+* [2026-08-18] Dev Log: Dogfood findings — "when did we mention X" via search  :SEARCH:
+
+** Context
+Question: "when did we first mention semantica / semantica-agi?" Answered
+against the real host store (~/.claude 4411 jsonl / 3.5G, ~/.codex 1026,
+~/.grok) with a from-source build (v0.15.0-dirty, main @ d3e00c9 + WIP
+codex rollout drift). Answer: never before this session — every one of
+ccx's 46 "semantica" content hits was the word "semantic*ally*". The
+answer was findable, but only by cross-checking with =/usr/bin/grep -w=;
+ccx alone could not distinguish 0 real hits from 46. Findings recorded,
+not fixed.
+
+** Findings
+1. Substring-only matching, no word-boundary or regex option.
+   =search --content semantica= returned 47 results, 46 of them
+   "semantically". There is no =-w= / =--regex= / =--exact= flag and
+   the phrase syntax gives no way to express a boundary ("semantica "
+   misses "semantica." and "semantica-agi"). For a project/product
+   name that is a prefix of a common English word, the tool cannot
+   answer "was this term ever used"; grep -w can. Repro:
+   =ccx search --content semantica -n 0 --json | jq length= -> 47;
+   =grep -rlwi semantica ~/.claude/projects= -> 1 (this session).
+2. No way to sort or filter by first-mention time. Results rank by
+   Priority then hit count; LAST is session end. A "when did we first
+   say X" question needs the timestamp of the earliest matching
+   message and an oldest-first order. Neither exists; the top result
+   is whichever session repeated the term most.
+3. Cold content scan is slow and silent: 6m18s wall (226s user, 168s
+   sys, 104% cpu) for one query on the bind-mounted store; warm re-run
+   1m14s; grep -rli on the same tree ~48s wall / 5s user. Causes are
+   visible in internal/cmd/search.go: (a) the loop over sessions is
+   sequential — zero goroutines — so a 10-core box uses one; (b)
+   =countMatchingLines= allocates =strings.ToLower(line)= for every
+   line of every file (3.5G of allocations); (c) the prefiltered
+   candidates then get a full =ParseSession=. Nothing is printed until
+   the whole scan finishes, so a 6-minute run looks hung (the harness
+   backgrounded it at 300s). At minimum: a stderr progress line
+   ("scanned 1200/4411 sessions, 12 candidates") and results streamed
+   as found; ideally a worker pool + a non-allocating case-fold match.
+4. Content search only covers session files; =~/.claude/history.jsonl=
+   (every prompt since 2025-09-28, older than any surviving session
+   file at 2025-12-07) is not searched. For "when did we mention X"
+   questions the prompt history is the longest-lived evidence and the
+   cheapest to scan (8 MB); today it needs raw grep.
+5. Small: the current session appears typed =session= (summary match,
+   Priority 1) and is therefore never scanned for content, so its
+   content hits and previews are missing from =--json= even though it
+   is the only real match. When a session matches both summary and
+   content, the content evidence should still be attached.
+
+** Fix directions
+- =--word= (or make it the default for single-token queries with an
+  escape hatch) and =--regex=; both compose with =--content= / =--raw=.
+  Prefilter stays substring; boundary/regex applies at count time.
+- Per-result =first_hit= timestamp (message time of the earliest
+  match) plus =--sort first|last|hits= and =--oldest=; print FIRST
+  alongside LAST when =--content= is on.
+- Parallel scan across sessions (bounded worker pool), case-fold
+  without per-line allocation, progress on stderr, stream results.
+- Include =history.jsonl= as a searchable source (=type: prompt=,
+  carries project + timestamp).
+- Attach content previews to session-summary matches when =--content=
+  is on.
+
+** Resolution [2026-08-18]
+Findings 1, 2, 3, 5 fixed in the same session (internal/cmd/search.go);
+finding 4 (history.jsonl as a source) stays open.
+- =FEAT= =-w/--word=: textMatcher with ASCII =\b= on the word-char sides
+  of the query, applied to names, summaries, conversation text, and
+  =--raw= lines. Live: =search --content -w semantica= -> 1 result
+  (this session) vs 47 without =-w=; agrees with =grep -rlwi=.
+- =FEAT= first-hit time per content result: =FIRST= column, =first_hit=
+  (RFC3339) in =--json=, =--sort hits|first|last=. Verified: first_hit
+  2026-08-18T07:48:10Z == earliest raw line with the word.
+- =PERF= bounded worker pool (min(NumCPU, 8)), non-allocating
+  case-fold line match, prefilter stops at first hit, stderr progress
+  when a TTY. Warm scan 1m14s -> 7.6s on the same 3.5 GB store.
+- =FIX= summary hits keep content evidence (matches, previews,
+  first_hit) instead of short-circuiting the scan.
+- Tests: TestTextMatcherWord, TestIndexFold, TestLineTimestamp,
+  TestSessionSearcherSummaryHitKeepsContent, TestSessionSearcherMatchAllOrder,
+  TestSortSearchResults; existing scan tests updated to the new
+  signatures.
+- =FEAT= (after studying semantica-agi/semantica; see
+  docs/design/0005-evidence-citations-lessons-from-semantica.md)
+  =--hits=: every matching message as a citation — time, session,
+  role, message id, quote — oldest first; =--raw --hits= per line.
+  Live: =search --content -w --hits semantica= -> 11 rows, first
+  c8bd2144 @ 07:48:10Z, matching the raw file. Test:
+  TestSessionSearcherHits.
+- =FIX= =-n= shorthand for =--limit= on sessions/projects/log
+  (=sessions -n 2= failed "unknown shorthand flag").
