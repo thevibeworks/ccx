@@ -40,10 +40,16 @@ its own CLI surface.
    fits; read it whole. Steps are the agent's own narration at the
    moment it acted — that sequence IS the story skeleton.
 2. **Pick what matters.** Turns with edits, errors, linked commits,
-   high cost, or user pushback. Ignore command noise (`is_command`).
+   high cost, user pushback, or human interventions (`interrupts` —
+   the human pressed stop; `denials` — a tool call refused at the
+   permission prompt; both are on turns, steps, and stats). Ignore
+   command noise (`is_command`).
 3. **Drill only there.** `ccx trace --turn N` for full narration,
-   mutations, and error attribution. Raw text when needed: the
-   `anchor_id` / `message_id` point into the session file.
+   mutations, and error attribution. Raw text when needed: `ccx view
+   <session> --at <message_id>` opens the cited message in context.
+   When the story crosses sessions (a handoff picked up, a fork, a
+   parallel agent), `ccx related <session>` says which sessions and
+   how, with evidence — cite those anchors, do not guess the link.
 4. **Verify before claiming.** "Done" requires evidence: a passing
    test step, a linked commit, a verification narration. Tag every
    important claim:

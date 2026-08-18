@@ -32,12 +32,17 @@ matching its own CLI surface.
    - turns where the user pushed back — read the actual `user_text`
      and judge with your own comprehension; there is no correction
      flag, because keyword matching lies
+   - `interrupts` and `denials` (turn/step/stats): the human pressed
+     stop or refused a tool call — the sharpest correction signal in
+     the log; the denied call's evidence is marked `denied`
    - cost spikes without matching edits (spinning)
    - `warnings` (evidence gaps are findings too)
-2. **Drill.** `ccx trace --turn N` on each suspect. Reconstruct:
+2. **Drill.** `ccx trace --turn N` on each suspect; `ccx view
+   <session> --at <message_id>` for the exact exchange. Reconstruct:
    what did the agent believe, what was actually true, what evidence
    was available at the time, what finally corrected it (user, test,
-   self-check)?
+   self-check)? If the mistake was inherited from an earlier session
+   (a stale handoff, a fork), `ccx related <session>` finds it.
 3. **Classify each finding.**
    - `mistake` — agent had the evidence and got it wrong
    - `friction` — environment/tooling failed the agent
