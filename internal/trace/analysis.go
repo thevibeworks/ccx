@@ -603,10 +603,44 @@ func extractPatchPaths(patch string) []string {
 
 var redirectPattern = regexp.MustCompile(`(?:>>?|\btee(?:\s+-a)?)\s+([^\s;|&<>]+)`)
 
+// heredocStart matches a heredoc operator and captures its delimiter:
+// <<EOF, <<-EOF, <<'EOF', <<"EOF".
+var heredocStart = regexp.MustCompile(`<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)['"]?`)
+
+// stripHeredocs removes heredoc bodies from a shell command so that
+// code or markdown fed through them (a Go `if n > 0`, a blockquote
+// `> 2026-08-18`) is not read as an output redirect. The body starts
+// after the line carrying the operator and ends at the line equal to
+// the delimiter (leading tabs allowed for <<-).
+func stripHeredocs(command string) string {
+	if !strings.Contains(command, "<<") {
+		return command
+	}
+	lines := strings.Split(command, "\n")
+	var out []string
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		out = append(out, line)
+		m := heredocStart.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		delim := m[2]
+		for i+1 < len(lines) {
+			i++
+			if strings.TrimLeft(lines[i], "\t") == delim {
+				break
+			}
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 func extractRedirectPaths(command string) []string {
 	if !strings.ContainsAny(command, ">") && !strings.Contains(command, "tee") {
 		return nil
 	}
+	command = stripHeredocs(command)
 	matches := redirectPattern.FindAllStringSubmatch(command, -1)
 	var paths []string
 	for _, m := range matches {

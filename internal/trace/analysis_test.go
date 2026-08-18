@@ -548,3 +548,25 @@ func TestCommandSummaryCollapsesAndBounds(t *testing.T) {
 		t.Fatal("nil input must yield empty summary")
 	}
 }
+
+// Heredoc bodies are data, not shell: a Go comparison or a markdown
+// blockquote piped through `python3 - <<'EOF'` / `cat > f <<'EOF'` must
+// not become "edited files" (they surfaced as ".../0" and
+// ".../2026-08-18" in files_edited and in session connections).
+func TestExtractRedirectPathsIgnoresHeredocBodies(t *testing.T) {
+	cmd := "cd repo && python3 - <<'EOF'\nif first > 0:\n    pass\nx = a > b\nEOF\ncat > out.md <<EOF\n> 2026-08-18 quote\nEOF\necho done > final.log"
+	got := extractRedirectPaths(cmd)
+	want := []string{"out.md", "final.log"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("redirect paths: got %v, want %v", got, want)
+	}
+	// <<- allows tab-indented delimiter; unquoted body still stripped.
+	cmd = "cat <<-DOC\n\tvalue > 0\n\tDOC\ntee log.txt"
+	if got := extractRedirectPaths(cmd); strings.Join(got, ",") != "log.txt" {
+		t.Fatalf("<<- heredoc: got %v", got)
+	}
+	// Unterminated heredoc swallows the rest: nothing after it counts.
+	if got := extractRedirectPaths("cat <<EOF\n> not-a-file\n"); len(got) != 0 {
+		t.Fatalf("unterminated heredoc: got %v", got)
+	}
+}

@@ -14,7 +14,8 @@ they do not know.
 |------------------|------------------------------|----------|
 | `ccx.outline.v1` | `ccx trace --json`           | Session skeleton: every turn and step headline with rollups. Read this first; it always fits. |
 | `ccx.turn.v1`    | `ccx trace --turn N`         | One turn with full step evidence, plus the sidechain entries that turn references, plus warnings. |
-| `ccx.trace.v2`   | `ccx trace --full`           | Complete evidence bundle: all turns/steps, sidechains, git correlation, workspace context, stats, warnings. Large. |
+| `ccx.trace.v2`   | `ccx trace --full`           | Complete evidence bundle: all turns/steps, sidechains, git correlation, workspace context, `related` sessions, stats, warnings. Large. |
+| `ccx.related.v1` | `ccx related --json`         | The anchor session's connections to the other sessions of its workspace: `related[]` of `{session_id, provider, summary, start, end, strength, relations[]}`, plus `total`/`shown`. Each relation is `{kind, count?, paths?, evidence[], truncated?}`; evidence items are `{session_id, message_id, time, path?, quote?}`. Kinds: `forked_from`/`fork_of`, `mentions`/`mentioned_by`, `handoff_from`/`handoff_to`, `builds_on`/`built_on_by`, `overlaps`, `previous`/`next`. Strength is `strong`/`medium`/`weak`. |
 | `ccx.log.v1`     | `ccx log --json`, `ccx insight --json` | Time-scoped records across sessions with pre-computed `days[]` / `providers[]` / `workspaces[]` aggregates. |
 
 ## Versioning policy

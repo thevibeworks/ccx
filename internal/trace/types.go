@@ -20,8 +20,13 @@ type TraceResult struct {
 	Sidechains    []Sidechain      `json:"sidechains,omitempty"`
 	Git           GitCorrelation   `json:"git"`
 	Workspace     WorkspaceContext `json:"workspace_context"`
-	Stats         TraceStats       `json:"stats"`
-	Warnings      []TraceWarning   `json:"warnings,omitempty"`
+	// Related is the session's connections to the other sessions of
+	// its workspace (docs/design/0006-session-connections.md); filled
+	// only for the full bundle, since it costs a parse of every
+	// session in the workspace.
+	Related  []RelatedSession `json:"related,omitempty"`
+	Stats    TraceStats       `json:"stats"`
+	Warnings []TraceWarning   `json:"warnings,omitempty"`
 }
 
 type SessionMeta struct {
