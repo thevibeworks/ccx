@@ -66,6 +66,8 @@ func Analyze(session *parser.Session) *TraceResult {
 	allTools := make(map[string]struct{})
 	stepCount := 0
 	toolErrors := 0
+	interrupts := 0
+	denials := 0
 	var mainCost float64
 	var activeSecs float64
 	var inputTok, outputTok, cacheReadTok, cacheCreateTok, reasoningTok int
@@ -82,6 +84,8 @@ func Analyze(session *parser.Session) *TraceResult {
 		}
 		stepCount += len(turn.Steps)
 		toolErrors += turn.Errors
+		interrupts += turn.Interrupts
+		denials += turn.Denials
 		mainCost += turn.CostUSD
 		activeSecs += turn.ActiveSecs
 		inputTok += turn.InputTokens
@@ -112,6 +116,8 @@ func Analyze(session *parser.Session) *TraceResult {
 		FilesRead:         len(allRead),
 		ToolsUsed:         len(allTools),
 		ToolErrors:        toolErrors,
+		Interrupts:        interrupts,
+		Denials:           denials,
 		InputTokens:       inputTok,
 		OutputTokens:      outputTok,
 		CacheReadTokens:   cacheReadTok,
@@ -245,6 +251,13 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 			turn.CostUSD += msg.Usage.CostUSD
 		}
 
+		if msg.Kind == parser.KindInterrupt {
+			turn.Interrupts++
+			if len(steps) > 0 {
+				steps[len(steps)-1].Interrupts++
+			}
+		}
+
 		if msg.Kind == parser.KindAssistant {
 			if narration := firstText(msg); narration != "" {
 				step := Step{
@@ -337,6 +350,28 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 					mutIdxByToolID[cb.ToolID] = [2]int{len(steps) - 1, len(step.Mutations) - 1}
 				}
 			case "tool_result":
+				if denied := parser.IsToolDenial(toolResultText(cb.ToolResult)); denied {
+					// A human rejection is an intervention, not an
+					// error: count it on the turn/step and mark the
+					// issuing call as denied (materialized like errors
+					// so denied lists match the counts).
+					turn.Denials++
+					if step := stepForResult(msg, steps, stepByToolID); step != nil {
+						step.Denials++
+					}
+					if cb.ToolID != "" {
+						if loc, ok := mutIdxByToolID[cb.ToolID]; ok {
+							steps[loc[0]].Mutations[loc[1]].Denied = true
+						} else if ev, ok := callByToolID[cb.ToolID]; ok {
+							ev.Denied = true
+							if idx, ok := stepByToolID[cb.ToolID]; ok && idx >= 0 && idx < len(steps) {
+								steps[idx].Mutations = append(steps[idx].Mutations, ev)
+								mutIdxByToolID[cb.ToolID] = [2]int{idx, len(steps[idx].Mutations) - 1}
+							}
+						}
+					}
+					continue
+				}
 				if !cb.IsError {
 					continue
 				}
@@ -370,6 +405,30 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 	turn.ActiveSecs = active.Seconds()
 
 	return turn
+}
+
+// toolResultText returns the text of a tool result payload, which
+// arrives as a string or as a list of content blocks.
+func toolResultText(result any) string {
+	switch v := result.(type) {
+	case string:
+		return v
+	case []any:
+		var parts []string
+		for _, item := range v {
+			if block, ok := item.(map[string]any); ok {
+				if text, ok := block["text"].(string); ok {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	case map[string]any:
+		if text, ok := v["text"].(string); ok {
+			return text
+		}
+	}
+	return ""
 }
 
 // stepForResult finds the step that issued the call a result belongs

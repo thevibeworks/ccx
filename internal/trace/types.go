@@ -70,6 +70,13 @@ type Turn struct {
 	FilesRead   []string       `json:"files_read,omitempty"`
 	ToolCounts  map[string]int `json:"tool_counts,omitempty"`
 	Errors      int            `json:"errors,omitempty"`
+	// Human interventions inside the turn: Interrupts counts
+	// "[Request interrupted by user]" markers (the human pressed
+	// stop); Denials counts tool calls the human rejected at the
+	// permission prompt. Both are the human in the loop, distinct
+	// from a new prompt and from tool errors.
+	Interrupts int `json:"interrupts,omitempty"`
+	Denials    int `json:"denials,omitempty"`
 	// Token split for the main loop. Cache tokens dominate real cost
 	// (cache writes bill at 1.25x input, and one long turn can write
 	// hundreds of thousands), so a cost without them is unauditable.
@@ -111,6 +118,8 @@ type Step struct {
 	// are summarized by ToolCounts and the turn-level file lists.
 	Mutations  []ToolCallEvidence `json:"mutations,omitempty"`
 	Errors     int                `json:"errors,omitempty"`
+	Interrupts int                `json:"interrupts,omitempty"`
+	Denials    int                `json:"denials,omitempty"`
 	Sidechains []Sidechain        `json:"sidechains,omitempty"`
 	CostUSD    float64            `json:"cost_usd,omitempty"`
 }
@@ -130,6 +139,9 @@ type ToolCallEvidence struct {
 	MutatesWorkspace bool     `json:"mutates_workspace"`
 	Reads            bool     `json:"reads"`
 	IsError          bool     `json:"is_error,omitempty"`
+	// Denied: the human rejected this call at the permission prompt.
+	// Such a call is not an error and did not run.
+	Denied bool `json:"denied,omitempty"`
 }
 
 type Sidechain struct {
@@ -218,6 +230,8 @@ type TraceStats struct {
 	FilesRead        int `json:"files_read"`
 	ToolsUsed        int `json:"tools_used"`
 	ToolErrors       int `json:"tool_errors"`
+	Interrupts       int `json:"interrupts,omitempty"`
+	Denials          int `json:"denials,omitempty"`
 	WorkspaceDocs    int `json:"workspace_docs"`
 	KnowledgeEntries int `json:"knowledge_entries"`
 	CommitsLinked    int `json:"commits_linked"`
@@ -271,6 +285,8 @@ type OutlineTurn struct {
 	Edits             int           `json:"edits,omitempty"`
 	Tools             int           `json:"tools,omitempty"`
 	Errors            int           `json:"errors,omitempty"`
+	Interrupts        int           `json:"interrupts,omitempty"`
+	Denials           int           `json:"denials,omitempty"`
 	Agents            int           `json:"agents,omitempty"`
 	InputTokens       int           `json:"input_tokens,omitempty"`
 	OutputTokens      int           `json:"output_tokens,omitempty"`
@@ -283,10 +299,12 @@ type OutlineTurn struct {
 }
 
 type OutlineStep struct {
-	Index    int    `json:"index"`
-	Headline string `json:"headline"`
-	Tools    int    `json:"tools,omitempty"`
-	Edits    int    `json:"edits,omitempty"`
-	Errors   int    `json:"errors,omitempty"`
-	Agents   int    `json:"agents,omitempty"`
+	Index      int    `json:"index"`
+	Headline   string `json:"headline"`
+	Tools      int    `json:"tools,omitempty"`
+	Edits      int    `json:"edits,omitempty"`
+	Errors     int    `json:"errors,omitempty"`
+	Interrupts int    `json:"interrupts,omitempty"`
+	Denials    int    `json:"denials,omitempty"`
+	Agents     int    `json:"agents,omitempty"`
 }

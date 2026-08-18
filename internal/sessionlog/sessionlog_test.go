@@ -258,12 +258,14 @@ func TestCollectClaudeUserRoleNoiseIsNotAPrompt(t *testing.T) {
 		`{"type":"user","uuid":"u5","sessionId":"s1","cwd":"/tmp/repo","isMeta":true,"timestamp":"2026-08-18T10:00:04Z","message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: /x"}]}}`,
 		`{"type":"user","uuid":"u6","sessionId":"s1","cwd":"/tmp/repo","isCompactSummary":true,"timestamp":"2026-08-18T10:00:05Z","message":{"role":"user","content":[{"type":"text","text":"summary of earlier context"}]}}`,
 		`{"type":"user","uuid":"u7","sessionId":"s1","cwd":"/tmp/repo","timestamp":"2026-08-18T10:00:06Z","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`,
+		`{"type":"user","uuid":"u8","sessionId":"s1","cwd":"/tmp/repo","timestamp":"2026-08-18T10:00:07Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}`,
+		`{"type":"user","uuid":"u9","sessionId":"s1","cwd":"/tmp/repo","timestamp":"2026-08-18T10:00:08Z","message":{"role":"user","content":[{"type":"tool_result","content":"The user doesn't want to proceed with this tool use. The tool use was rejected.","is_error":true}]}}`,
 	)
 	bundle, err := Collect([]Source{{Provider: "claude-code", Home: home}}, Options{Start: mustParseTime(t, "2026-08-18T00:00:00Z"), End: mustParseTime(t, "2026-08-19T00:00:00Z")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"u1": "user_prompt", "u2": "command", "u3": "command_output", "u4": "notification", "u5": "meta", "u6": "compact_summary", "u7": "tool_result"}
+	want := map[string]string{"u1": "user_prompt", "u2": "command", "u3": "command_output", "u4": "notification", "u5": "meta", "u6": "compact_summary", "u7": "tool_result", "u8": "interrupt", "u9": "tool_denied"}
 	for _, r := range bundle.Records {
 		if want[r.UUID] != r.Kind {
 			t.Errorf("%s: kind %q, want %q", r.UUID, r.Kind, want[r.UUID])
@@ -282,7 +284,7 @@ func TestCollectClaudeUserRoleNoiseIsNotAPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(bundle.Records) != 2 || bundle.Metrics.Records != 7 || bundle.Metrics.RecordsMatched != 2 || bundle.Metrics.RecordsReturned != 2 {
+	if len(bundle.Records) != 2 || bundle.Metrics.Records != 9 || bundle.Metrics.RecordsMatched != 2 || bundle.Metrics.RecordsReturned != 2 {
 		t.Fatalf("kind filter: %d records, metrics %+v", len(bundle.Records), bundle.Metrics)
 	}
 	bundle, err = Collect([]Source{{Provider: "claude-code", Home: home}}, Options{

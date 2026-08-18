@@ -3,6 +3,7 @@ package trace
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -39,6 +40,8 @@ func BuildOutline(result *TraceResult, width int) *Outline {
 			SupersededByTurn:  turn.SupersededByTurn,
 			Edits:             len(turn.FilesEdited),
 			Errors:            turn.Errors,
+			Interrupts:        turn.Interrupts,
+			Denials:           turn.Denials,
 			InputTokens:       turn.InputTokens,
 			OutputTokens:      turn.OutputTokens,
 			CacheReadTokens:   turn.CacheReadTokens,
@@ -57,14 +60,21 @@ func BuildOutline(result *TraceResult, width int) *Outline {
 		}
 		for _, step := range turn.Steps {
 			os := OutlineStep{
-				Index:    step.Index,
-				Headline: headline(step.Narration, width),
-				Edits:    len(step.FilesEdited),
-				Errors:   step.Errors,
-				Agents:   len(step.Sidechains),
+				Index:      step.Index,
+				Headline:   headline(step.Narration, width),
+				Edits:      len(step.FilesEdited),
+				Errors:     step.Errors,
+				Interrupts: step.Interrupts,
+				Denials:    step.Denials,
+				Agents:     len(step.Sidechains),
 			}
 			for _, n := range step.ToolCounts {
 				os.Tools += n
+			}
+			if os.Headline == "" {
+				// A step the agent never narrated (straight to tools)
+				// still needs a readable line: say what it ran.
+				os.Headline = toolsHeadline(step)
 			}
 			ot.Agents += len(step.Sidechains)
 			ot.Steps = append(ot.Steps, os)
@@ -72,6 +82,42 @@ func BuildOutline(result *TraceResult, width int) *Outline {
 		outline.Turns = append(outline.Turns, ot)
 	}
 	return outline
+}
+
+// toolsHeadline labels a narration-less step from its tool sequence:
+// "(no narration) Bash x3, Read" — busiest tools first, capped at
+// three names, so the outline never shows a bare badge row.
+func toolsHeadline(step Step) string {
+	if len(step.ToolCounts) == 0 {
+		return "(no narration)"
+	}
+	type tc struct {
+		name string
+		n    int
+	}
+	var list []tc
+	for name, n := range step.ToolCounts {
+		list = append(list, tc{name, n})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].n != list[j].n {
+			return list[i].n > list[j].n
+		}
+		return list[i].name < list[j].name
+	})
+	var parts []string
+	for i, t := range list {
+		if i == 3 {
+			parts = append(parts, fmt.Sprintf("+%d more", len(list)-3))
+			break
+		}
+		if t.n > 1 {
+			parts = append(parts, fmt.Sprintf("%s x%d", t.name, t.n))
+		} else {
+			parts = append(parts, t.name)
+		}
+	}
+	return "(no narration) " + strings.Join(parts, ", ")
 }
 
 // headline reduces evidence text to its first meaningful line, capped
@@ -135,11 +181,25 @@ func RenderOutlineText(outline *Outline) string {
 	// Wall-span misleads on long sessions; print active time next to it
 	// and say which timezone the rendered times are in (JSON carries
 	// them in UTC — silent localization breaks cross-referencing).
-	fmt.Fprintf(&b, "%s -> %s (times %s) | active %s | %s | %d steps | %d files edited | %d tool errors%s\n",
+	// Human interventions belong in the header: a session with 4
+	// interrupts and 2 denials reads very differently from a clean run.
+	humanSeg := ""
+	if outline.Stats.Interrupts > 0 || outline.Stats.Denials > 0 {
+		var parts []string
+		if outline.Stats.Interrupts > 0 {
+			parts = append(parts, plural(outline.Stats.Interrupts, "interrupt"))
+		}
+		if outline.Stats.Denials > 0 {
+			parts = append(parts, fmt.Sprintf("%d denied", outline.Stats.Denials))
+		}
+		humanSeg = " | " + strings.Join(parts, ", ")
+	}
+	fmt.Fprintf(&b, "%s -> %s (times %s) | active %s | %s | %d steps | %d files edited | %d tool errors%s%s\n",
 		formatOutlineTime(s.Start), formatOutlineTime(s.End), outlineZone(s.Start),
 		formatActive(outline.Stats.ActiveSecs),
 		turnsSeg, outline.Stats.StepCount,
 		outline.Stats.FilesEdited, outline.Stats.ToolErrors,
+		humanSeg,
 		headerCost(outline.Stats.TotalCostUSD, outline.Stats.AgentsCostUSD))
 	if tok := tokenSplit(outline.Stats.InputTokens, outline.Stats.OutputTokens,
 		outline.Stats.CacheReadTokens, outline.Stats.CacheCreateTokens,
@@ -192,6 +252,12 @@ func turnBadges(turn OutlineTurn) string {
 	}
 	if turn.Errors > 0 {
 		parts = append(parts, fmt.Sprintf("%d errors", turn.Errors))
+	}
+	if turn.Interrupts > 0 {
+		parts = append(parts, plural(turn.Interrupts, "interrupt"))
+	}
+	if turn.Denials > 0 {
+		parts = append(parts, fmt.Sprintf("%d denied", turn.Denials))
 	}
 	if turn.Agents > 0 {
 		parts = append(parts, fmt.Sprintf("%d agents", turn.Agents))
@@ -261,6 +327,12 @@ func stepBadges(step OutlineStep) string {
 	if step.Errors > 0 {
 		parts = append(parts, fmt.Sprintf("%dx", step.Errors))
 	}
+	if step.Interrupts > 0 {
+		parts = append(parts, fmt.Sprintf("%d!", step.Interrupts))
+	}
+	if step.Denials > 0 {
+		parts = append(parts, fmt.Sprintf("%dd", step.Denials))
+	}
 	if step.Agents > 0 {
 		parts = append(parts, fmt.Sprintf("%da", step.Agents))
 	}
@@ -268,6 +340,13 @@ func stepBadges(step OutlineStep) string {
 		return ""
 	}
 	return "  [" + strings.Join(parts, " ") + "]"
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", word)
+	}
+	return fmt.Sprintf("%d %ss", n, word)
 }
 
 func commitBadge(shas []string) string {
