@@ -18,9 +18,9 @@ func TestClassifyUserTextHarnessWrappers(t *testing.T) {
 		{"", KindUnknown, false},
 	}
 	for _, c := range cases {
-		got, harness := classifyUserText(c.text)
+		got, harness := ClassifyUserText(c.text)
 		if harness != c.harness || (harness && got != c.want) {
-			t.Errorf("classifyUserText(%q) = (%v, %v), want (%v, %v)", c.text, got, harness, c.want, c.harness)
+			t.Errorf("ClassifyUserText(%q) = (%v, %v), want (%v, %v)", c.text, got, harness, c.want, c.harness)
 		}
 	}
 }

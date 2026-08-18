@@ -10,7 +10,11 @@ import (
 // Codex 0.147 made item_completed TurnItems the persisted, UI-facing
 // transcript. Raw response_item messages are model I/O and can contain injected
 // developer/user envelopes, so they are not a safe conversation source.
-type completedTurnMessage struct {
+//
+// CompletedTurnMessage is one such visible message. Exported so every
+// surface that reads rollouts line by line (sessionlog) applies the
+// same source-selection rule as the parser (docs/design/0004).
+type CompletedTurnMessage struct {
 	ID   string
 	Role string
 	Text string
@@ -47,7 +51,7 @@ func hasCompletedTurnMessages(filePath string) (bool, error) {
 		if err := json.Unmarshal(scanner.Bytes(), &rollout); err != nil || rollout.Type != "event_msg" {
 			continue
 		}
-		if _, ok := decodeCompletedTurnMessage(rollout.Payload); ok {
+		if _, ok := DecodeCompletedTurnMessage(rollout.Payload); ok {
 			return true, nil
 		}
 	}
@@ -57,15 +61,18 @@ func hasCompletedTurnMessages(filePath string) (bool, error) {
 	return false, nil
 }
 
-func decodeCompletedTurnMessage(raw json.RawMessage) (completedTurnMessage, bool) {
+// DecodeCompletedTurnMessage returns the visible message carried by an
+// event_msg payload when it is an item_completed UserMessage or
+// AgentMessage; ok is false for every other payload.
+func DecodeCompletedTurnMessage(raw json.RawMessage) (CompletedTurnMessage, bool) {
 	var completed itemCompletedPayload
 	if err := json.Unmarshal(raw, &completed); err != nil || completed.Type != "item_completed" {
-		return completedTurnMessage{}, false
+		return CompletedTurnMessage{}, false
 	}
 
 	var item turnItemMessagePayload
 	if err := json.Unmarshal(completed.Item, &item); err != nil {
-		return completedTurnMessage{}, false
+		return CompletedTurnMessage{}, false
 	}
 
 	role := ""
@@ -75,7 +82,7 @@ func decodeCompletedTurnMessage(raw json.RawMessage) (completedTurnMessage, bool
 	case "AgentMessage":
 		role = "assistant"
 	default:
-		return completedTurnMessage{}, false
+		return CompletedTurnMessage{}, false
 	}
 
 	parts := make([]string, 0, len(item.Content))
@@ -101,5 +108,5 @@ func decodeCompletedTurnMessage(raw json.RawMessage) (completedTurnMessage, bool
 	if text == "" && hasAttachment {
 		text = imageOnlyMessagePlaceholder
 	}
-	return completedTurnMessage{ID: item.ID, Role: role, Text: text}, true
+	return CompletedTurnMessage{ID: item.ID, Role: role, Text: text}, true
 }

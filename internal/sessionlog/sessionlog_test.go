@@ -3,6 +3,7 @@ package sessionlog
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -148,6 +149,151 @@ func TestCollectClassifiesCodexDeveloperMessageAsInstruction(t *testing.T) {
 	}
 	if bundle.Metrics.AssistantMessages != 0 {
 		t.Fatalf("developer message counted as assistant: %+v", bundle.Metrics)
+	}
+}
+
+// Codex 0.147 rollouts carry the visible conversation as
+// event_msg.item_completed UserMessage/AgentMessage TurnItems; the raw
+// response_item messages are model I/O (with injected envelopes) and
+// legacy user_message/agent_message events are duplicates in hybrid
+// files. The log surface must apply the parser's one-source rule:
+// item_completed rows become the prompts/replies with text, and the
+// duplicates stay as records but stop counting (docs/design/0004).
+func TestCollectCodex0147ItemCompletedIsTheConversation(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".codex")
+	sessionDir := filepath.Join(home, "sessions", "2026", "08")
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(sessionDir, "rollout-0147.jsonl")
+	writeLines(t, file,
+		`{"timestamp":"2026-08-18T04:45:00Z","type":"session_meta","payload":{"id":"codex-0147","cwd":"/tmp/repo"}}`,
+		`{"timestamp":"2026-08-18T04:45:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/repo (injected envelope)"}]}}`,
+		`{"timestamp":"2026-08-18T04:45:02Z","type":"event_msg","payload":{"type":"item_completed","item":{"id":"item-u1","type":"UserMessage","content":[{"type":"text","text":"hello from 0.147"}]}}}`,
+		`{"timestamp":"2026-08-18T04:45:03Z","type":"event_msg","payload":{"type":"user_message","message":"hello from 0.147"}}`,
+		`{"timestamp":"2026-08-18T04:45:04Z","type":"event_msg","payload":{"type":"item_completed","item":{"id":"item-a1","type":"AgentMessage","content":[{"type":"Text","text":"Received."}]}}}`,
+		`{"timestamp":"2026-08-18T04:45:05Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Received."}]}}`,
+		`{"timestamp":"2026-08-18T04:45:06Z","type":"event_msg","payload":{"type":"item_completed","item":{"id":"item-c1","type":"CommandExecution","command":"ls"}}}`,
+	)
+
+	start := mustParseTime(t, "2026-08-18T00:00:00Z")
+	end := mustParseTime(t, "2026-08-19T00:00:00Z")
+	bundle, err := Collect([]Source{{Provider: "codex", Home: home}}, Options{Start: start, End: end})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Records) != 7 {
+		t.Fatalf("records = %d, want 7 (nothing dropped)", len(bundle.Records))
+	}
+	byLine := map[int]Record{}
+	for _, r := range bundle.Records {
+		byLine[r.Line] = r
+	}
+	if r := byLine[3]; r.Kind != "user_prompt" || r.Role != "user" || r.Text != "hello from 0.147" || r.UUID != "item-u1" {
+		t.Fatalf("item_completed UserMessage: %+v", r)
+	}
+	if r := byLine[5]; r.Kind != "assistant_message" || r.Text != "Received." || r.UUID != "item-a1" {
+		t.Fatalf("item_completed AgentMessage: %+v", r)
+	}
+	if r := byLine[2]; r.Kind != "model_input" {
+		t.Fatalf("raw response_item user message must be model_input, got %+v", r)
+	}
+	if r := byLine[4]; r.Kind != "legacy_message" {
+		t.Fatalf("legacy user_message event must be demoted in a hybrid file, got %+v", r)
+	}
+	if r := byLine[6]; r.Kind != "model_output" {
+		t.Fatalf("raw response_item assistant message must be model_output, got %+v", r)
+	}
+	if r := byLine[7]; r.Kind != "item_completed" {
+		t.Fatalf("non-message TurnItem keeps its own kind, got %+v", r)
+	}
+	if bundle.Metrics.UserPrompts != 1 || bundle.Metrics.AssistantMessages != 1 {
+		t.Fatalf("metrics must count the conversation once: %+v", bundle.Metrics)
+	}
+	if bundle.Sessions[0].Preview != "hello from 0.147" {
+		t.Fatalf("preview must come from the visible prompt, got %q", bundle.Sessions[0].Preview)
+	}
+}
+
+// A legacy (pre-0.147) rollout has no item_completed messages, so its
+// user_message / agent_message events remain the conversation.
+func TestCollectCodexLegacyRolloutUnchanged(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".codex")
+	sessionDir := filepath.Join(home, "sessions", "2026", "05")
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeLines(t, filepath.Join(sessionDir, "legacy.jsonl"),
+		`{"timestamp":"2026-05-21T00:01:00Z","type":"session_meta","payload":{"id":"codex-legacy","cwd":"/tmp/repo"}}`,
+		`{"timestamp":"2026-05-21T00:02:00Z","type":"event_msg","payload":{"type":"user_message","message":"legacy prompt"}}`,
+		`{"timestamp":"2026-05-21T00:03:00Z","type":"event_msg","payload":{"type":"agent_message","message":"legacy reply"}}`,
+	)
+	bundle, err := Collect([]Source{{Provider: "codex", Home: home}}, Options{Start: mustParseTime(t, "2026-05-21T00:00:00Z"), End: mustParseTime(t, "2026-05-22T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Metrics.UserPrompts != 1 || bundle.Metrics.AssistantMessages != 1 {
+		t.Fatalf("legacy rollout must keep counting: %+v", bundle.Metrics)
+	}
+}
+
+// user-role lines that no human typed — command markers, local command
+// echoes, task notifications, injected meta (skill bodies), compaction
+// carriers — must not be user_prompt in the log, exactly as in the
+// parser; --kind user_prompt is "the humans in the loop".
+func TestCollectClaudeUserRoleNoiseIsNotAPrompt(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".claude")
+	projDir := filepath.Join(home, "projects", "-tmp-repo")
+	if err := os.MkdirAll(projDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeLines(t, filepath.Join(projDir, "s1.jsonl"),
+		`{"type":"user","uuid":"u1","sessionId":"s1","cwd":"/tmp/repo","timestamp":"2026-08-18T10:00:00Z","message":{"role":"user","content":[{"type":"text","text":"real prompt"}]}}`,
+		`{"type":"user","uuid":"u2","sessionId":"s1","cwd":"/tmp/repo","timestamp":"2026-08-18T10:00:01Z","message":{"role":"user","content":"<command-name>/model</command-name><command-message>model</command-message>"}}`,
+		`{"type":"user","uuid":"u3","sessionId":"s1","cwd":"/tmp/repo","timestamp":"2026-08-18T10:00:02Z","message":{"role":"user","content":[{"type":"text","text":"<local-command-stdout>Set model</local-command-stdout>"}]}}`,
+		`{"type":"user","uuid":"u4","sessionId":"s1","cwd":"/tmp/repo","timestamp":"2026-08-18T10:00:03Z","message":{"role":"user","content":[{"type":"text","text":"<task-notification>done</task-notification>"}]}}`,
+		`{"type":"user","uuid":"u5","sessionId":"s1","cwd":"/tmp/repo","isMeta":true,"timestamp":"2026-08-18T10:00:04Z","message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: /x"}]}}`,
+		`{"type":"user","uuid":"u6","sessionId":"s1","cwd":"/tmp/repo","isCompactSummary":true,"timestamp":"2026-08-18T10:00:05Z","message":{"role":"user","content":[{"type":"text","text":"summary of earlier context"}]}}`,
+		`{"type":"user","uuid":"u7","sessionId":"s1","cwd":"/tmp/repo","timestamp":"2026-08-18T10:00:06Z","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`,
+	)
+	bundle, err := Collect([]Source{{Provider: "claude-code", Home: home}}, Options{Start: mustParseTime(t, "2026-08-18T00:00:00Z"), End: mustParseTime(t, "2026-08-19T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"u1": "user_prompt", "u2": "command", "u3": "command_output", "u4": "notification", "u5": "meta", "u6": "compact_summary", "u7": "tool_result"}
+	for _, r := range bundle.Records {
+		if want[r.UUID] != r.Kind {
+			t.Errorf("%s: kind %q, want %q", r.UUID, r.Kind, want[r.UUID])
+		}
+	}
+	if bundle.Metrics.UserPrompts != 1 {
+		t.Fatalf("user prompts: %+v", bundle.Metrics)
+	}
+
+	// --kind and --match narrow the records list, keep scope-wide
+	// metrics, and report the matched count; Match sees the raw line.
+	bundle, err = Collect([]Source{{Provider: "claude-code", Home: home}}, Options{
+		Start: mustParseTime(t, "2026-08-18T00:00:00Z"), End: mustParseTime(t, "2026-08-19T00:00:00Z"),
+		Kinds: []string{"user_prompt", "meta"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Records) != 2 || bundle.Metrics.Records != 7 || bundle.Metrics.RecordsMatched != 2 || bundle.Metrics.RecordsReturned != 2 {
+		t.Fatalf("kind filter: %d records, metrics %+v", len(bundle.Records), bundle.Metrics)
+	}
+	bundle, err = Collect([]Source{{Provider: "claude-code", Home: home}}, Options{
+		Start: mustParseTime(t, "2026-08-18T00:00:00Z"), End: mustParseTime(t, "2026-08-19T00:00:00Z"),
+		Match: func(line string) bool { return strings.Contains(line, "isMeta") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Records) != 1 || bundle.Records[0].UUID != "u5" {
+		t.Fatalf("match filter on raw line: %+v", bundle.Records)
 	}
 }
 
