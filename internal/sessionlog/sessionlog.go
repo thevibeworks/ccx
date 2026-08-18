@@ -770,6 +770,14 @@ func normalizeCodexEvent(record *Record, payload map[string]any, payloadType str
 	case "compacted":
 		record.Kind = "compaction"
 		record.Text = truncateText(cleanText(stringField(payload, "message")), 1000)
+	case "turn_aborted":
+		// The human stopped the turn: same kind as Claude's
+		// "[Request interrupted by user]" so --kind interrupt
+		// covers both providers.
+		record.Kind = "interrupt"
+		record.Role = "user"
+		record.TurnID = stringField(payload, "turn_id")
+		record.Text = truncateText(cleanText(joinNonEmpty(" ", "turn aborted:", emptyDefault(stringField(payload, "reason"), "interrupted"))), 1000)
 	default:
 		record.Kind = emptyDefault(payloadType, "event")
 		record.Text = truncateText(cleanText(contentPreview(payload)), 1000)

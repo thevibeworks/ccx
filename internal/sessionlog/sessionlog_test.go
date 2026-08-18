@@ -229,6 +229,7 @@ func TestCollectCodexLegacyRolloutUnchanged(t *testing.T) {
 		`{"timestamp":"2026-05-21T00:01:00Z","type":"session_meta","payload":{"id":"codex-legacy","cwd":"/tmp/repo"}}`,
 		`{"timestamp":"2026-05-21T00:02:00Z","type":"event_msg","payload":{"type":"user_message","message":"legacy prompt"}}`,
 		`{"timestamp":"2026-05-21T00:03:00Z","type":"event_msg","payload":{"type":"agent_message","message":"legacy reply"}}`,
+		`{"timestamp":"2026-05-21T00:04:00Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"t1","reason":"interrupted"}}`,
 	)
 	bundle, err := Collect([]Source{{Provider: "codex", Home: home}}, Options{Start: mustParseTime(t, "2026-05-21T00:00:00Z"), End: mustParseTime(t, "2026-05-22T00:00:00Z")})
 	if err != nil {
@@ -236,6 +237,10 @@ func TestCollectCodexLegacyRolloutUnchanged(t *testing.T) {
 	}
 	if bundle.Metrics.UserPrompts != 1 || bundle.Metrics.AssistantMessages != 1 {
 		t.Fatalf("legacy rollout must keep counting: %+v", bundle.Metrics)
+	}
+	last := bundle.Records[len(bundle.Records)-1]
+	if last.Kind != "interrupt" || last.Role != "user" || last.TurnID != "t1" {
+		t.Fatalf("turn_aborted must be an interrupt record: %+v", last)
 	}
 }
 

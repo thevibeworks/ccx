@@ -81,6 +81,12 @@ type agentMessagePayload struct {
 	Message string `json:"message"`
 }
 
+type turnAbortedPayload struct {
+	Type   string `json:"type"`
+	TurnID string `json:"turn_id"`
+	Reason string `json:"reason"`
+}
+
 type agentReasoningPayload struct {
 	Text string `json:"text"`
 }
@@ -1001,6 +1007,26 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 						ts,
 						currentModel,
 						parser.ContentBlock{Type: "text", Text: message.Text},
+					))
+				}
+
+			case "turn_aborted":
+				// The human stopped the turn (Esc / Ctrl-C). Codex's
+				// counterpart of Claude Code's "[Request interrupted
+				// by user]": a harness marker, never an exchange
+				// anchor, counted by trace as an interrupt.
+				var payload turnAbortedPayload
+				if err := json.Unmarshal(rollout.Payload, &payload); err != nil {
+					continue
+				}
+				if payload.Reason == "" || payload.Reason == "interrupted" {
+					messages = append(messages, newMessage(
+						fmt.Sprintf("codex-interrupt-%d", lineNum),
+						"user",
+						parser.KindInterrupt,
+						ts,
+						currentModel,
+						parser.ContentBlock{Type: "text", Text: "[Turn interrupted by user]"},
 					))
 				}
 
