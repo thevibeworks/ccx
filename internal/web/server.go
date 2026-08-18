@@ -100,6 +100,7 @@ func Serve(addr string, backend provider.Backend) error {
 	mux.HandleFunc("/api/sessions", handleAPISessions)
 	mux.HandleFunc("/api/sessions/", handleAPISessions)
 	mux.HandleFunc("/api/session/", handleAPISession)
+	mux.HandleFunc("/api/related/", handleAPIRelated)
 	mux.HandleFunc("/api/stats", handleAPIStats)
 	mux.HandleFunc("/api/settings", handleAPISettings)
 	mux.HandleFunc("/api/export/", handleAPIExport)
@@ -787,6 +788,54 @@ func handleAPISession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fullSession)
+}
+
+// handleAPIRelated serves the anchor session's connections to the other
+// sessions of its workspace (docs/design/0006-session-connections.md):
+// GET /api/related/<project>/<session-id> -> ccx.related.v1, the same
+// envelope as `ccx related --json`. Costs a parse of every workspace
+// session (cached after the first call), so callers should fetch it on
+// demand, not on every page load.
+func handleAPIRelated(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/related/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 {
+		http.NotFound(w, r)
+		return
+	}
+	projectName, sessionID := parts[0], parts[1]
+	session, err := sessionProvider.FindSession(projectName, sessionID)
+	if err != nil || session == nil {
+		http.NotFound(w, r)
+		return
+	}
+	related, warnings, err := trace.RelateWorkspace(sessionProvider, session, 4, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			limit = n
+		}
+	}
+	total := len(related)
+	if limit > 0 && total > limit {
+		related = related[:limit]
+	}
+	if related == nil {
+		related = []trace.RelatedSession{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"kind":     "ccx.related.v1",
+		"session":  map[string]any{"id": session.ID, "provider": session.Provider, "project": session.ProjectName, "path": session.FilePath},
+		"related":  related,
+		"total":    total,
+		"shown":    len(related),
+		"warnings": warnings,
+	})
 }
 
 func handleAPIStats(w http.ResponseWriter, r *http.Request) {

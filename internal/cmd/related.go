@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -120,78 +119,22 @@ func runRelated(cmd *cobra.Command, args []string) error {
 	return printRelated(session, related, total)
 }
 
-// relateSession profiles every session of the anchor's workspace and
-// returns the anchor's connections. Shared by `ccx related` and the
-// trace --full bundle.
+// relateSession is the CLI wrapper over trace.RelateWorkspace: same
+// worker pool as search, progress on stderr when it is a terminal.
 func relateSession(backend provider.Backend, anchor *parser.Session) ([]trace.RelatedSession, []trace.TraceWarning, error) {
+	// Progress needs the total; list once, cheaply, for the count.
 	query := catalog.SessionQuery{Scope: catalog.ScopeProject, ProjectName: anchor.ProjectName}
 	if strings.TrimSpace(anchor.CWD) != "" {
 		query = catalog.SessionQuery{Scope: catalog.ScopeWorkspace, WorkspacePath: anchor.CWD}
 	}
-	sessions, err := backend.ListSessions(query.WithoutLimit().WithoutProviderFilter())
-	if err != nil {
-		return nil, nil, fmt.Errorf("list workspace sessions: %w", err)
+	total := 1
+	if sessions, err := backend.ListSessions(query.WithoutLimit().WithoutProviderFilter()); err == nil {
+		total = len(sessions) + 1
 	}
-	// The anchor may be missing from the workspace listing when its
-	// cwd differs from the project path (a fork into another dir);
-	// it always takes part.
-	found := false
-	for _, s := range sessions {
-		if s.FilePath == anchor.FilePath {
-			found = true
-			break
-		}
-	}
-	if !found {
-		sessions = append(sessions, anchor)
-	}
-
-	profiles := make([]*trace.SessionProfile, len(sessions))
-	var warnings []trace.TraceWarning
-	var warnMu sync.Mutex
-	progress := newScanProgress(len(sessions), true)
-	var wg sync.WaitGroup
-	next := make(chan int)
-	for w := 0; w < searchWorkers(true); w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range next {
-				full, err := backend.ParseSession(sessions[i].FilePath)
-				if err != nil {
-					warnMu.Lock()
-					warnings = append(warnings, trace.TraceWarning{Kind: "related_parse_failed", Message: fmt.Sprintf("skipping %s: %v", filepath.Base(sessions[i].FilePath), err)})
-					warnMu.Unlock()
-				} else {
-					profiles[i] = trace.ProfileSession(full)
-				}
-				progress.tick()
-			}
-		}()
-	}
-	for i := range sessions {
-		next <- i
-	}
-	close(next)
-	wg.Wait()
+	progress := newScanProgress(total, true)
+	related, warnings, err := trace.RelateWorkspace(backend, anchor, searchWorkers(true), progress.tick)
 	progress.done()
-
-	var anchorProfile *trace.SessionProfile
-	others := make([]*trace.SessionProfile, 0, len(profiles))
-	for i, p := range profiles {
-		if p == nil {
-			continue
-		}
-		if sessions[i].FilePath == anchor.FilePath {
-			anchorProfile = p
-			continue
-		}
-		others = append(others, p)
-	}
-	if anchorProfile == nil {
-		return nil, warnings, fmt.Errorf("could not parse anchor session %s", anchor.ID)
-	}
-	return trace.RelateSessions(anchorProfile, others), warnings, nil
+	return related, warnings, err
 }
 
 func printRelated(anchor *parser.Session, related []trace.RelatedSession, total int) error {
