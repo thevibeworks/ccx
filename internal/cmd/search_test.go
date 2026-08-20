@@ -544,3 +544,26 @@ func TestScanPromptHistory(t *testing.T) {
 		t.Fatalf("prompt result: %+v", r)
 	}
 }
+
+// A citation is only useful if it can be pasted back: `ccx search
+// --hits` prints MESSAGE, `ccx view --at` consumes it. Uuids shorten
+// to 8 hex; synthetic ids (codex-thinking-13, line:442) must survive
+// whole, since every one of them is ambiguous at 8 characters.
+func TestCitationIDStaysPasteable(t *testing.T) {
+	cases := []struct {
+		id   string
+		want string
+	}{
+		{"cf332028-7a1e-4bd9-9a2f-9d1c2b3a4f55", "cf332028"},
+		{"codex-thinking-13", "codex-thinking-13"},
+		{"codex-thinking-129", "codex-thinking-129"},
+		{"line:442", "line:442"},
+		{"", ""},
+		{"abc123", "abc123"},
+	}
+	for _, c := range cases {
+		if got := citationID(c.id); got != c.want {
+			t.Errorf("citationID(%q) = %q, want %q", c.id, got, c.want)
+		}
+	}
+}

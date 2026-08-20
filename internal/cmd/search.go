@@ -547,6 +547,29 @@ func truncateID(id string, max int) string {
 	return id[:max]
 }
 
+// citationID renders a message id for the MESSAGE column, which is
+// the value a reader pastes into `ccx view --at`. A uuid stays
+// unambiguous at its 8-hex prefix, so shorten it; a synthetic id
+// (codex-thinking-13, line:442) is short already and every one of
+// them collides at 8 chars, so print it whole or the citation walk
+// dead-ends on "prefix is ambiguous".
+func citationID(id string) string {
+	if len(id) > 8 && isHexRun(id[:8]) {
+		return id[:8]
+	}
+	return id
+}
+
+func isHexRun(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
 // sessionParser is the slice of provider.Backend the conversation
 // scan needs; narrowed so tests can stub it.
 type sessionParser interface {
@@ -762,7 +785,7 @@ func printSearchHits(hits []searchHit) error {
 		if session == "" {
 			session = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t, session, h.Role, truncateID(id, 8), cleanDisplayText(h.Quote))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t, session, h.Role, citationID(id), cleanDisplayText(h.Quote))
 	}
 	return w.Flush()
 }
