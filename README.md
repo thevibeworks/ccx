@@ -81,6 +81,7 @@ ccx export --shape human         # Only the human's turns, citable
 ccx trace [session] -o trace.json # Extract evidence for context folding
 ccx related [session]            # Which sessions connect to this one (fork, handoff, mentions, shared files)
 ccx log --scope yesterday --tz +8 --all --json # Time-sliced log evidence
+ccx log --scope today --all --kind user_prompt # Every human prompt today, across sessions
 ccx search "auth bug"            # Search across sessions + memory
 ccx search --content -w --sort first goose # Whole-word content hits, earliest first
 ccx search --content -w --hits goose      # Every mention, quoted + anchored (time, session, message id)

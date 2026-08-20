@@ -17,7 +17,7 @@ schema reference before consuming it programmatically.
 
 ## Reference
 
-- [JSON schema contract](https://raw.githubusercontent.com/thevibeworks/ccx/main/docs/schema.md): all emitted kinds (ccx.outline.v1, ccx.turn.v1, ccx.trace.v2, ccx.log.v1), versioning policy, semantics consumers must know
+- [JSON schema contract](https://raw.githubusercontent.com/thevibeworks/ccx/main/docs/schema.md): all emitted kinds (ccx.outline.v1, ccx.turn.v1, ccx.trace.v2, ccx.related.v1, ccx.log.v1), versioning policy, semantics consumers must know
 - [Claude Code / Codex session format reference](https://raw.githubusercontent.com/thevibeworks/ccx/main/docs/devlog/2026-04-02-session-format-reference.org): the on-disk JSONL formats ccx parses, observed from real sessions
 - [Grok session format reference](https://raw.githubusercontent.com/thevibeworks/ccx/main/docs/devlog/2026-07-15-grok-session-format.org): ~/.grok layout, chat_history/updates/summary shapes, mapping onto ccx's model
 
@@ -32,4 +32,6 @@ schema reference before consuming it programmatically.
 - [Q3 goal contract](https://raw.githubusercontent.com/thevibeworks/ccx/main/docs/2026-q3-goal.md): the standing roadmap — release gate, Grok parity, shell redesign, runner bridge, launch
 - [Trace v2 design](https://raw.githubusercontent.com/thevibeworks/ccx/main/docs/devlog/2026-07-07-trace-v2-recap-retro.org): turns, steps, and the recap/retro skills built on them
 - [Context folding design](https://raw.githubusercontent.com/thevibeworks/ccx/main/docs/design/0001-context-folding.md): folding a session trace into auditable decisions
+- [Evidence and citations design](https://raw.githubusercontent.com/thevibeworks/ccx/main/docs/design/0005-evidence-citations-lessons-from-semantica.md): why every claim ccx makes carries a walkable anchor
+- [Session connections design](https://raw.githubusercontent.com/thevibeworks/ccx/main/docs/design/0006-session-connections.md): the deterministic relations between sessions and the evidence behind each
 - [Devlog directory](https://github.com/thevibeworks/ccx/tree/main/docs/devlog): dated decision records for every significant change
