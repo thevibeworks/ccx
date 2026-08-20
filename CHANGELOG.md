@@ -7,6 +7,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-19
+
 ### Added
 - **`ccx related [session]`: which sessions connect to this one, and how.** Sessions were islands; the joins were in the transcripts but nothing computed them. `related` derives, deterministically and with evidence, the anchor session's connections to the other sessions of its workspace: `forked_from`/`fork_of` (the transcripts share message ids — Claude Code fork and `ccx fork` copy history verbatim), `mentions`/`mentioned_by` (a session id named in conversation text, quoted), `handoff_from`/`handoff_to` (a baton file — HANDOFF.md, handoffs/, devlog, PLAN.md — written by one and read by the other later), `builds_on`/`built_on_by` (a workspace file edited by one, then read or edited by the other), `overlaps` (concurrent), `previous`/`next`. Strength is a band (strong/medium/weak), never a score; path lists are capped with the count kept and `truncated` set; `--json` (`ccx.related.v1`) carries message id, time, path, and quote per relation. `ccx trace --full` gains the same list as `related`. Design: docs/design/0006-session-connections.md.
 - **`ccx search -w/--word` matches whole words.** Matching was substring-only, so a term that prefixes a common word was unanswerable: `search --content semantica` returned 47 sessions, 46 of them "semantic*ally*", and ccx alone could not tell 0 real hits from 46 (docs/devlog/2026-08-18-search-word-boundary-dogfood.org). `-w` demands an ASCII word boundary on each side of the query that starts/ends with a word character (so "semantica-agi" and "(semantica)" still hit; CJK queries are unaffected) and applies to names, summaries, conversation text, and `--raw` lines alike.
