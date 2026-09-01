@@ -99,6 +99,7 @@ func TestEncodePath(t *testing.T) {
 		{"/home/user/app", "home-user-app"},
 		{"", ""},
 		{"relative/path", "relative-path"},
+		{`C:\Users\jc\Desktop\project`, "C:-Users-jc-Desktop-project"},
 	}
 
 	for _, tt := range tests {
