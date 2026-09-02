@@ -21,7 +21,7 @@ func EncodePath(path string) string {
 	if path == "" {
 		return ""
 	}
-	encoded := strings.ReplaceAll(path, "/", "-")
+	encoded := strings.NewReplacer("/", "-", "\\", "-").Replace(path)
 	if strings.HasPrefix(encoded, "-") {
 		return encoded[1:]
 	}
