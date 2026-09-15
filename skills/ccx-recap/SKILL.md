@@ -23,7 +23,7 @@ evidence — the recap is built from the trace.
 |---|---|
 | `/ccx-recap` | Latest session here: `ccx trace` |
 | `/ccx-recap <session-id>` | That session: `ccx trace <id>` |
-| `/ccx-recap today` / `week` | Fleet: `ccx insight --scope <s> --json`, then `ccx trace` per notable session |
+| `/ccx-recap today` / `week` / `month` | The whole fleet: `ccx insight --scope <s> --all --json` (every workspace's sessions digested), then `ccx trace` per session that decides the story |
 
 Timezone: preserve the user's. Warn when a `--tz` offset makes "today"
 differ from their local day (e.g. `--tz +8` from a US machine).
@@ -89,12 +89,32 @@ Numbers            small table: turns, steps, edits, errors, cost
 Citations are `#turn.step` (e.g. `#133.9`). Copy trace `warnings`
 into the recap — evidence gaps are part of the answer.
 
-## Multi-session (today/week)
+## Multi-session (today / week / month)
 
-Use insight's pre-computed `days[]`, `providers[]`, `workspaces[]` for
-tempo and where-the-work-went; then outline the 3-5 sessions that
-dominated (records, cost, or the user's stated interest) and recap
-each in 1-3 sentences. Never re-bucket raw records yourself.
+The subject is everything the human did with agents in the window —
+every workspace, every provider — not the repo you happen to be in.
+`ccx insight --scope <s> --all --json` (ccx.insight.v1) is the whole
+evidence set and it fits: read it whole before deciding what matters.
+
+1. `metrics` and `workspaces[]` say where the work went and what it
+   cost; quote cost with `cost_coverage` (an unpriced model is not a
+   free one).
+2. `sessions[]` carry each session's human `prompts[]` (intent, cited
+   by `session:line`), `final_answer` (agent-claimed), `edits`,
+   `commits`, `interrupts`/`denials`, `cost_usd` + `cost_status`, and
+   `relation` (a session that started before the window is a
+   long-running container, not this window's work).
+3. Group sessions into workstreams by workspace and prompt content,
+   not by session count. Then `ccx trace <id>` only the 3-5 sessions
+   that decide the story (cost, edits, commits, interventions, or the
+   human's stated interest) and verify their claims.
+4. Write the recap per workstream: what was asked, what the agent
+   did, verified vs claimed, still open. Never re-bucket `ccx log`
+   records yourself; never let one workspace stand in for the fleet.
+
+For a human review surface, write the HTML cockpit described in
+[HTML-REPORT.md](HTML-REPORT.md): judgment on top of the digest, into
+the insights dir so it shows at `/insights` in `ccx web`.
 
 ## Hard rules
 

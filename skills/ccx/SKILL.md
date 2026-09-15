@@ -47,9 +47,11 @@ ccx
 │   └── --json --raw              # Evidence bundle, optional raw JSONL
 │   └── --kind K1,K2              # Only these record kinds (user_prompt, assistant_message, tool_call, ...)
 │   └── --match PHRASE [-w]       # Only records whose raw line contains the phrase
-├── insight [project]             # HTML/JSON data report from session logs
+├── insight [project]             # Digest of every session in a window (ccx.insight.v1)
 │   └── --scope --tz --since --until --all
-│   └── --json                    # Aggregates: days[]/providers[]/workspaces[]
+│   └── --json                    # sessions[] with prompts/final answer/edits/commits/cost + workspaces[]/days[]/models[]
+│   └── --records [-n N]          # Add the raw log records (ccx log's payload)
+│   └── -o FILE                   # HTML evidence cockpit (default: $XDG_DATA_HOME/ccx/insights/, browsable at /insights)
 ├── web                           # Start web UI
 │   └── --port --host --no-open
 │   └── --project [path] --session ID --latest  # Deep-link into a view
@@ -78,6 +80,8 @@ ccx log --scope yesterday --tz +8 --all --json
 ccx log --scope today --all --kind user_prompt   # The humans in the loop: every prompt today, all sessions, in order
 ccx log --scope today --all --kind interrupt,tool_denied  # Where humans stopped or refused the agent
 ccx log --scope month --all --match deadman -w   # When a term came up inside a window (raw-line match)
+ccx insight --scope week --all --json            # What was worked on, everywhere: per-session prompts, answers, edits, cost
+ccx insight --scope month --all                  # Same digest as an HTML cockpit in the insights dir
 ccx trace                 # Outline of the latest workspace session
 ccx trace abc123 --turn 5 # Full evidence for one turn
 ccx related abc123        # Sessions connected to this one: fork, handoff, mentions, shared files
@@ -108,6 +112,30 @@ other), `overlaps` (concurrent), `previous`/`next`. Strength is a band
 (strong/medium/weak). `--json` carries the evidence per relation
 (session, message id, time, path, quote) — cite from that when a
 claim spans sessions. Also present as `related` in `ccx trace --full`.
+
+## Insight: what was worked on, across every workspace
+
+`ccx insight --scope <today|yesterday|week|month> --all --json` is the
+evidence for "what did we do this week" — all workspaces, all
+providers, one bounded document (`ccx.insight.v1`). Read it whole:
+
+- `metrics`: sessions, workspaces, prompts, edits, commits,
+  interventions, tokens, cost, and `cost_coverage` (share of tokens a
+  pricing row covers — quote the cost with its coverage, never alone).
+- `workspaces[]`: where the work went, sorted by activity, each with
+  `session_ids[]`.
+- `sessions[]`: per session, the human's `prompts[]` (intent, cited
+  by line), the agent's `final_answer` (its claim, not proof), `edits`
+  + `edited_paths[]`, `commits`, `interrupts`/`denials`, `cost_usd`
+  with `cost_status`, `relation` (started before / ended after the
+  window). Drill with `ccx trace <id>` only where it matters.
+- `models[]`, `days[]`, `providers[]`: tempo and spend by axis.
+
+Never rebuild these from `ccx log` records; `log` is for "when did X
+come up" (`--match`) and "every human prompt today" (`--kind`), not
+for reconstructing sessions. Without `--json` the same digest is
+rendered as a self-contained HTML cockpit (facts only; the judgment
+layer is the ccx-recap skill).
 
 ## Multi-Provider
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thevibeworks/ccx/internal/catalog"
+	ccxconfig "github.com/thevibeworks/ccx/internal/config"
 	"github.com/thevibeworks/ccx/internal/parser"
 )
 
@@ -408,7 +409,7 @@ func renderSessionsPage(projects []*parser.Project, v sessionsView) string {
 	sq := v.Query
 	var b strings.Builder
 
-	b.WriteString(pageHeader("Sessions - ccx", "light"))
+	b.WriteString(pageHeader("Sessions - ccx", ccxconfig.Theme()))
 	b.WriteString(renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
 	b.WriteString(renderSidebar("sessions"))

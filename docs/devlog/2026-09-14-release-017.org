@@ -1,0 +1,26 @@
+* [2026-09-14] Dev Log: Release 0.17.0                 :RELEASE:
+
+** Context
+A downstream installer tried =go install github.com/thevibeworks/ccx@v0.16.0=.
+The module root is not an executable package. The supported install target
+is =github.com/thevibeworks/ccx/cmd/ccx@VERSION=.
+
+** Changes
+- Release the session digest, explicit cost coverage, log previews, trace
+  improvements, companion skill documents, and Ledger web design.
+- Include the upstream Windows workspace encoding fix.
+- Keep the optional record limit separate from digest collection so a
+  limited export cannot silently lose prompts, edits, or final answers.
+- Mark partially priced model summaries as incomplete.
+
+** Compatibility
+=insight --json= now returns =ccx.insight.v1=. Consumers of the previous
+log payload should use =log --json=. =insight --records= includes records
+alongside the digest. Costs are whole-session estimates from pinned rates,
+including when a session spans the requested window.
+
+** Validation
+Run formatting, race tests, dependency verification, vet, lint, and the
+release build. Verify tagged Go installation and published archives after
+publication. Downstream installer tests must assert the executable package
+path so an unavailable archive cannot hide an invalid fallback.

@@ -776,6 +776,20 @@ func (b *Backend) quickParseSession(filePath string) (*parser.Session, error) {
 	}
 	stats.DurationSeconds = durationSeconds(firstTime, lastTime)
 
+	// Price the token_count totals the way the full parse prices
+	// per-message usage (the math is linear, so the totals give the
+	// same figure). Without this every Codex session listed at $0 and,
+	// with no unpriced tokens either, read as "priced" — while its
+	// transcript view showed the real number.
+	usage := parser.MessageUsage{InputTokens: stats.InputTokens, OutputTokens: stats.OutputTokens, CacheReadTokens: stats.CacheReadTokens}
+	if usage.Total() > 0 {
+		if pricing := parser.LookupPricing(meta.Model); pricing != nil {
+			stats.CostUSD = parser.ComputeCost(&usage, pricing)
+		} else {
+			stats.UnpricedTokens = usage.Total()
+		}
+	}
+
 	projectName, _, _ := projectInfoForCWD(meta.CWD)
 	return &parser.Session{
 		ID:          sessionID,
@@ -1536,7 +1550,7 @@ func (b *Backend) parseSession(filePath string, threadNames map[string]string) (
 			distributeCodexDelta(messages[usageWatermark:], pendingUsageDelta)
 		}
 	}
-	stats.CostUSD = sumMessageCosts(messages)
+	stats.CostUSD, stats.UnpricedTokens = sumMessageCosts(messages)
 
 	if firstTime.IsZero() || lastTime.IsZero() {
 		if info, err := os.Stat(filePath); err == nil {
@@ -1885,15 +1899,22 @@ func addUsage(a, b parser.MessageUsage) parser.MessageUsage {
 	}
 }
 
-func sumMessageCosts(messages []*parser.Message) float64 {
+// sumMessageCosts returns the priced total and the token count that
+// no pricing row covered, so a rollout on an unknown model reports
+// "unpriced" instead of a zero that reads as free.
+func sumMessageCosts(messages []*parser.Message) (float64, int) {
 	var total float64
+	var unpriced int
 	for _, m := range messages {
 		if m == nil || m.Usage == nil {
 			continue
 		}
 		total += m.Usage.CostUSD
+		if !m.Usage.Priced {
+			unpriced += m.Usage.Total()
+		}
 	}
-	return total
+	return total, unpriced
 }
 
 // distributeCodexDelta evenly splits a token delta across every
@@ -1950,7 +1971,9 @@ func distributeCodexDelta(recent []*parser.Message, delta parser.MessageUsage) {
 			per.CacheCreateTokens += remainder.CacheCreateTokens
 			per.ReasoningTokens += remainder.ReasoningTokens
 		}
-		per.CostUSD = parser.ComputeCost(&per, parser.LookupPricing(m.Model))
+		pricing := parser.LookupPricing(m.Model)
+		per.CostUSD = parser.ComputeCost(&per, pricing)
+		per.Priced = pricing != nil
 		m.Usage = &per
 	}
 }

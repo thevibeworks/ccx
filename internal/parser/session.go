@@ -118,6 +118,9 @@ func ParseSession(filePath string) (*Session, error) {
 	for _, msg := range messages {
 		if msg.Usage != nil {
 			stats.CostUSD += msg.Usage.CostUSD
+			if !msg.Usage.Priced {
+				stats.UnpricedTokens += msg.Usage.Total()
+			}
 		}
 	}
 
@@ -213,7 +216,9 @@ func parseMessage(raw rawMessage) *Message {
 			CacheReadTokens:   usage.CacheReadInputTokens,
 			CacheCreateTokens: usage.CacheCreationInputTokens,
 		}
-		mu.CostUSD = ComputeCost(mu, LookupPricing(msg.Model))
+		pricing := LookupPricing(msg.Model)
+		mu.CostUSD = ComputeCost(mu, pricing)
+		mu.Priced = pricing != nil
 		msg.Usage = mu
 	}
 
@@ -583,14 +588,16 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 
 			// Accumulate cost using the same pricing path the full parser uses,
 			// so session-list totals match the session-view total.
+			mu := &MessageUsage{
+				InputTokens:       usage.InputTokens,
+				OutputTokens:      usage.OutputTokens,
+				CacheReadTokens:   usage.CacheReadInputTokens,
+				CacheCreateTokens: usage.CacheCreationInputTokens,
+			}
 			if pricing := LookupPricing(raw.Message.Model); pricing != nil {
-				mu := &MessageUsage{
-					InputTokens:       usage.InputTokens,
-					OutputTokens:      usage.OutputTokens,
-					CacheReadTokens:   usage.CacheReadInputTokens,
-					CacheCreateTokens: usage.CacheCreationInputTokens,
-				}
 				stats.CostUSD += ComputeCost(mu, pricing)
+			} else {
+				stats.UnpricedTokens += mu.Total()
 			}
 		}
 

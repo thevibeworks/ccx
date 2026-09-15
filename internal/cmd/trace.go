@@ -48,6 +48,7 @@ var (
 	traceTurn    int
 	traceFull    bool
 	traceWidth   int
+	traceRepo    string
 )
 
 func init() {
@@ -62,6 +63,7 @@ func addTraceFlags(cmd *cobra.Command) {
 	cmd.Flags().IntVar(&traceTurn, "turn", 0, "full evidence for one turn (JSON)")
 	cmd.Flags().BoolVar(&traceFull, "full", false, "complete trace bundle (JSON)")
 	cmd.Flags().IntVar(&traceWidth, "width", trace.DefaultHeadlineWidth, "outline headline width in runes (0 = untruncated)")
+	cmd.Flags().StringVar(&traceRepo, "repo", "", "git repository for commit correlation (default: session cwd, then current directory)")
 }
 
 func runTrace(cmd *cobra.Command, args []string) error {
@@ -83,6 +85,16 @@ func runTrace(cmd *cobra.Command, args []string) error {
 	result := trace.Analyze(fullSession)
 
 	repoDir, resolvedFrom, gitRootWarnings := findGitRootForSession(fullSession)
+	if traceRepo != "" {
+		// Sessions recorded under a workspace root that is not itself a
+		// repo (deva-style WIP/worktree/<repo>) can only link commits
+		// when told where the repo is.
+		root := findGitRootFrom(traceRepo)
+		if root == "" {
+			return fmt.Errorf("--repo %q is not inside a git repository", traceRepo)
+		}
+		repoDir, resolvedFrom, gitRootWarnings = root, "flag", nil
+	}
 	result.Warnings = append(result.Warnings, gitRootWarnings...)
 	if repoDir != "" {
 		result.Git.ResolvedFrom = resolvedFrom

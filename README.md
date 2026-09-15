@@ -40,6 +40,7 @@ ccx reads session files from `~/.claude/`, `~/.codex/`, and `~/.grok/` and gives
 - **Runner bridge** — `ccx run <skill> --agent claude|codex|grok` executes a bundled skill through your installed agent CLI, with `--dry-run` disclosure and a session receipt
 - **Context trace** — `ccx trace` emits evidence for Context Folding
 - **Time-sliced logs** — `ccx log` cuts through long-running session JSONL by timestamp
+- **Window digest** — `ccx insight` answers "what was worked on this week, everywhere": per session the human's prompts, the agent's final answer, edits, commits, interventions and cost (with coverage), rolled up by workspace, day, provider and model; JSON for skills, HTML cockpit for humans
 - **Provider filter** — `--provider cc`, `cx`, or `gx` on any command
 - **Date filter** — `--after 2026-03-01 --before 2026-04-01`
 - **Keyboard shortcuts** — `j/k` scroll, `/` search, `z` fold, `r` refresh, `d` theme
@@ -82,6 +83,8 @@ ccx trace [session] -o trace.json # Extract evidence for context folding
 ccx related [session]            # Which sessions connect to this one (fork, handoff, mentions, shared files)
 ccx log --scope yesterday --tz +8 --all --json # Time-sliced log evidence
 ccx log --scope today --all --kind user_prompt # Every human prompt today, across sessions
+ccx insight --scope week --all --json          # Per-session digest of the week: prompts, answers, edits, cost
+ccx insight --scope month --all                # Same digest as an HTML cockpit (ccx web -> /insights)
 ccx search "auth bug"            # Search across sessions + memory
 ccx search --content -w --sort first goose # Whole-word content hits, earliest first
 ccx search --content -w --hits goose      # Every mention, quoted + anchored (time, session, message id)

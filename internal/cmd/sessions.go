@@ -327,7 +327,12 @@ type sessionJSON struct {
 	Sidechains int     `json:"sidechains"`
 	Tokens     int     `json:"tokens"`
 	CostUSD    float64 `json:"cost_usd,omitempty"`
-	FilePath   string  `json:"file_path,omitempty"`
+	// CostStatus: priced | partial | unpriced (absent when no tokens).
+	// A missing cost_usd with cost_status "unpriced" is "ccx could not
+	// price this model", not "this session was free".
+	CostStatus     string `json:"cost_status,omitempty"`
+	UnpricedTokens int    `json:"unpriced_tokens,omitempty"`
+	FilePath       string `json:"file_path,omitempty"`
 }
 
 func printSessionsJSON(sessions []*parser.Session, receipts *launches.Index) error {
@@ -335,21 +340,23 @@ func printSessionsJSON(sessions []*parser.Session, receipts *launches.Index) err
 	for i, s := range sessions {
 		cacheTokens := s.Stats.CacheReadTokens + s.Stats.CacheCreateTokens
 		items[i] = sessionJSON{
-			ID:         s.ID,
-			Provider:   s.Provider,
-			Project:    s.ProjectName,
-			Workspace:  s.CWD,
-			Goal:       receipts.GoalFor(s.CWD, s.StartTime),
-			Summary:    s.Summary,
-			StartTime:  s.StartTime.Format(time.RFC3339),
-			EndTime:    s.EndTime.Format(time.RFC3339),
-			Model:      s.Model,
-			Messages:   s.Stats.MessageCount,
-			ToolCalls:  s.Stats.ToolCalls,
-			Sidechains: s.Stats.AgentSidechains,
-			Tokens:     s.Stats.InputTokens + s.Stats.OutputTokens + cacheTokens,
-			CostUSD:    s.Stats.CostUSD,
-			FilePath:   s.FilePath,
+			ID:             s.ID,
+			Provider:       s.Provider,
+			Project:        s.ProjectName,
+			Workspace:      s.CWD,
+			Goal:           receipts.GoalFor(s.CWD, s.StartTime),
+			Summary:        s.Summary,
+			StartTime:      s.StartTime.Format(time.RFC3339),
+			EndTime:        s.EndTime.Format(time.RFC3339),
+			Model:          s.Model,
+			Messages:       s.Stats.MessageCount,
+			ToolCalls:      s.Stats.ToolCalls,
+			Sidechains:     s.Stats.AgentSidechains,
+			Tokens:         s.Stats.InputTokens + s.Stats.OutputTokens + cacheTokens,
+			CostUSD:        s.Stats.CostUSD,
+			CostStatus:     s.Stats.CostStatus(),
+			UnpricedTokens: s.Stats.UnpricedTokens,
+			FilePath:       s.FilePath,
 		}
 	}
 	enc := json.NewEncoder(os.Stdout)

@@ -59,6 +59,9 @@ func init() {
 type bundledSkill struct {
 	Name    string
 	Content []byte
+	// Extras are the skill's companion documents (e.g. the recap's
+	// HTML-REPORT.md), keyed by file name, installed beside SKILL.md.
+	Extras map[string][]byte
 }
 
 func bundledSkills() ([]bundledSkill, error) {
@@ -73,10 +76,26 @@ func bundledSkills() ([]bundledSkill, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read embedded %s: %w", path, err)
 		}
-		out = append(out, bundledSkill{
+		skill := bundledSkill{
 			Name:    filepath.Dir(path),
 			Content: content,
-		})
+			Extras:  map[string][]byte{},
+		}
+		siblings, err := fs.Glob(skills.FS, skill.Name+"/*.md")
+		if err != nil {
+			return nil, err
+		}
+		for _, sibling := range siblings {
+			if filepath.Base(sibling) == "SKILL.md" {
+				continue
+			}
+			extra, err := fs.ReadFile(skills.FS, sibling)
+			if err != nil {
+				return nil, fmt.Errorf("read embedded %s: %w", sibling, err)
+			}
+			skill.Extras[filepath.Base(sibling)] = extra
+		}
+		out = append(out, skill)
 	}
 	return out, nil
 }
@@ -136,6 +155,11 @@ func runSkillsInstall(cmd *cobra.Command, args []string) error {
 		}
 		if err := os.WriteFile(filepath.Join(target, "SKILL.md"), skill.Content, 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", skill.Name, err)
+		}
+		for name, extra := range skill.Extras {
+			if err := os.WriteFile(filepath.Join(target, name), extra, 0o644); err != nil {
+				return fmt.Errorf("write %s/%s: %w", skill.Name, name, err)
+			}
 		}
 		fmt.Printf("installed %s -> %s\n", skill.Name, target)
 	}

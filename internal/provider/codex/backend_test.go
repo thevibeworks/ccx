@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/thevibeworks/ccx/internal/parser"
+
 	"github.com/thevibeworks/ccx/internal/catalog"
 	"github.com/thevibeworks/ccx/internal/config"
 )
@@ -566,5 +568,52 @@ func writeRollout(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", path, err)
+	}
+}
+
+func TestQuickParseSessionPricesTokenCountTotalsAndFlagsUnknownModels(t *testing.T) {
+	// 2026-08-26: every Codex session listed at $0 with nothing marked
+	// unpriced, because quick parse copied token_count totals into the
+	// stats and never priced them; only the full parse did.
+	home := t.TempDir()
+	sessionsDir := filepath.Join(home, "sessions")
+	archivedDir := filepath.Join(home, "archived_sessions")
+	rollout := func(name, model string) {
+		writeRollout(t, filepath.Join(sessionsDir, "2026", "08", "20", name), `{"timestamp":"2026-08-20T13:00:00Z","type":"session_meta","payload":{"id":"`+name+`","timestamp":"2026-08-20T13:00:00Z","cwd":"/tmp/work/priced","originator":"codex_cli_rs","cli_version":"0.147.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-08-20T13:00:01Z","type":"turn_context","payload":{"cwd":"/tmp/work/priced","model":"`+model+`"}}
+{"timestamp":"2026-08-20T13:00:02Z","type":"event_msg","payload":{"type":"user_message","message":"price me"}}
+{"timestamp":"2026-08-20T13:00:03Z","type":"event_msg","payload":{"type":"agent_message","message":"ok"}}
+{"timestamp":"2026-08-20T13:00:04Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000000,"cached_input_tokens":600000,"output_tokens":100000,"reasoning_output_tokens":20000,"total_tokens":1100000}}}}
+`)
+	}
+	rollout("rollout-20260820T130000-thread-sol.jsonl", "gpt-5.6-sol")
+	rollout("rollout-20260820T130100-thread-unk.jsonl", "gpt-99-future")
+
+	backend := NewWithDirs(home, sessionsDir, archivedDir)
+	projects, err := backend.DiscoverProjects()
+	if err != nil {
+		t.Fatalf("DiscoverProjects() error = %v", err)
+	}
+	if len(projects) != 1 || len(projects[0].Sessions) != 2 {
+		t.Fatalf("projects = %d, sessions = %v", len(projects), projects)
+	}
+	byModel := map[string]*parser.Session{}
+	for _, s := range projects[0].Sessions {
+		byModel[s.Model] = s
+	}
+	sol := byModel["gpt-5.6-sol"]
+	if sol == nil {
+		t.Fatalf("no gpt-5.6-sol session among %d", len(projects[0].Sessions))
+	}
+	// 400k uncached input @ $4 + 600k cached @ $0.40 + 100k output @ $20 = 1.6 + 0.24 + 2.0
+	if got := sol.Stats.CostUSD; got < 3.83 || got > 3.85 {
+		t.Fatalf("sol CostUSD = %v, want ~3.84", got)
+	}
+	if sol.Stats.CostStatus() != "priced" || sol.Stats.UnpricedTokens != 0 {
+		t.Fatalf("sol status = %q unpriced = %d", sol.Stats.CostStatus(), sol.Stats.UnpricedTokens)
+	}
+	unk := byModel["gpt-99-future"]
+	if unk == nil || unk.Stats.CostUSD != 0 || unk.Stats.CostStatus() != "unpriced" || unk.Stats.UnpricedTokens != 1100000 {
+		t.Fatalf("unknown-model session must be unpriced, not free: %+v", unk.Stats)
 	}
 }

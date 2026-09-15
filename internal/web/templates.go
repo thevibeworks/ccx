@@ -108,7 +108,7 @@ func parseProviderQuery(q string) (provider, query string) {
 func renderIndexPage(projects []*parser.Project, totalSessions int, search, sortBy string) string {
 	var b strings.Builder
 
-	b.WriteString(pageHeader("ccx", "light"))
+	b.WriteString(pageHeader("ccx", ccxconfig.Theme()))
 	b.WriteString(renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
 	b.WriteString(renderSidebar("projects"))
@@ -175,7 +175,7 @@ func renderIndexPage(projects []*parser.Project, totalSessions int, search, sort
 func renderProjectPage(project *parser.Project, sessions []*parser.Session, allProjects []*parser.Project, memFiles []MemoryFile, search, sortBy string) string {
 	var b strings.Builder
 
-	b.WriteString(pageHeader(project.Name+" - ccx", "light"))
+	b.WriteString(pageHeader(project.Name+" - ccx", ccxconfig.Theme()))
 	b.WriteString(renderTopNav(project.EncodedName, ""))
 	b.WriteString(`<div class="layout two-panel">`)
 
@@ -324,8 +324,12 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	b.WriteString(`<button class="icon-btn outline-btn" onclick="toggleOutlineDrawer()" title="Outline" aria-label="Toggle outline">☰</button>`)
 	b.WriteString(`<nav class="breadcrumb" aria-label="Breadcrumb">`)
 	b.WriteString(`<a href="/">Projects</a> <span class="sep">/</span> `)
-	b.WriteString(fmt.Sprintf(`<a href="/project/%s">%s</a> <span class="sep">/</span> `,
-		html.EscapeString(projectName), html.EscapeString(projectName)))
+	// Label with the human workspace name, not the slug the directory is
+	// encoded as; the full path stays available on hover.
+	b.WriteString(fmt.Sprintf(`<a href="/project/%s" title="%s">%s</a> <span class="sep">/</span> `,
+		html.EscapeString(projectName),
+		html.EscapeString(parser.DecodePath(projectName)),
+		html.EscapeString(parser.GetProjectDisplayName(projectName))))
 	b.WriteString(fmt.Sprintf(`<span class="current">%s</span>`, html.EscapeString(idPrefix)))
 	b.WriteString(`</nav>`)
 	if len(allSessions) > 1 {
@@ -360,7 +364,7 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	b.WriteString(`</button>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="nav-list" id="nav-list">`)
-	renderConversationNav(&b, session.RootMessages)
+	renderConversationNav(&b, session.RootMessages, buildStepMap(turnMap))
 	b.WriteString(`</div>`)
 	b.WriteString(`</aside>`)
 
@@ -536,9 +540,15 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 			}
 		}
 		b.WriteString(fmt.Sprintf(`<div class="info-row info-total" title="Input + Output tokens"><span class="info-label">Total</span><span class="info-value"><strong>%s</strong></span></div>`, formatTokens(totalTokens)))
-		// Cost row, shown when pricing resolved for at least one model
-		if session.Stats.CostUSD > 0 {
-			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="Sum of per-message USD cost using pinned Anthropic list pricing"><span class="info-label">Cost</span><span class="info-value"><strong>%s</strong></span></div>`, formatCost(session.Stats.CostUSD)))
+		// Cost row: priced total when pricing resolved; "n/a" with the
+		// reason when it did not. A missing row would read as free.
+		switch session.Stats.CostStatus() {
+		case "priced":
+			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="Sum of per-message USD cost using pinned list pricing"><span class="info-label">Cost</span><span class="info-value"><strong>%s</strong></span></div>`, formatCost(session.Stats.CostUSD)))
+		case "partial":
+			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="Priced part only: %s tokens had no pricing row"><span class="info-label">Cost</span><span class="info-value"><strong>%s</strong> <span class="muted">(+%s tokens unpriced)</span></span></div>`, formatTokens(session.Stats.UnpricedTokens), formatCost(session.Stats.CostUSD), formatTokens(session.Stats.UnpricedTokens)))
+		case "unpriced":
+			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="Model %s has no pricing row; ccx does not guess"><span class="info-label">Cost</span><span class="info-value">n/a <span class="muted">(unpriced: %s)</span></span></div>`, html.EscapeString(session.Model), html.EscapeString(session.Model)))
 		}
 		b.WriteString(`</div>`)
 	}
@@ -2113,15 +2123,20 @@ func renderSpendSection(turns []*parser.Exchange, sessionTotal float64) string {
 		}
 		label := fmt.Sprintf("%d. %s", t.Index, snippet)
 		tokensLabel := formatTokens(t.TotalTokens())
+		// A turn with tokens and no priced cost is unpriced, not $0.00.
+		costLabel := formatCost(t.CostUSD)
+		if t.CostUSD == 0 {
+			costLabel = "n/a"
+		}
 
 		b.WriteString(fmt.Sprintf(
 			`<a class="spend-row" href="#msg-%s" title="Jump to turn %d — %s tokens, %s"><span class="spend-label">%s</span><span class="spend-cost">%s</span></a>`,
 			html.EscapeString(sanitizeID(t.AnchorID)),
 			t.Index,
 			tokensLabel,
-			formatCost(t.CostUSD),
+			costLabel,
 			html.EscapeString(label),
-			formatCost(t.CostUSD),
+			costLabel,
 		))
 	}
 	b.WriteString(`</div>`)
@@ -2154,7 +2169,23 @@ func renderSpendSection(turns []*parser.Exchange, sessionTotal float64) string {
 // The last three exchanges default to expanded; earlier ones collapse.
 // Group children are rendered in a <div class="nav-children"> that the
 // JS can hide/show via the aria-expanded attribute on the group root.
-func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
+// buildStepMap indexes trace steps by the assistant message that opened
+// them, so the outline can show what the agent said it was doing instead
+// of the name of the tool it happened to call. Step.MessageID is the
+// message UUID (internal/trace/analysis.go).
+func buildStepMap(turnMap map[string]*trace.Turn) map[string]*trace.Step {
+	steps := make(map[string]*trace.Step)
+	for _, turn := range turnMap {
+		for i := range turn.Steps {
+			if id := turn.Steps[i].MessageID; id != "" {
+				steps[id] = &turn.Steps[i]
+			}
+		}
+	}
+	return steps
+}
+
+func renderConversationNav(b *strings.Builder, messages []*parser.Message, stepMap map[string]*trace.Step) {
 	flat := flattenMessages(messages)
 	allMsgs := filterMainConversation(flat)
 	scGroups := groupSidechainsByAgent(flat)
@@ -2251,20 +2282,20 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message) {
 			total := len(g.children)
 			if total <= maxChildren {
 				for _, child := range g.children {
-					renderNavChild(b, child)
+					renderNavChild(b, child, stepMap)
 					renderNavSidechainEntries(b, child, scMap)
 				}
 			} else {
 				head := maxChildren - 1
 				for _, child := range g.children[:head] {
-					renderNavChild(b, child)
+					renderNavChild(b, child, stepMap)
 					renderNavSidechainEntries(b, child, scMap)
 				}
 				hidden := total - head - 1
 				if hidden > 0 {
 					b.WriteString(fmt.Sprintf(`<span class="nav-more">+%d more</span>`, hidden))
 				}
-				renderNavChild(b, g.children[total-1])
+				renderNavChild(b, g.children[total-1], stepMap)
 				renderNavSidechainEntries(b, g.children[total-1], scMap)
 			}
 			b.WriteString(`</div>`) // .nav-children
@@ -2318,7 +2349,12 @@ func getNavPreview(msg *parser.Message) string {
 	return "(empty)"
 }
 
-func renderNavChild(b *strings.Builder, msg *parser.Message) {
+// renderNavChild draws one line of the outline. When the message opened a
+// trace step, the line carries that step's narration — the agent's own
+// stated intent — because "response / Bash / response" is a list of message
+// kinds and tells an auditor nothing. The tool name stays as the title
+// attribute so the detail is still one hover away.
+func renderNavChild(b *strings.Builder, msg *parser.Message, stepMap map[string]*trace.Step) {
 	switch msg.Kind {
 	case parser.KindAssistant:
 		hasTool := false
@@ -2331,6 +2367,10 @@ func renderNavChild(b *strings.Builder, msg *parser.Message) {
 				toolPreview = compactToolPreview(block.ToolName, block.ToolInput)
 				break
 			}
+		}
+		if step := stepMap[msg.UUID]; step != nil && strings.TrimSpace(step.Narration) != "" {
+			renderNavStep(b, msg, step, hasTool, toolName, toolPreview)
+			return
 		}
 		if hasTool {
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-tool" data-msg="%s" title="%s">`,
@@ -2353,10 +2393,61 @@ func renderNavChild(b *strings.Builder, msg *parser.Message) {
 	}
 }
 
+// renderNavStep is the outline line for a message that opened a trace step.
+// The headline is the evidence; the counters beside it are what that step
+// actually did, so a reader can spot the expensive and the failing steps
+// without opening any of them.
+func renderNavStep(b *strings.Builder, msg *parser.Message, step *trace.Step, hasTool bool, toolName, toolPreview string) {
+	id := sanitizeID(msg.UUID)
+	title := toolName
+	if toolPreview != "" {
+		title = strings.TrimSpace(toolName + " " + toolPreview)
+	}
+	icon := "○"
+	if hasTool {
+		icon = "●"
+	}
+	b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-step" data-msg="%s" title="%s">`,
+		id, html.EscapeString(id), html.EscapeString(title)))
+	b.WriteString(fmt.Sprintf(`<span class="nav-icon" aria-hidden="true">%s</span>`, icon))
+
+	headline := getFirstLine(step.Narration)
+	quiet := ""
+	if !hasTool && len(step.FilesEdited) == 0 {
+		quiet = " quiet"
+	}
+	b.WriteString(fmt.Sprintf(`<span class="nav-headline%s">%s</span>`,
+		quiet, html.EscapeString(headline)))
+
+	var meta []string
+	if tools := stepToolCount(step); tools > 0 {
+		meta = append(meta, fmt.Sprintf("%dt", tools))
+	}
+	if n := len(step.FilesEdited); n > 0 {
+		meta = append(meta, fmt.Sprintf("%de", n))
+	}
+	if step.Errors > 0 {
+		meta = append(meta, fmt.Sprintf(`<span class="err">%dx</span>`, step.Errors))
+	}
+	if len(meta) > 0 {
+		b.WriteString(fmt.Sprintf(`<span class="nav-meta">%s</span>`, strings.Join(meta, " ")))
+	}
+	b.WriteString(`</a>`)
+}
+
+// stepToolCount totals the step's tool calls across tool names.
+func stepToolCount(step *trace.Step) int {
+	total := 0
+	for _, n := range step.ToolCounts {
+		total += n
+	}
+	return total
+}
+
 func renderSearchPage(projectsDir, query string) string {
 	var b strings.Builder
 
-	b.WriteString(pageHeader("Search - ccx", "light"))
+	b.WriteString(pageHeader("Search - ccx", ccxconfig.Theme()))
 	b.WriteString(renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
 	b.WriteString(renderSidebar("search"))
@@ -2499,7 +2590,7 @@ if (%q) doSearch(%q);
 func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []ConfigFileInfo, agents []AgentInfo, skills []SkillInfo) string {
 	var b strings.Builder
 
-	b.WriteString(pageHeader("Settings - ccx", "light"))
+	b.WriteString(pageHeader("Settings - ccx", ccxconfig.Theme()))
 	b.WriteString(renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
 	b.WriteString(renderSidebar("settings"))
@@ -3066,7 +3157,7 @@ document.querySelectorAll('.mem-file .file-toolbar .copy-btn, .file-card .file-t
 func renderMemoryPage(data *MemoryData) string {
 	var b strings.Builder
 
-	b.WriteString(pageHeader("Memory - ccx", "light"))
+	b.WriteString(pageHeader("Memory - ccx", ccxconfig.Theme()))
 	b.WriteString(renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
 	b.WriteString(renderSidebar("memory"))
@@ -3273,8 +3364,8 @@ func pageHeader(title, theme string) string {
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 <style type="text/tailwindcss">
 @theme {
-  --color-ccx: #c65d3e;
-  --color-ccx-dark: #a94e33;
+  --color-ccx: #7d2b1f;
+  --color-ccx-dark: #6b2419;
 }
 @utility scrollbar-thin {
   scrollbar-width: thin;
@@ -3335,7 +3426,7 @@ func renderNotFoundPage(w http.ResponseWriter, r *http.Request, kind, detail str
 		"&body=" + url.QueryEscape(bodyTemplate)
 
 	var b strings.Builder
-	b.WriteString(pageHeader("ccx — not found", "light"))
+	b.WriteString(pageHeader("ccx — not found", ccxconfig.Theme()))
 	b.WriteString(renderTopNav("", ""))
 	b.WriteString(`<main class="nf-main">`)
 	b.WriteString(`<div class="nf-box">`)

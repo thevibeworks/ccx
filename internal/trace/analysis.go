@@ -125,6 +125,8 @@ func Analyze(session *parser.Session) *TraceResult {
 		ReasoningTokens:   reasoningTok,
 		TotalCostUSD:      mainCost + agentsCost,
 		AgentsCostUSD:     agentsCost,
+		UnpricedTokens:    session.Stats.UnpricedTokens,
+		CostStatus:        session.Stats.CostStatus(),
 		DurationSecs:      dur,
 		ActiveSecs:        activeSecs,
 		HasSidechains:     session.Stats.AgentSidechains > 0,
@@ -398,6 +400,14 @@ func buildTurn(index int, anchor *parser.Message, messages []*parser.Message, si
 		}
 	}
 
+	if steps == nil {
+		steps = []Step{}
+	}
+	for i := range steps {
+		if steps[i].ToolCounts == nil {
+			steps[i].ToolCounts = map[string]int{}
+		}
+	}
 	turn.Steps = steps
 	turn.FilesEdited = sortedKeys(editSet)
 	turn.FilesRead = sortedKeys(readSet)
@@ -451,12 +461,9 @@ func stepForResult(msg *parser.Message, steps []Step, stepByToolID map[string]in
 }
 
 func sumToolCounts(steps []Step) map[string]int {
-	var out map[string]int
+	out := make(map[string]int)
 	for _, s := range steps {
 		for name, n := range s.ToolCounts {
-			if out == nil {
-				out = make(map[string]int)
-			}
 			out[name] += n
 		}
 	}

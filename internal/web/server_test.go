@@ -791,9 +791,13 @@ func TestHandleSession_SpendSectionShowsTokenBreakdownForUnpricedModel(t *testin
 	if !strings.Contains(body, `No pricing match`) {
 		t.Error("expected 'No pricing match' note when model is unknown")
 	}
-	// Cost row in Tokens section should NOT appear (no cost resolved)
-	if strings.Contains(body, `"info-row info-cost"`) {
-		t.Error("info-cost row should NOT render when session cost is 0")
+	// Cost row says "n/a" with the reason: an absent row reads as free,
+	// and "$0.00" reads as measured zero; neither is the truth.
+	if !strings.Contains(body, `"info-row info-cost"`) || !strings.Contains(body, `n/a`) || !strings.Contains(body, `unpriced: gpt-4`) {
+		t.Error("info-cost row should render n/a (unpriced: gpt-4) when the model has no pricing row")
+	}
+	if strings.Contains(body, `$0.00`) {
+		t.Error("an unpriced session must not render as $0.00")
 	}
 }
 

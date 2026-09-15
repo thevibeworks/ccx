@@ -106,6 +106,9 @@ func runLog(cmd *cobra.Command, args []string) error {
 	}
 	var match func(string) bool
 	if strings.TrimSpace(logMatch) != "" {
+		if err := matchValueError(logMatch); err != nil {
+			return err
+		}
 		m := newTextMatcher(logMatch, logWord)
 		match = m.matches
 	}
@@ -129,12 +132,50 @@ func runLog(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if projectName != "" && len(bundle.Sessions) == 0 {
+		warnUnknownLogProject(projectName)
+	}
 	if logJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(bundle)
 	}
 	return printLogTable(bundle)
+}
+
+// matchValueError names the `--match -w X` trap: cobra hands "-w" to
+// --match as its value and X becomes the project argument, a silent
+// miss. Dash-prefixed values are rejected.
+func matchValueError(value string) error {
+	if strings.HasPrefix(strings.TrimSpace(value), "-") {
+		return fmt.Errorf("--match value %q starts with '-': put flags after the phrase (--match X -w)", value)
+	}
+	return nil
+}
+
+// warnUnknownLogProject says on stderr that the project argument
+// matched nothing — otherwise "0 records" is indistinguishable from a
+// quiet window (#38). A hex-looking argument is almost always a
+// session id typed where view/trace/related would take one.
+func warnUnknownLogProject(name string) {
+	if looksLikeSessionID(name) {
+		fmt.Fprintf(os.Stderr, "ccx: no project matches %q — that looks like a session id; `ccx log` takes a project, `ccx view|trace|related` take a session\n", name)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "ccx: no project matches %q in this scope; `ccx projects` lists names, `--all` spans every project\n", name)
+}
+
+func looksLikeSessionID(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if len(s) < 6 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func validLogProvider(provider string) bool {

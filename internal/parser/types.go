@@ -38,7 +38,7 @@ type Project struct {
 // struct versions silently, so without this stamp an upgraded binary
 // keeps serving parses produced by the old code until the source
 // session file itself happens to change.
-const CacheFormatVersion = 4
+const CacheFormatVersion = 6 // 5: pricing rows for Claude 5 / GPT-5.6, SessionStats.UnpricedTokens; 6: Codex quick parse prices token_count totals
 
 type Session struct {
 	ID           string
@@ -87,11 +87,41 @@ type SessionStats struct {
 	CacheReadTokens   int
 	CacheCreateTokens int
 
-	// Cost (USD). Zero when no priced model was seen.
-	CostUSD float64
+	// Cost (USD) summed over messages whose model has a pricing row.
+	// UnpricedTokens counts the tokens of messages that carried usage
+	// but no pricing (unknown model, or Grok by contract): the honest
+	// reading of CostUSD is "at least this much", and CostStatus says
+	// how much of the session it covers. Zero cost with zero unpriced
+	// tokens means nothing was spent; zero cost with unpriced tokens
+	// means ccx could not price it — never render the first as the
+	// second.
+	CostUSD        float64
+	UnpricedTokens int
 
 	// Duration
 	DurationSeconds float64
+}
+
+// TotalTokens is every token category the session recorded.
+func (s SessionStats) TotalTokens() int {
+	return s.InputTokens + s.OutputTokens + s.CacheReadTokens + s.CacheCreateTokens
+}
+
+// CostStatus classifies the cost figure: "priced" (every token was
+// priced), "partial" (some models were), "unpriced" (none were), or
+// "" when the session recorded no tokens at all.
+func (s SessionStats) CostStatus() string {
+	total := s.TotalTokens()
+	switch {
+	case total == 0:
+		return ""
+	case s.UnpricedTokens == 0:
+		return "priced"
+	case s.UnpricedTokens >= total:
+		return "unpriced"
+	default:
+		return "partial"
+	}
 }
 
 // MessageUsage holds per-assistant-message API token counts plus the
@@ -117,6 +147,7 @@ type MessageUsage struct {
 	CacheCreateTokens int
 	ReasoningTokens   int     // Codex-only (GPT-5 reasoning); 0 for Claude
 	CostUSD           float64 // 0 if model is unknown to the pricing table
+	Priced            bool    // false when the model had no pricing row (CostUSD is then "unknown", not 0)
 }
 
 // Total returns the sum of all token categories.

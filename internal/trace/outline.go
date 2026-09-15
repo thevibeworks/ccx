@@ -58,6 +58,7 @@ func BuildOutline(result *TraceResult, width int) *Outline {
 		for _, n := range turn.ToolCounts {
 			ot.Tools += n
 		}
+		ot.Steps = make([]OutlineStep, 0, len(turn.Steps))
 		for _, step := range turn.Steps {
 			os := OutlineStep{
 				Index:      step.Index,
@@ -200,7 +201,7 @@ func RenderOutlineText(outline *Outline) string {
 		turnsSeg, outline.Stats.StepCount,
 		outline.Stats.FilesEdited, outline.Stats.ToolErrors,
 		humanSeg,
-		headerCost(outline.Stats.TotalCostUSD, outline.Stats.AgentsCostUSD))
+		headerCost(outline.Stats.TotalCostUSD, outline.Stats.AgentsCostUSD, outline.Stats.UnpricedTokens, outline.Session.Model))
 	if tok := tokenSplit(outline.Stats.InputTokens, outline.Stats.OutputTokens,
 		outline.Stats.CacheReadTokens, outline.Stats.CacheCreateTokens,
 		outline.Stats.ReasoningTokens); tok != "" {
@@ -401,18 +402,43 @@ func formatActive(secs float64) string {
 	}
 }
 
-// headerCost renders the header's cost segment, or nothing when no
-// cost was computed: $0.00 would read as "measured zero" when the
-// truth is "unpriced" (Grok sessions by contract, unknown models on
-// any provider) — remove-wrong over display-wrong. The total is
-// all-in; the agents share is broken out when nonzero so the sum of
-// turn costs remains reconcilable.
-func headerCost(cost, agentsCost float64) string {
-	if cost <= 0 {
+// headerCost renders the header's cost segment. $0.00 would read as
+// "measured zero" when the truth is "unpriced" (Grok sessions by
+// contract, unknown models on any provider), so unpriced tokens are
+// named as such: "cost n/a (2.1M tokens unpriced: some-model)" when
+// nothing was priced, "$12.30 (+1.2M tokens unpriced)" when part of
+// the session was. Nothing is rendered only when there is nothing to
+// say: no cost and no usage. The total is all-in; the agents share is
+// broken out when nonzero so the sum of turn costs reconciles.
+func headerCost(cost, agentsCost float64, unpricedTokens int, model string) string {
+	switch {
+	case cost <= 0 && unpricedTokens > 0:
+		if model != "" {
+			return fmt.Sprintf(" | cost n/a (%s tokens unpriced: %s)", formatTokenCount(unpricedTokens), model)
+		}
+		return fmt.Sprintf(" | cost n/a (%s tokens unpriced)", formatTokenCount(unpricedTokens))
+	case cost <= 0:
 		return ""
 	}
+	seg := fmt.Sprintf(" | $%.2f", cost)
 	if agentsCost >= 0.005 {
-		return fmt.Sprintf(" | $%.2f ($%.2f agents)", cost, agentsCost)
+		seg = fmt.Sprintf(" | $%.2f ($%.2f agents)", cost, agentsCost)
 	}
-	return fmt.Sprintf(" | $%.2f", cost)
+	if unpricedTokens > 0 {
+		seg += fmt.Sprintf(" (+%s tokens unpriced)", formatTokenCount(unpricedTokens))
+	}
+	return seg
+}
+
+// formatTokenCount renders a token count the way the header reads:
+// 950, 12.3k, 2.1M.
+func formatTokenCount(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
 }

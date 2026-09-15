@@ -205,7 +205,10 @@ func (b *Backend) ParseSession(filePath string) (*parser.Session, error) {
 		stats.OutputTokens = usage.OutputTokens
 		stats.CacheReadTokens = usage.CachedReadTokens
 		// CostUSD stays 0 by contract: no Grok cost estimation until
-		// pricing is verified against real billing evidence.
+		// pricing is verified against real billing evidence. Every
+		// token is therefore unpriced, and consumers render "n/a",
+		// not "$0".
+		stats.UnpricedTokens = stats.TotalTokens()
 	}
 	stats.DurationSeconds = session.EndTime.Sub(session.StartTime).Seconds()
 	if stats.DurationSeconds < 0 {

@@ -289,3 +289,55 @@ func TestKnownModels_DeterministicOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestLookupPricing_Claude5AndGPT56FamiliesArePriced(t *testing.T) {
+	// Sessions on newer models priced at $0 because the
+	// table stopped at opus-4-8 / gpt-5.4. Every current model resolves.
+	cases := []struct {
+		model               string
+		canonical           string
+		wantIn, wantOut     float64
+		wantRead, wantWrite float64
+	}{
+		{"claude-opus-5", "claude-opus-5", 5, 25, 0.5, 6.25},
+		{"claude-opus-5-20260601", "claude-opus-5", 5, 25, 0.5, 6.25},
+		{"claude-sonnet-5", "claude-sonnet-5", 2, 10, 0.2, 2.5},
+		{"gpt-5.6-sol", "gpt-5.6-sol", 4, 20, 0.4, 5},
+		{"gpt-5.6", "gpt-5.6-sol", 4, 20, 0.4, 5},
+		{"openai/gpt-5.6-terra", "gpt-5.6-terra", 2, 12, 0.2, 2.5},
+		{"gpt-5.6-luna", "gpt-5.6-luna", 0.2, 1.2, 0.02, 0.25},
+	}
+	for _, c := range cases {
+		p := LookupPricing(c.model)
+		if p == nil {
+			t.Errorf("LookupPricing(%q) = nil, want %s", c.model, c.canonical)
+			continue
+		}
+		if p.Model != c.canonical || p.InputPer1M != c.wantIn || p.OutputPer1M != c.wantOut || p.CacheReadPer1M != c.wantRead || p.CacheWritePer1M != c.wantWrite {
+			t.Errorf("LookupPricing(%q) = %+v, want %s %v/%v/%v/%v", c.model, *p, c.canonical, c.wantIn, c.wantOut, c.wantRead, c.wantWrite)
+		}
+	}
+	// Opus 5 must not fall through to the Opus 4 legacy tier and
+	// Sonnet 5 must not inherit Sonnet 4's 3/15.
+	if p := LookupPricing("claude-opus-5"); p.Model == "claude-opus-4" {
+		t.Errorf("opus-5 matched the opus-4 tier")
+	}
+}
+
+func TestSessionStats_CostStatusSeparatesUnpricedFromFree(t *testing.T) {
+	cases := []struct {
+		name  string
+		stats SessionStats
+		want  string
+	}{
+		{"no usage", SessionStats{}, ""},
+		{"all priced", SessionStats{InputTokens: 10, OutputTokens: 5, CostUSD: 0.01}, "priced"},
+		{"all unpriced", SessionStats{InputTokens: 10, OutputTokens: 5, UnpricedTokens: 15}, "unpriced"},
+		{"mixed models", SessionStats{InputTokens: 10, OutputTokens: 10, CacheReadTokens: 80, UnpricedTokens: 30, CostUSD: 0.02}, "partial"},
+	}
+	for _, c := range cases {
+		if got := c.stats.CostStatus(); got != c.want {
+			t.Errorf("%s: CostStatus() = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

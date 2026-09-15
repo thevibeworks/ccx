@@ -1,36 +1,45 @@
-/* Material: quiet terminal. One accent (terracotta — the brand), a
- * small semantic set (green/red/amber/purple/blue), warm-tinted
- * neutrals, hairline surfaces, 13px monospace. Emphasis comes from
- * weight, spacing, and hairline boxes — never from tinted bubbles.
- * Reference material: cctrace's session UI. */
+/* Material: ccx Ledger — a broadsheet ledger for agent work.
+ * Two families only: Georgia for display (what a human wrote, and what the
+ * money says) and monospace for everything else (what the machine did).
+ * Structure is drawn with rules and alignment — 1px hairline between rows,
+ * 2px under a section head, 3px double between subjects. Radius is 0 and
+ * the page carries no shadow; elevation is for menus and dialogs only.
+ * Oxblood is the single identity accent and also means "error": both are
+ * "attention". Every other hue is semantic and confined to its badge or
+ * its chip. Design system: design/system/, readme.md is the guide. */
 :root {
-  --bg: #fcfbfa;
-  --bg-secondary: #f5f3f0;
-  --bg-tertiary: #ebe8e4;
-  --hover: #f0edea;
-  --text: #26221e;
-  --text-muted: #6e675f;
-  --text-faint: #97908a;
-  --border: #dfdad4;
-  --primary: #c65d3e;
-  --primary-hover: #a94e33;
-  /* Semantic set — the only hues besides the accent. */
-  --green: #1a7f37;
-  --red: #cf222e;
-  --amber: #9a6700;
-  --purple: #8250df;
-  --blue: #0969da;
-  /* Provider identity rides the semantic set. */
-  --accent-cc: var(--primary);
-  --accent-cx: var(--green);
-  --accent-gx: var(--purple);
+  --bg: #f6f4ee;
+  --bg-secondary: #efece3;
+  --bg-tertiary: #e2ddd0;
+  --hover: #efece3;
+  --text: #17150f;
+  --text-muted: #6f6858;
+  --text-faint: #9d9686;
+  --border: #cdc7b8;
+  --border-soft: #e2ddd0;
+  --primary: #7d2b1f;
+  --primary-hover: #6b2419;
+  /* Semantic set — re-inked for the paper ground. Oxblood carries both the
+   * primary affordance and error state: on a ledger both mean "look here". */
+  --green: #1f4f47;
+  --red: #7d2b1f;
+  --amber: #8a5a12;
+  --purple: #5a3f78;
+  --blue: #2b4a6f;
+  /* Accent ramp, for tinted fills and pressed states. */
+  --primary-100: #f7e9e5;
+  --primary-200: #ecd0c8;
+  --primary-300: #d9a496;
+  /* Provider identity rides the semantic set. Badges and filter chips ONLY. */
+  --accent-cc: #a4522f;
+  --accent-cx: #1f4f47;
+  --accent-gx: #5a3f78;
   /* Legacy context accents, mapped onto the set. */
   --accent-project: var(--blue);
   --accent-session: var(--purple);
   --accent-conversation: var(--blue);
-  /* Semantic event tokens — one color per event kind, used by the
-   * rail, outline, info panel, badges, and any future surface. If
-   * you want to rebrand an event kind, change it HERE, not in a
+  /* Semantic event tokens — one color per event kind, used by the rail,
+   * outline, info panel, badges. Rebrand an event kind HERE, not in a
    * dozen component rules. */
   --event-prompt:   var(--primary);
   --event-command:  var(--blue);
@@ -39,51 +48,66 @@
   --event-subagent: var(--purple);
   --event-skill:    var(--purple);
   --event-plugin:   var(--blue);
-  /* Role tokens: hairline material, not pastel bubbles. Backgrounds
-   * are faint washes over the ground; borders carry the role hue for
-   * icons and hairlines only. */
-  --user-bg: color-mix(in srgb, var(--primary) 6%, var(--bg));
+  /* Role tokens: a role is a 3px leading rule and a label. There is no
+   * tinted bubble in this system — tinting every message wastes the one
+   * tool that should mean "look here", and long sessions read as stripes.
+   * The tool block is the single exception: quiet surface, because it is
+   * machine output you skim. */
+  --user-bg: transparent;
   --user-border: var(--primary);
   --assistant-bg: transparent;
-  --assistant-border: var(--green);
+  --assistant-border: var(--text-faint);
   --tool-bg: var(--bg-secondary);
   --tool-border: var(--blue);
-  --error-bg: color-mix(in srgb, var(--red) 7%, var(--bg));
+  --error-bg: transparent;
   --error-border: var(--red);
-  --compacted-bg: color-mix(in srgb, var(--amber) 7%, var(--bg));
+  --compacted-bg: transparent;
   --compacted-border: var(--amber);
-  --shadow: 0 1px 3px rgba(60, 40, 30, 0.08);
-  --shadow-float: 0 4px 16px rgba(60, 40, 30, 0.12);
-  --radius: 6px;
-  --radius-sm: 4px;
+  --shadow: none;
+  --shadow-float: 0 2px 10px rgba(23, 21, 15, 0.14);
+  --radius: 0;
+  --radius-sm: 0;
+  --rule-heavy: 2px;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --font-sans: var(--font-mono);
+  --font-heading: Georgia, "Iowan Old Style", "Times New Roman", serif;
   color-scheme: light;
 }
 
 [data-theme="dark"] {
-  --bg: #131110;
-  --bg-secondary: #1b1917;
-  --bg-tertiary: #262220;
-  --hover: #211e1c;
-  --text: #d7d2cc;
-  --text-muted: #948d86;
-  --text-faint: #6c6660;
-  --border: #35302b;
-  --primary: #e08662;
-  --primary-hover: #e9a082;
-  --green: #3fb950;
-  --red: #f85149;
-  --amber: #d29922;
-  --purple: #a371f7;
-  --blue: #58a6ff;
-  --user-bg: color-mix(in srgb, var(--primary) 8%, var(--bg));
-  --error-bg: color-mix(in srgb, var(--red) 9%, var(--bg));
-  --compacted-bg: color-mix(in srgb, var(--amber) 8%, var(--bg));
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.5);
+  /* Night broadsheet: the ink becomes the ground, the paper becomes the
+   * type. Role names do not move, so no component restyles for dark. */
+  --bg: #14130f;
+  --bg-secondary: #191713;
+  --bg-tertiary: #211e19;
+  --hover: #211e19;
+  --text: #ece7dc;
+  --text-muted: #a49b8b;
+  --text-faint: #7c7466;
+  --border: #443e35;
+  --border-soft: #2c2823;
+  --primary: #cf7256;
+  --primary-hover: #e08e73;
+  --primary-100: #2e1a13;
+  --primary-200: #3f251b;
+  --primary-300: #6b3a29;
+  --green: #6fae9f;
+  --red: #cf7256;
+  --amber: #c99a3e;
+  --purple: #a68cc4;
+  --blue: #7fa4cd;
+  --accent-cc: #d08a63;
+  --accent-cx: #6fae9f;
+  --accent-gx: #a68cc4;
+  --user-bg: transparent;
+  --assistant-bg: transparent;
+  --error-bg: transparent;
+  --compacted-bg: transparent;
+  --shadow: none;
+  --shadow-float: 0 2px 10px rgba(0, 0, 0, 0.55);
   color-scheme: dark;
 }
+
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -94,7 +118,7 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 5px;
+  border-radius: 0;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
@@ -194,19 +218,18 @@ code, pre, .session-id, .model-badge {
   font-size: 10px;
   font-weight: 700;
   font-family: var(--font-mono);
-  border-radius: 4px;
-  color: white;
+  border-radius: 0;
 }
-.badge-project { background: var(--accent-project); }
-.badge-session { background: var(--accent-session); }
-.badge-message { background: var(--accent-conversation); }
+.badge-project { color: var(--accent-project); }
+.badge-session { color: var(--accent-session); }
+.badge-message { color: var(--accent-conversation); }
 .provider-badge {
   display: inline-block;
   font-size: 10px;
   font-weight: 700;
   font-family: var(--font-mono);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 0;
   letter-spacing: 0.5px;
   line-height: 1.4;
   vertical-align: middle;
@@ -214,8 +237,10 @@ code, pre, .session-id, .model-badge {
 .provider-CC { background: var(--accent-cc); color: #fff; }
 .provider-CX { background: var(--accent-cx); color: #fff; }
 .provider-GX { background: var(--accent-gx); color: #fff; }
-/* Dark accents are light hues; white text on them is ~2.1:1. */
-[data-theme="dark"] .provider-badge { color: var(--bg); }
+/* Ledger: badges are outlined, not filled, so the knock-out rule that
+   forced the ground color onto dark badges no longer applies — it painted
+   the text AND the currentColor border in --bg and the badge vanished.
+   Provider hue is carried by .provider-CC/CX/GX, which already invert. */
 .search-loading, .search-empty {
   padding: 16px;
   color: var(--text-muted);
@@ -252,7 +277,7 @@ code, pre, .session-id, .model-badge {
 .icon-btn {
   background: none;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 4px 8px;
   cursor: pointer;
   color: var(--text-muted);
@@ -324,7 +349,7 @@ code, pre, .session-id, .model-badge {
   color: var(--text-muted);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 10px 12px;
   overflow-x: auto;
   white-space: pre;
@@ -352,7 +377,7 @@ code, pre, .session-id, .model-badge {
   color: var(--text-muted);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   text-decoration: none;
   transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
 }
@@ -474,7 +499,7 @@ code, pre, .session-id, .model-badge {
   padding: 8px 12px;
   color: var(--text-muted);
   text-decoration: none;
-  border-radius: 4px;
+  border-radius: 0;
   font-size: 13px;
 }
 .sidebar-link:hover { background: var(--bg-tertiary); color: var(--text); }
@@ -589,7 +614,7 @@ code, pre, .session-id, .model-badge {
   font-size: 12px;
   font-weight: 700;
   font-family: var(--font-mono);
-  border-radius: 4px;
+  border-radius: 0;
   color: white;
   margin-right: 10px;
   vertical-align: middle;
@@ -768,7 +793,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 .sort-select {
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--text);
   font-size: 12px;
@@ -806,7 +831,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   background: var(--primary);
   color: white;
   padding: 2px 6px;
-  border-radius: 999px;
+  border-radius: 0;
   font-size: 11px;
   font-weight: 600;
 }
@@ -836,7 +861,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 .session-id {
   background: var(--bg-tertiary);
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 0;
   font-size: 11px;
 }
 .session-time { color: var(--text-muted); font-size: 11px; }
@@ -878,7 +903,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   border: none;
   background: var(--bg-secondary);
   padding: 8px 12px;
-  border-radius: 6px;
+  border-radius: 0;
   font-size: 12px;
   flex: 1;
   color: var(--text);
@@ -900,7 +925,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 .search-nav {
   background: none;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 5px 8px;
   cursor: pointer;
   color: var(--text-muted);
@@ -929,7 +954,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   gap: 4px;
   padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 0;
   font-size: 11px;
   cursor: pointer;
   color: var(--text-muted);
@@ -984,7 +1009,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   font-size: 11px;
   text-decoration: none;
   color: var(--text);
-  border-radius: 4px;
+  border-radius: 0;
 }
 .info-section-spend .spend-row:hover {
   background: var(--bg-alt, rgba(127,127,127,0.08));
@@ -1075,7 +1100,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   pointer-events: none;
 }
 .info-label { color: var(--text-muted); font-weight: 400; flex-shrink: 0; }
-.info-row code { font-size: 10px; background: var(--bg-secondary); padding: 2px 6px; border-radius: 3px; }
+.info-row code { font-size: 10px; background: var(--bg-secondary); padding: 2px 6px; border-radius: 0; }
 .info-row a { color: var(--accent-session); text-decoration: none; font-weight: 500; }
 .info-row a:hover { text-decoration: underline; }
 .info-cache { font-size: 11px; }
@@ -1141,7 +1166,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   color: var(--text-muted);
   text-decoration: none;
   font-size: 10px;
-  border-radius: 3px;
+  border-radius: 0;
   margin-bottom: 1px;
   overflow: hidden;
 }
@@ -1214,7 +1239,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 3px;
+  border-radius: 0;
   transition: transform 0.15s ease, background 0.15s ease;
 }
 .nav-expand::before {
@@ -1243,7 +1268,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   font-size: 9px;
   background: var(--bg-tertiary);
   padding: 1px 5px;
-  border-radius: 999px;
+  border-radius: 0;
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -1405,7 +1430,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   position: absolute;
   right: 0;
   height: 2px;
-  border-radius: 1px;
+  border-radius: 0;
   transform: translateY(-1px) scaleX(var(--tick-scale, 1));
   transform-origin: right center;
   transition: width 0.12s ease, height 0.12s ease, background 0.12s ease,
@@ -1515,7 +1540,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   pointer-events: none;
   transform: translateY(-1px);
   transition: top 0.08s linear;
-  border-radius: 1px;
+  border-radius: 0;
   z-index: 8;
 }
 
@@ -1546,7 +1571,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   padding: 8px 12px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 0;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
   font-size: 11px;
   line-height: 1.4;
@@ -1700,7 +1725,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
 .btn {
   padding: 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   cursor: pointer;
   font-size: 12px;
   background: var(--bg);
@@ -1718,7 +1743,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   left: 0;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   box-shadow: var(--shadow);
   display: none;
   z-index: 10;
@@ -1814,7 +1839,7 @@ body[data-ccx-provider="codex"] .cli-spinner { color: var(--accent-cx); }
   color: var(--text-muted);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 0;
   cursor: pointer;
   z-index: 5;
   max-width: 24px;
@@ -1929,7 +1954,7 @@ details.turn-user[open] .turn-role { display: none; }
 .turn-model {
   background: var(--bg-secondary);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 0;
   font-size: 9px;
   font-family: var(--font-mono);
   color: var(--text-muted);
@@ -1946,7 +1971,7 @@ details.turn-user[open] .turn-role { display: none; }
   padding: 1px 6px;
   font-size: 9px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 0;
   background: var(--bg);
   color: var(--text-muted);
   cursor: pointer;
@@ -2121,7 +2146,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 .block-text code {
   background: var(--bg-tertiary);
   padding: 2px 4px;
-  border-radius: 3px;
+  border-radius: 0;
   font-size: 12px;
   font-family: var(--font-mono);
 }
@@ -2272,7 +2297,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   overflow: auto;
   background: var(--bg-secondary);
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: 0;
 }
 .tool-output-section {
   background: var(--bg-tertiary);
@@ -2337,7 +2362,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   right: 4px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 0;
   padding: 2px 6px;
   font-size: 10px;
   cursor: pointer;
@@ -2361,7 +2386,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   color: var(--text-muted);
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 0;
 }
 .raw-toggle:hover { color: var(--text); }
 
@@ -2420,7 +2445,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   background: var(--primary);
   color: white;
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: 0;
   font-size: 11px;
   font-weight: 600;
   margin-right: 8px;
@@ -2430,7 +2455,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   background: var(--bg-tertiary);
   color: var(--text-muted);
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 0;
   font-size: 10px;
 }
 .task-prompt {
@@ -2461,7 +2486,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   display: inline-block;
   background: var(--bg-tertiary);
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: 0;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -2477,7 +2502,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 .lsp-op {
   background: var(--bg-tertiary);
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 0;
   font-weight: 600;
 }
 .lsp-loc { color: var(--text-muted); word-break: break-all; }
@@ -2519,7 +2544,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 .settings-table code {
   background: var(--bg-tertiary);
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 0;
   font-size: 12px;
 }
 
@@ -2527,7 +2552,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
 .plugin-list li {
   padding: 6px 10px;
   background: var(--bg-secondary);
-  border-radius: 4px;
+  border-radius: 0;
   margin-bottom: 4px;
 }
 .plugin-list code { font-size: 12px; }
@@ -2635,7 +2660,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   text-decoration: none;
   padding: 0 4px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 0;
 }
 .te-link:hover { border-color: var(--primary); }
 .te-link-error { color: var(--red); border-color: var(--red); }
@@ -2648,7 +2673,7 @@ body.watching .tail-spinner { display: flex; align-items: center; gap: 8px; }
   font-size: 11px;
   padding: 0 5px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: 0;
   color: var(--text-muted);
 }
 .te-fail { padding: 1px 0; }
@@ -2791,3 +2816,232 @@ a.sgroup-label:hover { color: var(--primary); }
   .srow-stat-prompts { display: none; }
   .sgroup-meta-extra { display: none; }
 }
+
+/* ==========================================================================
+   LEDGER LAYER
+   The material, applied to ccx's real surfaces. Source order gives this
+   precedence over the rules above; it is the one place the broadsheet
+   decisions live, so a future re-ink edits here and the token block only.
+   Reference: design/system/readme.md
+   ========================================================================== */
+
+/* -- display type. Georgia carries what a human wrote and what the money
+      says. Everything else stays monospace. -------------------------------- */
+.brand,
+.page-header h1,
+.card-title,
+.session-header .session-title,
+.nf-title,
+.search-result .result-title,
+.settings-section h2,
+.empty-state h2,
+.te-section-title {
+  font-family: var(--font-heading);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+}
+.page-header h1 { font-size: 28px; line-height: 1.22; }
+.card-title { font-size: 15px; }
+.brand { font-size: 21px; letter-spacing: -0.02em; }
+.brand-x { font-style: italic; color: var(--primary); }
+.brand-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint);
+             letter-spacing: 0.04em; }
+
+/* Figures: any number that leads a surface is Georgia and tabular. */
+.card-stats .stat, .session-stats .stat, .srow-stat, .stat,
+.te-chip b, .count {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* -- chrome. One rail, a heavy rule under it, no elevation. --------------- */
+.top-nav {
+  border-bottom: var(--rule-heavy) solid var(--text);
+  box-shadow: none;
+  background: var(--bg);
+}
+.nav-item.active,
+.nav-list .nav-item.active {
+  background: transparent;
+  color: var(--text);
+  font-weight: 700;
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+.nav-item:hover { background: var(--hover); }
+
+/* -- section heads: a 2px rule is the divider, not a box. ----------------- */
+.page-header {
+  border-bottom: var(--rule-heavy) solid var(--text);
+  border-left: 0;
+  background: transparent;
+  padding-left: 0;
+}
+.settings-section h2,
+.te-section-title,
+.panel-header {
+  border-bottom: var(--rule-heavy) solid var(--text);
+  background: transparent;
+}
+/* The page-type letter badge duplicated the page title in a decorative hue. */
+.page-badge { display: none; }
+
+/* -- cards become ruled rows. A list of 288 projects is a ledger, not a
+      gallery: hairline between rows, no border box, no fill. -------------- */
+.card-grid { display: block; }
+.card {
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 11px 4px;
+}
+.card:hover { border-color: var(--border-soft); background: var(--hover);
+              box-shadow: none; }
+.card-meta, .card-stats { color: var(--text-muted); font-size: 12px; }
+
+/* -- badges and chips: outlined, never filled. Provider color never leaves
+      its badge. ---------------------------------------------------------- */
+.provider-badge, .card-badge, .result-badge,
+.badge-project, .badge-session, .badge-message,
+.filter-chip, .search-chip {
+  border-radius: 0;
+  background: transparent;
+  border: 1px solid currentColor;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.provider-CC { background: transparent; color: var(--accent-cc); border-color: currentColor; }
+.provider-CX { background: transparent; color: var(--accent-cx); border-color: currentColor; }
+.provider-GX { background: transparent; color: var(--accent-gx); border-color: currentColor; }
+
+/* -- transcript roles: a 3px leading rule and a label. No bubbles. -------- */
+.turn, .turn-user, .turn-assistant, .turn-agent {
+  border-radius: 0;
+  border-top: 0; border-right: 0; border-bottom: 0;
+  border-left: 3px solid var(--assistant-border);
+  background: transparent;
+  box-shadow: none;
+}
+.turn-user { border-left-color: var(--user-border); }
+.turn-agent { border-left-color: var(--event-subagent); }
+.turn-header { background: transparent; border-bottom: 0; }
+.turn-role {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+/* The user's own words are the one place the serif appears inside a thread. */
+.turn-user .turn-body { font-family: var(--font-heading); font-size: 15.5px;
+                        line-height: 1.45; }
+/* Tool output is the single role that keeps a fill: it is machine output
+   you skim, and the quiet surface is what makes it skippable. */
+.block-tool, .tool-input, .code-block {
+  border-radius: 0;
+  background: var(--bg-secondary);
+  border-left: 3px solid var(--tool-border);
+}
+
+/* -- tables: numbers right, tabular, hairline rows. ---------------------- */
+.settings-table, .settings-table td {
+  border-radius: 0;
+  border-color: var(--border-soft);
+}
+.settings-table td { font-variant-numeric: tabular-nums; }
+
+/* -- fields and buttons: 1px rule on the ground, one solid primary. ------ */
+.global-search-input, .filter-input, .search-chip input, .sort-select {
+  border-radius: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.global-search-input:focus, .filter-input:focus {
+  outline: 2px solid var(--primary); outline-offset: -1px;
+  border-color: var(--primary); box-shadow: none;
+}
+.dock-btn, .icon-btn, .copy-btn, .mode-btn, .btn {
+  border-radius: 0;
+  box-shadow: none;
+}
+.dock-btn.active, .mode-btn.active {
+  background: var(--primary); color: var(--bg);
+  border-color: var(--primary);
+}
+
+/* -- elevation is for menus and dialogs only; the page never floats. ----- */
+.card:hover, .turn:hover, .settings-section, .info-section, .file-card {
+  box-shadow: none;
+}
+
+/* -- the outline rail: one line per step, carrying the agent's own stated
+      intent. Set at readable length, not truncated to a tool name. -------- */
+.nav-sidebar .nav-item { align-items: baseline; }
+.nav-headline {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: 60ch;
+}
+.nav-headline.quiet { color: var(--text-faint); }
+.nav-item .nav-meta {
+  font-size: 10.5px; color: var(--text-faint);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.nav-item .nav-meta .err { color: var(--red); font-weight: 700; }
+
+/* -- the outline rail now carries sentences, not tool names, so it needs
+      the width of a column of prose. 360px holds ~46ch at 12px mono. ----- */
+.nav-sidebar { width: 360px; background: var(--bg); border-right: 1px solid var(--border); }
+.sidebar-header h3 {
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-faint);
+}
+.nav-item.nav-step {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 10px 7px 6px;
+  overflow: visible;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+.nav-item.nav-step .nav-icon { font-size: 8px; }
+.nav-item.nav-step:hover { background: var(--hover); }
+.nav-item.nav-step.active {
+  background: transparent;
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+/* Non-step rows stay compact: they are structure, not evidence. */
+.nav-item.nav-tool, .nav-item.nav-response, .nav-item.nav-meta { font-size: 10px; }
+
+/* The left rail marks the current page with weight and a rule, not a pill. */
+.sidebar-link.active {
+  background: transparent;
+  color: var(--text);
+  font-weight: 700;
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+.sidebar-link:hover { background: var(--hover); }
+
+/* The turn receipt is dense text, not a row of boxes. */
+.te-chip { border: 0; background: transparent; padding: 0; }
+
+/* Page titles that sit outside .page-header (settings, memory) still lead
+   their page, so they take the display face too. */
+.main-content > h1 {
+  font-family: var(--font-heading);
+  font-weight: 400;
+  font-size: 28px;
+  line-height: 1.22;
+  letter-spacing: -0.015em;
+  padding-bottom: 6px;
+}
+/* A section head already carries a 2px rule; the bullet before it was
+   decoration standing in for hierarchy the rule now provides. */
+.section-icon { display: none; }
+.settings-section h2 { padding-bottom: 5px; margin-bottom: 12px; }

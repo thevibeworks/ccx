@@ -134,24 +134,30 @@ type ScopeRelation struct {
 type Record struct {
 	matched bool // passed Options.Kinds/Match; unexported, filtered out in Collect
 
-	Timestamp   time.Time       `json:"timestamp"`
-	Provider    string          `json:"provider"`
-	SessionID   string          `json:"session_id"`
-	Workspace   string          `json:"workspace,omitempty"`
-	Project     string          `json:"project,omitempty"`
-	SourceFile  string          `json:"source_file"`
-	Line        int             `json:"line"`
-	Type        string          `json:"type"`
-	Kind        string          `json:"kind"`
-	Role        string          `json:"role,omitempty"`
-	TurnID      string          `json:"turn_id,omitempty"`
-	CallID      string          `json:"call_id,omitempty"`
-	UUID        string          `json:"uuid,omitempty"`
-	ParentUUID  string          `json:"parent_uuid,omitempty"`
-	IsSidechain bool            `json:"is_sidechain,omitempty"`
-	IsSubagent  bool            `json:"is_subagent,omitempty"`
-	Text        string          `json:"text,omitempty"`
-	RawJSON     json.RawMessage `json:"raw_json,omitempty"`
+	Timestamp   time.Time `json:"timestamp"`
+	Provider    string    `json:"provider"`
+	SessionID   string    `json:"session_id"`
+	Workspace   string    `json:"workspace,omitempty"`
+	Project     string    `json:"project,omitempty"`
+	SourceFile  string    `json:"source_file"`
+	Line        int       `json:"line"`
+	Type        string    `json:"type"`
+	Kind        string    `json:"kind"`
+	Role        string    `json:"role,omitempty"`
+	TurnID      string    `json:"turn_id,omitempty"`
+	CallID      string    `json:"call_id,omitempty"`
+	UUID        string    `json:"uuid,omitempty"`
+	ParentUUID  string    `json:"parent_uuid,omitempty"`
+	IsSidechain bool      `json:"is_sidechain,omitempty"`
+	IsSubagent  bool      `json:"is_subagent,omitempty"`
+	// Tool and Path are set on tool_call records: the tool name (Bash,
+	// Edit, exec_command, ...) and the workspace path it targeted when
+	// the call named one. Text carries "Tool: argument" so a consumer
+	// sees what ran without --raw.
+	Tool    string          `json:"tool,omitempty"`
+	Path    string          `json:"path,omitempty"`
+	Text    string          `json:"text,omitempty"`
+	RawJSON json.RawMessage `json:"raw_json,omitempty"`
 }
 
 type rawLine struct {
@@ -291,7 +297,11 @@ func Collect(sources []Source, opts Options) (*Bundle, error) {
 	}
 	bundle.Metrics = metricsFor(bundle.Sessions, len(bundle.Records), opts.Limit, opts.Start, opts.End)
 	if filtered {
+		// Truncation is measured against what the filter kept, not
+		// the scope total: a --match that kept 897 of 288k records
+		// and returned all 897 is complete, not truncated.
 		bundle.Metrics.RecordsMatched = matched
+		bundle.Metrics.Truncated = bundle.Metrics.RecordsReturned < matched
 	}
 	return bundle, nil
 }
@@ -636,6 +646,15 @@ func normalizeClaudeRecord(raw rawLine) Record {
 	case "assistant":
 		if contentHasType(content, "tool_use") {
 			record.Kind = "tool_call"
+			// contentPreview would stop at the block's "name" and the
+			// record would read "Bash" — the one field a reviewer
+			// needs (what ran) hidden behind --raw.
+			name, path, preview := toolUsePreview(content)
+			record.Tool = name
+			record.Path = path
+			if preview != "" {
+				record.Text = truncateText(cleanText(preview), 1000)
+			}
 		} else {
 			record.Kind = "assistant_message"
 		}
@@ -802,7 +821,10 @@ func normalizeCodexResponseItem(record *Record, payload map[string]any, payloadT
 	case "function_call", "custom_tool_call", "web_search_call":
 		record.Kind = "tool_call"
 		record.CallID = stringField(payload, "call_id")
-		record.Text = truncateText(cleanText(toolCallPreview(payload, payloadType)), 1000)
+		name, path, preview := codexToolCallPreview(payload, payloadType)
+		record.Tool = name
+		record.Path = path
+		record.Text = truncateText(cleanText(preview), 1000)
 	case "function_call_output", "custom_tool_call_output":
 		record.Kind = "tool_result"
 		record.CallID = stringField(payload, "call_id")
@@ -1080,10 +1102,87 @@ func statusPreview(payload map[string]any) string {
 	return ""
 }
 
-func toolCallPreview(payload map[string]any, payloadType string) string {
-	name := firstNonEmpty(stringField(payload, "name"), stringField(payload, "tool"), stringField(payload, "status"))
-	action := contentPreview(payload["action"])
-	return joinNonEmpty(" ", payloadType, name, action)
+// toolUsePreview reads Claude tool_use blocks: the first tool's name,
+// the first workspace path any call targeted, and a "Tool: argument"
+// preview per call (Bash: the command; Edit/Read/Write: the path;
+// Agent: its description; Grep/Glob: the pattern) joined with " | ".
+func toolUsePreview(content any) (name, path, preview string) {
+	blocks, ok := content.([]any)
+	if !ok {
+		return "", "", ""
+	}
+	var parts []string
+	for _, item := range blocks {
+		block, ok := item.(map[string]any)
+		if !ok || stringField(block, "type") != "tool_use" {
+			continue
+		}
+		toolName := stringField(block, "name")
+		input, _ := block["input"].(map[string]any)
+		target := firstNonEmpty(stringField(input, "file_path"), stringField(input, "notebook_path"), stringField(input, "path"))
+		arg := firstNonEmpty(stringField(input, "command"), target, stringField(input, "pattern"),
+			stringField(input, "query"), stringField(input, "url"), stringField(input, "skill"),
+			stringField(input, "description"), stringField(input, "prompt"))
+		if name == "" {
+			name = toolName
+		}
+		if path == "" {
+			path = target
+		}
+		switch {
+		case toolName == "" && arg == "":
+			continue
+		case arg == "":
+			parts = append(parts, toolName)
+		default:
+			parts = append(parts, toolName+": "+truncateText(arg, 240))
+		}
+	}
+	return name, path, strings.Join(parts, " | ")
+}
+
+// codexToolCallPreview reads a Codex function_call / custom_tool_call
+// / web_search_call item the same way: tool name, target path when
+// the arguments name one, and a "name: argument" preview.
+func codexToolCallPreview(payload map[string]any, payloadType string) (name, path, preview string) {
+	name = firstNonEmpty(stringField(payload, "name"), stringField(payload, "tool"))
+	if name == "" && payloadType == "web_search_call" {
+		name = "web_search"
+	}
+	var arg string
+	if args := decodeObject(json.RawMessage(stringField(payload, "arguments"))); args != nil {
+		arg = firstNonEmpty(commandString(args["command"]), commandString(args["cmd"]),
+			stringField(args, "path"), stringField(args, "file_path"), stringField(args, "pattern"), stringField(args, "query"))
+		path = firstNonEmpty(stringField(args, "path"), stringField(args, "file_path"), stringField(args, "workdir"))
+	}
+	if arg == "" {
+		arg = firstNonEmpty(stringField(payload, "input"), contentPreview(payload["action"]))
+	}
+	if name == "" {
+		name = payloadType
+	}
+	if arg == "" {
+		return name, path, name
+	}
+	return name, path, name + ": " + truncateText(arg, 240)
+}
+
+// commandString flattens a command argument that is either a string
+// or an argv array.
+func commandString(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case []any:
+		var parts []string
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, " ")
+	}
+	return ""
 }
 
 func cleanText(s string) string {

@@ -59,6 +59,15 @@ var (
 		CacheReadPer1M: 1.00, CacheWritePer1M: 12.50, // 0.1x / 1.25x of input (standard ratio)
 	}
 
+	// Sonnet 5 tier: $2/$10 per MTok, VERIFIED against the claude-api
+	// model catalog (cached 2026-06-24). Cache rates follow the same
+	// universal 0.1x / 1.25x multipliers as every other Claude tier.
+	// Opus 5 is $5/$25 from the same catalog — costTier_5_25 above.
+	costTier_2_10 = ModelPricing{
+		InputPer1M: 2.00, OutputPer1M: 10.00,
+		CacheReadPer1M: 0.20, CacheWritePer1M: 2.50,
+	}
+
 	// Codex / GPT-5.x tiers.
 	//
 	// UNVERIFIED: these rates are pinned from OpenAI's published
@@ -83,6 +92,30 @@ var (
 	costGPT54Nano_005_04 = ModelPricing{
 		InputPer1M: 0.05, OutputPer1M: 0.40,
 		CacheReadPer1M: 0.025, CacheWritePer1M: 0,
+	}
+
+	// GPT-5.6 family (Sol / Terra / Luna), the models Codex runs today.
+	//
+	// Sol input/output ($4/$20) and the cache-write multiplier (1.25x
+	// input) are VERIFIED against developers.openai.com/api/docs/models/
+	// gpt-5.6-sol (promotional pricing through at least 2026-11-21).
+	// Cached input is 10% of input, and Terra/Luna are derived from the
+	// published rate card ratios (Sol:Terra:Luna = 100:50:5 input,
+	// 500:300:30 output, 10:5:0.5 cached) — the same ratios OpenAI
+	// publishes for these three models; re-verify when the promotion
+	// ends. Long-context requests (>272K input: 2x input, 1.5x output)
+	// are NOT modeled, same class of limitation as Claude fast mode.
+	costGPT56Sol_4_20 = ModelPricing{
+		InputPer1M: 4.00, OutputPer1M: 20.00,
+		CacheReadPer1M: 0.40, CacheWritePer1M: 5.00,
+	}
+	costGPT56Terra_2_12 = ModelPricing{
+		InputPer1M: 2.00, OutputPer1M: 12.00,
+		CacheReadPer1M: 0.20, CacheWritePer1M: 2.50,
+	}
+	costGPT56Luna_02_12 = ModelPricing{
+		InputPer1M: 0.20, OutputPer1M: 1.20,
+		CacheReadPer1M: 0.02, CacheWritePer1M: 0.25,
 	}
 )
 
@@ -116,6 +149,16 @@ var pricingTable = map[string]ModelPricing{
 
 	// Fable 5 — new tier above Opus ($10/$50). See costTier_10_50.
 	"claude-fable-5": costTier_10_50,
+	// Claude 5 family: Opus 5 stays on the 5/25 tier, Sonnet 5 drops
+	// to 2/10. Without these two rows every current session priced at
+	// $0 and rollups silently summed the zeros.
+	"claude-opus-5":   costTier_5_25,
+	"claude-sonnet-5": costTier_2_10,
+
+	// Codex / GPT-5.6 models — see tier constants above for caveats.
+	"gpt-5.6-sol":   costGPT56Sol_4_20,
+	"gpt-5.6-terra": costGPT56Terra_2_12,
+	"gpt-5.6-luna":  costGPT56Luna_02_12,
 
 	// Codex / GPT-5.x models — see tier constants above for caveats.
 	"gpt-5":        costGPT54_10_80,
@@ -151,6 +194,8 @@ func LookupPricing(model string) *ModelPricing {
 	// Claude family — more specific before less specific
 	for _, key := range []string{
 		"claude-fable-5",
+		"claude-opus-5",
+		"claude-sonnet-5",
 		"claude-opus-4-8",
 		"claude-opus-4-7",
 		"claude-opus-4-6",
@@ -168,6 +213,25 @@ func LookupPricing(model string) *ModelPricing {
 		if containsDelimited(name, key) {
 			p := pricingTable[key]
 			p.Model = key
+			return &p
+		}
+	}
+
+	// GPT-5.6 family: the variant is part of the name (sol / terra /
+	// luna), and the bare "gpt-5.6" alias routes to Sol upstream.
+	if containsDelimited(name, "gpt-5.6") {
+		switch {
+		case hasVariantToken(name, "terra"):
+			p := pricingTable["gpt-5.6-terra"]
+			p.Model = "gpt-5.6-terra"
+			return &p
+		case hasVariantToken(name, "luna"):
+			p := pricingTable["gpt-5.6-luna"]
+			p.Model = "gpt-5.6-luna"
+			return &p
+		default:
+			p := pricingTable["gpt-5.6-sol"]
+			p.Model = "gpt-5.6-sol"
 			return &p
 		}
 	}

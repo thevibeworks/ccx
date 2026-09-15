@@ -7,6 +7,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-14
+
+### Added
+- `ccx insight` emits a per-session digest with cited prompts, the latest assistant answer, edit and commit-call counts, interventions, tokens, and cost coverage. JSON uses the new `ccx.insight.v1` schema; HTML reports include workspace, day, provider, and model summaries.
+- `ccx trace --repo DIR` selects the repository for commit correlation.
+- Bundled skills install companion Markdown documents, including the recap HTML report guide.
+
+### Changed
+- The Ledger web design uses serif headings, monospace evidence, ruled rows, and an oxblood accent. Pages honor the configured theme.
+- Session outlines show step narration with tool, edit, and error counts.
+- `insight --json` replaces its previous `ccx.log.v1` payload with `ccx.insight.v1`. Consumers needing the log schema should use `ccx log --json`; `insight --records` includes records alongside the digest.
+
+### Fixed
+- Unknown model usage is marked unpriced or partially priced instead of appearing free. Pricing entries cover Claude 5 and GPT-5.6 variants; cached parses are refreshed. Cost figures remain estimates from pinned rates.
+- Codex session lists calculate cost from recorded token totals.
+- `log` tool-call previews include arguments and target paths. Filtered results report truncation against matched records.
+- `log` warns on unknown project lookups and rejects a misplaced flag as the `--match` value.
+- Trace JSON consistently includes step lists, tool-count maps, and cost fields.
+- `insight -n` limits optional records without dropping digest evidence; model summaries identify partial pricing.
+- Windows workspace paths encode correctly in web routes.
+
 ## [0.16.0] - 2026-08-19
 
 ### Added

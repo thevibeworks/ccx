@@ -367,3 +367,101 @@ func TestAggregateRecordsBucketsByDayProviderWorkspace(t *testing.T) {
 		t.Fatalf("missing project-fallback workspace: %+v", workspaces)
 	}
 }
+
+func TestToolCallRecordsCarryToolPathAndCommandPreview(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".claude")
+	projectDir := filepath.Join(home, "projects", "-tmp-workspace")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeLines(t, filepath.Join(projectDir, "s.jsonl"),
+		`{"type":"assistant","sessionId":"s","cwd":"/tmp/workspace","timestamp":"2026-05-21T09:00:00+08:00","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./... && git commit -m digest"}}]}}`,
+		`{"type":"assistant","sessionId":"s","cwd":"/tmp/workspace","timestamp":"2026-05-21T09:01:00+08:00","message":{"role":"assistant","content":[{"type":"text","text":"editing"},{"type":"tool_use","name":"Edit","input":{"file_path":"/tmp/workspace/a.go","old_string":"x","new_string":"y"}},{"type":"tool_use","name":"Read","input":{"file_path":"/tmp/workspace/b.go"}}]}}`,
+	)
+	bundle, err := Collect([]Source{{Provider: "claude-code", Home: home}}, Options{
+		Start: mustParseTime(t, "2026-05-21T00:00:00+08:00"), End: mustParseTime(t, "2026-05-22T00:00:00+08:00"), TimeZone: "+08:00",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Records) != 2 {
+		t.Fatalf("records = %d", len(bundle.Records))
+	}
+	bash := bundle.Records[0]
+	if bash.Kind != "tool_call" || bash.Tool != "Bash" || bash.Path != "" || bash.Text != "Bash: go test ./... && git commit -m digest" {
+		t.Fatalf("bash record = %+v (text used to be just the tool name)", bash)
+	}
+	edit := bundle.Records[1]
+	if edit.Tool != "Edit" || edit.Path != "/tmp/workspace/a.go" || edit.Text != "Edit: /tmp/workspace/a.go | Read: /tmp/workspace/b.go" {
+		t.Fatalf("edit record = %+v", edit)
+	}
+}
+
+func TestCodexToolCallRecordsDecodeArguments(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".codex")
+	sessionDir := filepath.Join(home, "sessions", "2026", "05")
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeLines(t, filepath.Join(sessionDir, "rollout.jsonl"),
+		`{"timestamp":"2026-05-21T00:01:00+08:00","type":"session_meta","payload":{"id":"codex-1","cwd":"/tmp/repo","timestamp":"2026-05-21T00:01:00+08:00"}}`,
+		`{"timestamp":"2026-05-21T00:03:00+08:00","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"c1","arguments":"{\"cmd\":\"git status\",\"workdir\":\"/tmp/repo\"}"}}`,
+		`{"timestamp":"2026-05-21T00:04:00+08:00","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"c2","input":"*** Begin Patch\n*** Update File: a.go"}}`,
+	)
+	bundle, err := Collect([]Source{{Provider: "codex", Home: home}}, Options{
+		Start: mustParseTime(t, "2026-05-21T00:00:00+08:00"), End: mustParseTime(t, "2026-05-22T00:00:00+08:00"), TimeZone: "+08:00", Kinds: []string{"tool_call"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Records) != 2 {
+		t.Fatalf("tool_call records = %d", len(bundle.Records))
+	}
+	if r := bundle.Records[0]; r.Tool != "exec_command" || r.Path != "/tmp/repo" || r.Text != "exec_command: git status" {
+		t.Fatalf("exec record = %+v", r)
+	}
+	if r := bundle.Records[1]; r.Tool != "apply_patch" || !strings.HasPrefix(r.Text, "apply_patch: *** Begin Patch") {
+		t.Fatalf("patch record = %+v", r)
+	}
+}
+
+func TestCollectTruncatedIsMeasuredAgainstMatchedNotTotal(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".claude")
+	projectDir := filepath.Join(home, "projects", "-tmp-workspace")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeLines(t, filepath.Join(projectDir, "s.jsonl"),
+		`{"type":"user","sessionId":"s","cwd":"/tmp/workspace","timestamp":"2026-05-21T09:00:00+08:00","message":{"role":"user","content":"find the semantica clone"}}`,
+		`{"type":"assistant","sessionId":"s","cwd":"/tmp/workspace","timestamp":"2026-05-21T09:01:00+08:00","message":{"role":"assistant","content":[{"type":"text","text":"looking"}]}}`,
+		`{"type":"assistant","sessionId":"s","cwd":"/tmp/workspace","timestamp":"2026-05-21T09:02:00+08:00","message":{"role":"assistant","content":[{"type":"text","text":"still looking"}]}}`,
+	)
+	opts := Options{
+		Start: mustParseTime(t, "2026-05-21T00:00:00+08:00"), End: mustParseTime(t, "2026-05-22T00:00:00+08:00"), TimeZone: "+08:00",
+		Match: func(line string) bool { return strings.Contains(line, "semantica") },
+	}
+	bundle, err := Collect([]Source{{Provider: "claude-code", Home: home}}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := bundle.Metrics
+	if m.Records != 3 || m.RecordsMatched != 1 || m.RecordsReturned != 1 {
+		t.Fatalf("metrics = %+v", m)
+	}
+	if m.Truncated {
+		t.Fatalf("one match returned in full must not report truncated: %+v", m)
+	}
+	opts.Kinds = []string{"assistant_message"}
+	opts.Match = nil
+	opts.Limit = 1
+	bundle, err = Collect([]Source{{Provider: "claude-code", Home: home}}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := bundle.Metrics; !m.Truncated || m.RecordsMatched != 2 || m.RecordsReturned != 1 {
+		t.Fatalf("limit below matched must report truncated: %+v", m)
+	}
+}

@@ -49,3 +49,26 @@ func TestPrintLogTableUsesRequestedTimezoneAndProjectColumn(t *testing.T) {
 		t.Fatalf("table header should say PROJECT:\n%s", out)
 	}
 }
+
+func TestMatchValueErrorNamesTheFlagOrderTrap(t *testing.T) {
+	if err := matchValueError("needle"); err != nil {
+		t.Fatalf("plain phrase rejected: %v", err)
+	}
+	err := matchValueError("-w")
+	if err == nil || !strings.Contains(err.Error(), "--match X -w") {
+		t.Fatalf("expected the flag-order trap and corrected invocation, got %v", err)
+	}
+}
+
+func TestLooksLikeSessionIDRecognisesHexAndUUIDPrefixes(t *testing.T) {
+	for _, id := range []string{"abcdef12", "01234567-89ab-cdef", "ABCDEF12"} {
+		if !looksLikeSessionID(id) {
+			t.Errorf("%q should look like a session id", id)
+		}
+	}
+	for _, name := range []string{"example-chore", "ccx", "260101_example-project", "abc"} {
+		if looksLikeSessionID(name) {
+			t.Errorf("%q should not look like a session id", name)
+		}
+	}
+}

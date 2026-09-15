@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"html"
+
 	"github.com/thevibeworks/ccx/internal/parser"
+	"github.com/thevibeworks/ccx/internal/trace"
 )
 
 // buildToolHeavyTurn constructs a user turn with N tool-using
@@ -52,7 +55,7 @@ func TestRenderConversationNav_PreservesSummaryOnTruncation(t *testing.T) {
 	// cutoff.
 	roots := buildToolHeavyTurn(15)
 	var b strings.Builder
-	renderConversationNav(&b, roots)
+	renderConversationNav(&b, roots, nil)
 	out := b.String()
 
 	if !strings.Contains(out, `data-msg="summary-msg"`) {
@@ -70,7 +73,7 @@ func TestRenderConversationNav_ShortTurnsShowEverything(t *testing.T) {
 	// marker.
 	roots := buildToolHeavyTurn(3)
 	var b strings.Builder
-	renderConversationNav(&b, roots)
+	renderConversationNav(&b, roots, nil)
 	out := b.String()
 
 	if strings.Contains(out, `nav-more`) {
@@ -93,7 +96,7 @@ func TestRenderConversationNav_HiddenCountExcludesSummary(t *testing.T) {
 	// should count: total - (maxChildren-1) - 1 summary = 16 - 9 - 1 = 6.
 	roots := buildToolHeavyTurn(15)
 	var b strings.Builder
-	renderConversationNav(&b, roots)
+	renderConversationNav(&b, roots, nil)
 	out := b.String()
 
 	// Expect "+6 more" (not "+7 more" — the summary is broken out).
@@ -109,7 +112,7 @@ func TestRenderConversationNav_SplitsTitleAndExpand(t *testing.T) {
 	// mean no more conflicting click handlers.
 	roots := buildToolHeavyTurn(3)
 	var b strings.Builder
-	renderConversationNav(&b, roots)
+	renderConversationNav(&b, roots, nil)
 	out := b.String()
 
 	if !strings.Contains(out, `class="nav-group"`) {
@@ -130,5 +133,61 @@ func TestRenderConversationNav_SplitsTitleAndExpand(t *testing.T) {
 	// Crucially: no <summary> or <details>.
 	if strings.Contains(out, `<summary`) || strings.Contains(out, `<details`) {
 		t.Error("new nav should not use <details>/<summary> (conflicts with click handler)")
+	}
+}
+
+// TestRenderConversationNav_UsesStepNarration is the regression guard for
+// the outline's whole purpose. The rail used to print the kind of each
+// message ("response", "Bash"), which tells an auditor nothing. When a
+// message opened a trace step, the line must carry that step's narration
+// — the agent's own stated intent — plus what the step actually did.
+func TestRenderConversationNav_UsesStepNarration(t *testing.T) {
+	roots := buildToolHeavyTurn(2)
+	const narration = "Handoff read. ccx has an uncommitted v0.17.0 candidate on main."
+
+	stepMap := map[string]*trace.Step{
+		"tool-a": {
+			Index:       1,
+			MessageID:   "tool-a",
+			Narration:   narration,
+			ToolCounts:  map[string]int{"Bash": 4},
+			FilesEdited: []string{"internal/web/templates.go"},
+			Errors:      1,
+		},
+	}
+
+	var b strings.Builder
+	renderConversationNav(&b, roots, stepMap)
+	out := b.String()
+
+	if !strings.Contains(out, html.EscapeString(narration)) {
+		t.Errorf("outline must carry the step narration; got:\n%s", out)
+	}
+	if !strings.Contains(out, `class="nav-headline`) {
+		t.Error("narrated step must render as .nav-headline, not .nav-text")
+	}
+	// Counters make the expensive and the failing steps visible without
+	// opening them: 4 tool calls, 1 edited file, 1 error.
+	for _, want := range []string{"4t", "1e", "1x"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected step meta %q in outline; got:\n%s", want, out)
+		}
+	}
+
+	// A message with no matching step keeps the old compact rendering.
+	if !strings.Contains(out, `class="nav-text"`) {
+		t.Error("un-narrated messages should still use the compact .nav-text line")
+	}
+}
+
+// TestRenderConversationNav_NilStepMapIsSafe: trace data is optional
+// (a session may have no outline), and the rail must degrade rather
+// than panic.
+func TestRenderConversationNav_NilStepMapIsSafe(t *testing.T) {
+	roots := buildToolHeavyTurn(2)
+	var b strings.Builder
+	renderConversationNav(&b, roots, nil)
+	if out := b.String(); !strings.Contains(out, "nav-text") {
+		t.Errorf("expected compact outline with nil step map; got:\n%s", out)
 	}
 }

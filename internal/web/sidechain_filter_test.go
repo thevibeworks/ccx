@@ -186,7 +186,7 @@ func TestRenderMessages_SidechainNotAsOwnThread(t *testing.T) {
 func TestRenderConversationNav_SidechainInNavAsSeparateEntries(t *testing.T) {
 	session := buildSessionWithSidechains()
 	var b strings.Builder
-	renderConversationNav(&b, session.RootMessages)
+	renderConversationNav(&b, session.RootMessages, nil)
 	html := b.String()
 
 	if !strings.Contains(html, `data-msg="u1"`) {

@@ -16,7 +16,8 @@ they do not know.
 | `ccx.turn.v1`    | `ccx trace --turn N`         | One turn with full step evidence, plus the sidechain entries that turn references, plus warnings. |
 | `ccx.trace.v2`   | `ccx trace --full`           | Complete evidence bundle: all turns/steps, sidechains, git correlation, workspace context, `related` sessions, stats, warnings. Large. |
 | `ccx.related.v1` | `ccx related --json`, `GET /api/related/<project>/<session>` | The anchor session's connections to the other sessions of its workspace: `related[]` of `{session_id, provider, summary, start, end, strength, relations[]}`, plus `total`/`shown`. Each relation is `{kind, count?, paths?, evidence[], truncated?}`; evidence items are `{session_id, message_id, time, path?, quote?}`. Kinds: `forked_from`/`fork_of`, `mentions`/`mentioned_by`, `handoff_from`/`handoff_to`, `builds_on`/`built_on_by`, `overlaps`, `previous`/`next`. Strength is `strong`/`medium`/`weak`. |
-| `ccx.log.v1`     | `ccx log --json`, `ccx insight --json` | Time-scoped records across sessions with pre-computed `days[]` / `providers[]` / `workspaces[]` aggregates. Record `kind` is provider-normalized: `user_prompt` and `assistant_message` are the visible conversation only (Claude command markers/echoes/notifications are `command`/`command_output`/`notification`, injected meta is `meta`, compaction carriers `compact_summary`; Codex 0.147 raw `response_item` messages are `model_input`/`model_output` and duplicated legacy events `legacy_message`). With `--kind`/`--match`, `metrics.records` stays scope-wide and `metrics.records_matched` reports the narrowed count before any limit. |
+| `ccx.log.v1`     | `ccx log --json`             | Time-scoped records across sessions with pre-computed `days[]` / `providers[]` / `workspaces[]` aggregates. Record `kind` is provider-normalized: `user_prompt` and `assistant_message` are the visible conversation only (Claude command markers/echoes/notifications are `command`/`command_output`/`notification`, injected meta is `meta`, compaction carriers `compact_summary`; Codex 0.147 raw `response_item` messages are `model_input`/`model_output` and duplicated legacy events `legacy_message`). `tool_call` records carry `tool`, `path` (when the call named one) and a `Tool: argument` `text`. With `--kind`/`--match`, `metrics.records` stays scope-wide, `metrics.records_matched` reports the narrowed count before any limit, and `truncated` is measured against the matched count. |
+| `ccx.insight.v1` | `ccx insight --json`         | The window digest: `sessions[]` (one per logical session — a Claude session and its subagent files fold together) with `prompts[]` (`{time, line, text}`, first 6 / last 2, `prompts_omitted`), `final_answer`, `edits` + `edited_paths[]` (capped, `edited_paths_truncated`), `commits`, `interrupts`, `denials`, `tokens`, `cost_usd`, `unpriced_tokens`, `cost_status`, `model`, `summary`, `relation`; rollups `workspaces[]` (with `session_ids[]`), `days[]`, `providers[]`, `models[]`; `metrics` including `cost_coverage` (priced tokens / all tokens), `priced_sessions`, `unpriced_sessions`. `records[]` only with `--records`. Cost and tokens are whole-session figures from the provider's accounting, never sliced to the window. |
 
 ## Versioning policy
 
@@ -30,7 +31,15 @@ they do not know.
   signals deleted) predates this policy and was silent; that mistake
   is why this document exists (issue #19).
 - Fields marked `omitempty` are absent when zero — consumers must
-  treat absence as zero, not as an error.
+  treat absence as zero, not as an error. Exceptions that are always
+  present because scripts index them: `turns[].steps` (`[]`),
+  `turns[].tool_counts` / `steps[].tool_counts` (`{}`), `cost_usd` on
+  turns and steps, and every `sessions[]` field of `ccx.insight.v1`
+  except the `omitempty`-marked optionals.
+- A cost of 0 is never "free" on its own: check `cost_status`
+  (`priced` / `partial` / `unpriced`) or `unpriced_tokens` wherever a
+  cost is emitted. `unpriced` means ccx has no pricing row for the
+  model (or, for Grok, declines to guess by contract).
 
 ## Semantics worth knowing
 

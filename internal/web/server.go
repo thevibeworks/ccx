@@ -1707,7 +1707,7 @@ func handleInsights(w http.ResponseWriter, r *http.Request) {
 	}
 	theme := r.URL.Query().Get("theme")
 	if theme == "" {
-		theme = "light"
+		theme = config.Theme()
 	}
 
 	var b strings.Builder

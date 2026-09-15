@@ -63,12 +63,15 @@ type Turn struct {
 	Superseded       bool `json:"superseded,omitempty"`
 	SupersededByTurn int  `json:"superseded_by_turn,omitempty"`
 
-	Steps []Step `json:"steps,omitempty"`
+	// Steps and ToolCounts are always present ([] / {}) — the payload
+	// is read by scripts, and a command-only turn without a steps key
+	// is a KeyError, not a saving.
+	Steps []Step `json:"steps"`
 
 	// Turn-level rollups across all steps.
 	FilesEdited []string       `json:"files_edited,omitempty"`
 	FilesRead   []string       `json:"files_read,omitempty"`
-	ToolCounts  map[string]int `json:"tool_counts,omitempty"`
+	ToolCounts  map[string]int `json:"tool_counts"`
 	Errors      int            `json:"errors,omitempty"`
 	// Human interventions inside the turn: Interrupts counts
 	// "[Request interrupted by user]" markers (the human pressed
@@ -88,7 +91,7 @@ type Turn struct {
 	// CostUSD covers the main loop; AgentsCostUSD is subagent spend
 	// whose results attached to this turn's steps, kept separate so
 	// per-turn tokens reconcile to per-turn cost.
-	CostUSD       float64 `json:"cost_usd,omitempty"`
+	CostUSD       float64 `json:"cost_usd"`
 	AgentsCostUSD float64 `json:"agents_cost_usd,omitempty"`
 	// ActiveSecs is gap-capped activity time: the sum of inter-message
 	// intervals, each capped at 5 minutes. Wall time (End - Start) can
@@ -112,7 +115,7 @@ type Step struct {
 	Narration          string `json:"narration"`
 	NarrationTruncated bool   `json:"narration_truncated,omitempty"`
 
-	ToolCounts  map[string]int `json:"tool_counts,omitempty"`
+	ToolCounts  map[string]int `json:"tool_counts"`
 	FilesEdited []string       `json:"files_edited,omitempty"`
 	// Mutations itemizes workspace-changing and failed calls; reads
 	// are summarized by ToolCounts and the turn-level file lists.
@@ -121,7 +124,7 @@ type Step struct {
 	Interrupts int                `json:"interrupts,omitempty"`
 	Denials    int                `json:"denials,omitempty"`
 	Sidechains []Sidechain        `json:"sidechains,omitempty"`
-	CostUSD    float64            `json:"cost_usd,omitempty"`
+	CostUSD    float64            `json:"cost_usd"`
 }
 
 type ToolCallEvidence struct {
@@ -248,6 +251,12 @@ type TraceStats struct {
 	// main-loop spend = TotalCostUSD - AgentsCostUSD.
 	TotalCostUSD  float64 `json:"total_cost_usd"`
 	AgentsCostUSD float64 `json:"agents_cost_usd,omitempty"`
+	// UnpricedTokens is the session's token count that no pricing row
+	// covered; CostStatus is priced | partial | unpriced ("" when the
+	// session recorded no usage). total_cost_usd 0 with cost_status
+	// "unpriced" means "could not price", never "free".
+	UnpricedTokens int    `json:"unpriced_tokens,omitempty"`
+	CostStatus     string `json:"cost_status,omitempty"`
 	// DurationSecs is wall-span (session end - start), which can dwarf
 	// the work in long-running sessions. ActiveSecs is the gap-capped
 	// activity sum across turns — the honest "time worked" number.
@@ -281,7 +290,7 @@ type OutlineTurn struct {
 	CommandName       string        `json:"command_name,omitempty"`
 	Superseded        bool          `json:"superseded,omitempty"`
 	SupersededByTurn  int           `json:"superseded_by_turn,omitempty"`
-	Steps             []OutlineStep `json:"steps,omitempty"`
+	Steps             []OutlineStep `json:"steps"`
 	Edits             int           `json:"edits,omitempty"`
 	Tools             int           `json:"tools,omitempty"`
 	Errors            int           `json:"errors,omitempty"`
@@ -293,7 +302,7 @@ type OutlineTurn struct {
 	CacheReadTokens   int           `json:"cache_read_tokens,omitempty"`
 	CacheCreateTokens int           `json:"cache_create_tokens,omitempty"`
 	ReasoningTokens   int           `json:"reasoning_tokens,omitempty"`
-	CostUSD           float64       `json:"cost_usd,omitempty"`
+	CostUSD           float64       `json:"cost_usd"`
 	AgentsCostUSD     float64       `json:"agents_cost_usd,omitempty"`
 	LinkedCommits     []string      `json:"linked_commits,omitempty"`
 }
@@ -301,7 +310,7 @@ type OutlineTurn struct {
 type OutlineStep struct {
 	Index      int    `json:"index"`
 	Headline   string `json:"headline"`
-	Tools      int    `json:"tools,omitempty"`
+	Tools      int    `json:"tools"`
 	Edits      int    `json:"edits,omitempty"`
 	Errors     int    `json:"errors,omitempty"`
 	Interrupts int    `json:"interrupts,omitempty"`
