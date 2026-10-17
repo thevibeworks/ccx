@@ -1,12 +1,6 @@
 ---
 name: ccx
-description: >
-  Session viewer for Claude Code, Codex, and Grok. Use this skill when working
-  with agent session files, browsing conversation history, exporting
-  transcripts, inspecting memory/instruction files, or analyzing AI
-  interactions. Triggers on: session management, conversation export,
-  transcript viewing, memory inspection, Claude Code debugging, Codex session
-  viewing, Grok session viewing.
+description: "Session viewer for Claude Code, Codex, and Grok: browse conversation history, export transcripts, inspect memory and instruction files, analyze AI interactions. Triggers: session management, conversation export, transcript viewing, memory inspection, agent session debugging."
 ---
 
 # ccx - Session Viewer for Agent CLIs
@@ -42,16 +36,20 @@ ccx
 │   └── --json                    # Every relation with evidence (ccx.related.v1)
 ├── log [project]                 # Slice raw session logs by time scope
 │   └── --scope today|yesterday|week|month|quarter|year
-│   └── --since / --until TIME    # RFC3339 or YYYY-MM-DD
+│   └── --since / --until TIME    # RFC3339 or YYYY-MM-DD (--since alone = until now)
 │   └── --tz ZONE                 # IANA timezone, UTC, local, or offset like +8
 │   └── --json --raw              # Evidence bundle, optional raw JSONL
-│   └── --kind K1,K2              # Only these record kinds (user_prompt, assistant_message, tool_call, ...)
+│   └── --kind K1,K2              # Only these record kinds (user_prompt, agent_prompt, assistant_message, tool_call, ...)
 │   └── --match PHRASE [-w]       # Only records whose raw line contains the phrase
 ├── insight [project]             # Digest of every session in a window (ccx.insight.v1)
 │   └── --scope --tz --since --until --all
 │   └── --json                    # sessions[] with prompts/final answer/edits/commits/cost + workspaces[]/days[]/models[]
 │   └── --records [-n N]          # Add the raw log records (ccx log's payload)
 │   └── -o FILE                   # HTML evidence cockpit (default: $XDG_DATA_HOME/ccx/insights/, browsable at /insights)
+├── me                            # What the prompt record says about the human (ccx.me.v1)
+│   └── --since / --until --tz    # Window (default: everything on record, until now)
+│   └── --term NAME=REGEX         # Count prompts matching a regex, total and per month (repeatable)
+│   └── --json                    # tempo, months[], commands, rewinds, resends, workspaces
 ├── web                           # Start web UI
 │   └── --port --host --no-open
 │   └── --project [path] --session ID --latest  # Deep-link into a view
@@ -63,7 +61,7 @@ ccx
 ├── skills                        # Manage bundled agent skills
 │   └── install --scope user|project  # Install skills matching this binary
 ├── config                        # Show / init config
-└── doctor                        # Check setup
+└── doctor                        # Check setup, transcript retention, and months where history has prompts but no transcript
 ```
 
 ## Quick Start
@@ -78,10 +76,11 @@ ccx export -f html        # Export to HTML
 ccx sessions --scope yesterday --tz +8 --all --json # Session containers by end time
 ccx log --scope yesterday --tz +8 --all --json
 ccx log --scope today --all --kind user_prompt   # The humans in the loop: every prompt today, all sessions, in order
-ccx log --scope today --all --kind interrupt,tool_denied  # Where humans stopped or refused the agent
+ccx log --scope today --all --kind interrupt,tool_denied -C 2  # Where humans stopped the agent, with what it was doing and what came next
 ccx log --scope month --all --match deadman -w   # When a term came up inside a window (raw-line match)
 ccx insight --scope week --all --json            # What was worked on, everywhere: per-session prompts, answers, edits, cost
 ccx insight --scope month --all                  # Same digest as an HTML cockpit in the insights dir
+ccx me --tz +8                                   # How the human works: hours, streaks, rewinds, workspaces, by month
 ccx trace                 # Outline of the latest workspace session
 ccx trace abc123 --turn 5 # Full evidence for one turn
 ccx related abc123        # Sessions connected to this one: fork, handoff, mentions, shared files
@@ -136,6 +135,25 @@ come up" (`--match`) and "every human prompt today" (`--kind`), not
 for reconstructing sessions. Without `--json` the same digest is
 rendered as a self-contained HTML cockpit (facts only; the judgment
 layer is the ccx-recap skill).
+
+## Me: the human at the keyboard
+
+`ccx me --tz +8` profiles the person, not the agent, from what they
+typed: working hours and day start/end, streaks and breaks, per-month
+prompt length / language / command share / late share, slash commands,
+`/rewind` behaviour (how soon, and whether the same prompt comes back
+edited), resends, workspaces held per day and how long each lived.
+`--term name=regex` trends any habit of speech by month. It counts and
+does not judge; interpretation is the reader's.
+
+The source is the prompt history, which outlives session cleanup — so
+it answers year-long questions in seconds where `log`/`insight` see
+only the transcripts still on disk. Before trusting a session-derived
+count over a long window, run `ccx doctor`: it lists the months where
+history names sessions whose transcript is gone. Use `me` for "how do I work", and
+`insight` for "what was worked on". Codex history records no
+workspace, so workspace figures are Claude Code only. A day runs
+05:00 to 05:00; a day end past 24:00 is after midnight.
 
 ## Multi-Provider
 

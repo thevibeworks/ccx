@@ -28,7 +28,9 @@ for scoped insight: records inside the window plus session overlap metadata.
 assistant_message, tool_call, tool_result, reasoning, ...); --match
 keeps records whose raw transcript line contains a phrase (-w for
 whole words). Together they turn the firehose into a timeline:
-every human prompt today, across every session, in order.
+every human prompt today, across every session, in order. -C N adds
+N records on each side of every match from the same transcript, so
+an interrupt shows what the agent was doing and what came next.
 
 Examples:
   ccx log --scope yesterday --tz +8 --all --json
@@ -36,7 +38,8 @@ Examples:
   ccx log --scope week --provider cx --json
   ccx log /path/to/repo --scope yesterday --json --raw
   ccx log --scope today --all --kind user_prompt        # the humans in the loop, today
-  ccx log --scope month --all --match semantica -w      # when a term came up, in a window`,
+  ccx log --scope month --all --match semantica -w      # when a term came up, in a window
+  ccx log --since 2026-09-01 --all --kind interrupt,tool_denied -C 2   # what each Esc cut off`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runLog,
 }
@@ -54,6 +57,7 @@ var (
 	logKinds    string
 	logMatch    string
 	logWord     bool
+	logContext  int
 	logLocation *time.Location
 )
 
@@ -70,6 +74,7 @@ func init() {
 	logCmd.Flags().StringVar(&logKinds, "kind", "", "keep only these record kinds (comma-separated, e.g. user_prompt,assistant_message)")
 	logCmd.Flags().StringVar(&logMatch, "match", "", "keep only records whose raw transcript line contains this phrase")
 	logCmd.Flags().BoolVarP(&logWord, "word", "w", false, "--match whole words only")
+	logCmd.Flags().IntVarP(&logContext, "context", "C", 0, "with --kind/--match, also keep N records before and after each match (same transcript)")
 }
 
 func runLog(cmd *cobra.Command, args []string) error {
@@ -104,6 +109,12 @@ func runLog(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(logKinds) != "" {
 		kinds = strings.Split(logKinds, ",")
 	}
+	if logContext < 0 {
+		return fmt.Errorf("--context must be 0 or more")
+	}
+	if logContext > 0 && len(kinds) == 0 && strings.TrimSpace(logMatch) == "" {
+		return fmt.Errorf("--context needs --kind or --match: it widens a match, and without a filter every record already shows")
+	}
 	var match func(string) bool
 	if strings.TrimSpace(logMatch) != "" {
 		if err := matchValueError(logMatch); err != nil {
@@ -128,6 +139,7 @@ func runLog(cmd *cobra.Command, args []string) error {
 		Now:           time.Now().In(loc),
 		Kinds:         kinds,
 		Match:         match,
+		Context:       logContext,
 	})
 	if err != nil {
 		return err
@@ -213,8 +225,12 @@ func logWindow(loc *time.Location) (time.Time, time.Time, string, string, error)
 	if err != nil {
 		return time.Time{}, time.Time{}, "", "", fmt.Errorf("invalid --until: %w", err)
 	}
-	if start.IsZero() || end.IsZero() {
-		return time.Time{}, time.Time{}, "", "", fmt.Errorf("--since and --until are both required when --scope is not used")
+	if start.IsZero() {
+		return time.Time{}, time.Time{}, "", "", fmt.Errorf("--until needs --since (or use --scope)")
+	}
+	if end.IsZero() {
+		// "since X" means until now; the common question has no end date.
+		end = time.Now().In(loc)
 	}
 	if !start.Before(end) {
 		return time.Time{}, time.Time{}, "", "", fmt.Errorf("--since must be before --until")
@@ -267,10 +283,14 @@ func printLogTable(bundle *sessionlog.Bundle) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "WHEN\tSRC\tKIND\tSESSION\tPROJECT\tTEXT")
 	for _, record := range bundle.Records {
+		kind := record.Kind
+		if record.Context {
+			kind = "  ctx " + kind // a neighbor of a match, indented under it
+		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			record.Timestamp.In(loc).Format("Jan 02 15:04"),
 			providerTag(record.Provider),
-			record.Kind,
+			kind,
 			truncateID(record.SessionID, 8),
 			truncateDisplay(record.Project, 20),
 			truncateDisplay(record.Text, 96))

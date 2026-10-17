@@ -1,6 +1,7 @@
 package sessionlog
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -304,6 +305,46 @@ func TestCollectClaudeUserRoleNoiseIsNotAPrompt(t *testing.T) {
 	}
 }
 
+// A subagent's brief is user-role text the parent agent wrote. Inline
+// (isSidechain, older Claude Code) or in a subagents/ file (newer), it
+// is an agent_prompt, never a user_prompt — including when the parent
+// transcript is gone and only the subagent file survives.
+func TestCollectSubagentBriefIsNotAHumanPrompt(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".claude")
+	projDir := filepath.Join(home, "projects", "-tmp-repo")
+	orphanDir := filepath.Join(projDir, "gone-parent", "subagents")
+	if err := os.MkdirAll(orphanDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeLines(t, filepath.Join(projDir, "s1.jsonl"),
+		`{"type":"user","uuid":"h1","sessionId":"s1","cwd":"/tmp/repo","timestamp":"2026-08-18T10:00:00Z","message":{"role":"user","content":"the human asks"}}`,
+		`{"type":"user","uuid":"a1","sessionId":"s1","cwd":"/tmp/repo","isSidechain":true,"timestamp":"2026-08-18T10:00:01Z","message":{"role":"user","content":"Search the repo for X and report"}}`,
+		`{"type":"assistant","uuid":"a2","sessionId":"s1","cwd":"/tmp/repo","isSidechain":true,"timestamp":"2026-08-18T10:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"found it"}]}}`,
+	)
+	writeLines(t, filepath.Join(orphanDir, "agent-abc123.jsonl"),
+		`{"type":"user","uuid":"o1","sessionId":"gone-parent","cwd":"/tmp/repo","timestamp":"2026-08-18T11:00:00Z","message":{"role":"user","content":"Warmup"}}`,
+	)
+	bundle, err := Collect([]Source{{Provider: "claude-code", Home: home}}, Options{Start: mustParseTime(t, "2026-08-18T00:00:00Z"), End: mustParseTime(t, "2026-08-19T00:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"h1": "user_prompt", "a1": "agent_prompt", "a2": "assistant_message", "o1": "agent_prompt"}
+	for _, r := range bundle.Records {
+		if want[r.UUID] != r.Kind {
+			t.Errorf("%s: kind %q, want %q", r.UUID, r.Kind, want[r.UUID])
+		}
+	}
+	if len(bundle.Records) != 4 || bundle.Metrics.UserPrompts != 1 {
+		t.Fatalf("records %d, user prompts %d, want 4 and 1", len(bundle.Records), bundle.Metrics.UserPrompts)
+	}
+	for _, day := range bundle.Days {
+		if day.UserPrompts != 1 {
+			t.Fatalf("day rollup counts agent briefs as prompts: %+v", day)
+		}
+	}
+}
+
 func writeLines(t *testing.T, path string, lines ...string) {
 	t.Helper()
 	content := ""
@@ -463,5 +504,59 @@ func TestCollectTruncatedIsMeasuredAgainstMatchedNotTotal(t *testing.T) {
 	}
 	if m := bundle.Metrics; !m.Truncated || m.RecordsMatched != 2 || m.RecordsReturned != 1 {
 		t.Fatalf("limit below matched must report truncated: %+v", m)
+	}
+}
+
+func TestCollectContextKeepsNeighborsFromTheSameTranscript(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".claude")
+	projectDir := filepath.Join(home, "projects", "-tmp-workspace")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeLines(t, filepath.Join(projectDir, "s.jsonl"),
+		`{"type":"user","sessionId":"s","cwd":"/tmp/workspace","timestamp":"2026-05-21T09:00:00+08:00","message":{"role":"user","content":"fix the build"}}`,
+		`{"type":"assistant","sessionId":"s","cwd":"/tmp/workspace","timestamp":"2026-05-21T09:01:00+08:00","message":{"role":"assistant","content":[{"type":"text","text":"rewriting the Makefile"}]}}`,
+		`{"type":"assistant","sessionId":"s","cwd":"/tmp/workspace","timestamp":"2026-05-21T09:02:00+08:00","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"rm -rf build"}}]}}`,
+		`{"type":"user","sessionId":"s","cwd":"/tmp/workspace","timestamp":"2026-05-21T09:03:00+08:00","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"The user doesn't want to proceed with this tool use. The tool use was rejected"}]}}`,
+		`{"type":"user","sessionId":"s","cwd":"/tmp/workspace","timestamp":"2026-05-21T09:04:00+08:00","message":{"role":"user","content":"no, only the target"}}`,
+		`{"type":"user","sessionId":"s","cwd":"/tmp/workspace","timestamp":"2026-05-21T09:05:00+08:00","message":{"role":"user","content":"and run make"}}`,
+	)
+	opts := Options{
+		Start: mustParseTime(t, "2026-05-21T00:00:00+08:00"), End: mustParseTime(t, "2026-05-22T00:00:00+08:00"), TimeZone: "+08:00",
+		Kinds: []string{"tool_denied"}, Context: 1,
+	}
+	bundle, err := Collect([]Source{{Provider: "claude-code", Home: home}}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range bundle.Records {
+		got = append(got, fmt.Sprintf("%s:%v", r.Kind, r.Context))
+	}
+	if want := "tool_call:true tool_denied:false user_prompt:true"; strings.Join(got, " ") != want {
+		t.Fatalf("records = %v, want %s", got, want)
+	}
+	if m := bundle.Metrics; m.RecordsMatched != 1 || m.RecordsReturned != 3 || m.Truncated {
+		t.Fatalf("context neighbors must not count as matches: %+v", m)
+	}
+	if len(bundle.Providers) != 1 || bundle.Providers[0].Records != 1 {
+		t.Fatalf("aggregates must count matches only: %+v", bundle.Providers)
+	}
+
+	// Adjacent matches share one window; nothing is emitted twice and
+	// a match is never demoted to a neighbor.
+	opts.Kinds = []string{"user_prompt"}
+	opts.Context = 2
+	bundle, err = Collect([]Source{{Provider: "claude-code", Home: home}}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = got[:0]
+	for _, r := range bundle.Records {
+		got = append(got, fmt.Sprintf("%d:%v", r.Line, r.Context))
+	}
+	if want := "1:false 2:true 3:true 4:true 5:false 6:false"; strings.Join(got, " ") != want {
+		t.Fatalf("records = %v, want %s", got, want)
 	}
 }
