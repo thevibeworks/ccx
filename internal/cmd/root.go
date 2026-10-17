@@ -116,6 +116,7 @@ func initConfig() {
 	viper.SetDefault("codex_home", config.DefaultCodexHome())
 	viper.SetDefault("grok_home", config.DefaultGrokHome())
 	viper.SetDefault("theme", "dark")
+	viper.SetDefault("locale", "auto")
 	viper.SetDefault("rendering.syntax_highlight", true)
 	viper.SetDefault("rendering.show_thinking", "collapsed")
 	viper.SetDefault("rendering.code_theme", "monokai")

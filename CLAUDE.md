@@ -64,6 +64,7 @@ ccx/
     parser/               JSONL parsing + tree building
     render/               Output formats (HTML, MD, Org, JSON)
     web/                  HTTP server + embedded templates
+    i18n/                 Web UI catalogs (en, zh-CN)
     db/                   SQLite persistence (stars)
     config/               CLAUDE_CODE_HOME logic
 ```

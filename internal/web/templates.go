@@ -105,41 +105,41 @@ func parseProviderQuery(q string) (provider, query string) {
 	return "", q
 }
 
-func renderIndexPage(projects []*parser.Project, totalSessions int, search, sortBy string) string {
+func (l loc) renderIndexPage(projects []*parser.Project, totalSessions int, search, sortBy string) string {
 	var b strings.Builder
 
-	b.WriteString(pageHeader("ccx", ccxconfig.Theme()))
-	b.WriteString(renderTopNav("", ""))
+	b.WriteString(l.pageHeader("ccx", ccxconfig.Theme()))
+	b.WriteString(l.renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
-	b.WriteString(renderSidebar("projects"))
+	b.WriteString(l.renderSidebar("projects"))
 
 	b.WriteString(`<main class="main-content">`)
 	b.WriteString(`<div class="page-header page-header-projects">`)
 	b.WriteString(`<span class="page-badge badge-project">P</span>`)
-	b.WriteString(`<h1>Projects</h1>`)
-	b.WriteString(fmt.Sprintf(`<div class="stats">%d projects / %d sessions</div>`, len(projects), totalSessions))
+	b.WriteString(`<h1>` + html.EscapeString(l.T("projects.heading")) + `</h1>`)
+	b.WriteString(fmt.Sprintf(`<div class="stats">%s</div>`, html.EscapeString(l.T("projects.stats", len(projects), totalSessions))))
 	b.WriteString(`</div>`)
 
 	b.WriteString(`<div class="controls">`)
 	b.WriteString(`<div class="search-wrap">`)
-	b.WriteString(fmt.Sprintf(`<input type="text" id="search" class="search-input" placeholder="Search projects... (press /)" value="%s">`, html.EscapeString(search)))
+	b.WriteString(fmt.Sprintf(`<input type="text" id="search" class="search-input" placeholder="%s" value="%s">`, html.EscapeString(l.T("projects.search")), html.EscapeString(search)))
 	b.WriteString(`<span class="search-spinner" id="search-spinner"></span>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="sort-controls">`)
-	b.WriteString(`<span class="sort-label">Sort:</span>`)
+	b.WriteString(`<span class="sort-label">` + html.EscapeString(l.T("projects.sort")) + `</span>`)
 	b.WriteString(fmt.Sprintf(`<select id="sort" class="sort-select">
-		<option value="time"%s>Recent</option>
-		<option value="name"%s>Name</option>
-		<option value="sessions"%s>Sessions</option>
-	</select>`, selected(sortBy, "time"), selected(sortBy, "name"), selected(sortBy, "sessions")))
+		<option value="time"%s>%s</option>
+		<option value="name"%s>%s</option>
+		<option value="sessions"%s>%s</option>
+	</select>`, selected(sortBy, "time"), html.EscapeString(l.T("projects.sort_recent")), selected(sortBy, "name"), html.EscapeString(l.T("projects.sort_name")), selected(sortBy, "sessions"), html.EscapeString(l.T("projects.sort_sessions"))))
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 
 	b.WriteString(`<div class="card-grid" id="results">`)
 	for _, p := range projects {
-		sessionsLabel := "sessions"
+		sessionsLabel := l.T("projects.session_other")
 		if len(p.Sessions) == 1 {
-			sessionsLabel = "session"
+			sessionsLabel = l.T("projects.session_one")
 		}
 		displayName := parser.GetProjectDisplayName(p.EncodedName)
 		badges := providerBadgesHTML(projectProviders(p))
@@ -159,29 +159,29 @@ func renderIndexPage(projects []*parser.Project, totalSessions int, search, sort
 		<span class="stat-sep">&middot;</span>
 		<span class="stat">%s</span>
 	</div>
-</a>`, html.EscapeString(p.EncodedName), provAttr, html.EscapeString(displayName), badges, len(p.Sessions), sessionsLabel, formatAge(p.LastModified)))
+</a>`, html.EscapeString(p.EncodedName), provAttr, html.EscapeString(displayName), badges, len(p.Sessions), sessionsLabel, l.age(p.LastModified)))
 	}
 	b.WriteString(`</div>`)
 
 	b.WriteString(`</main>`)
 	b.WriteString(`</div>`)
 	b.WriteString(renderFooter())
-	b.WriteString(indexJS())
-	b.WriteString(pageFooter())
+	b.WriteString(l.indexJS())
+	b.WriteString(l.pageFooter())
 
 	return b.String()
 }
 
-func renderProjectPage(project *parser.Project, sessions []*parser.Session, allProjects []*parser.Project, memFiles []MemoryFile, search, sortBy string) string {
+func (l loc) renderProjectPage(project *parser.Project, sessions []*parser.Session, allProjects []*parser.Project, memFiles []MemoryFile, search, sortBy string) string {
 	var b strings.Builder
 
-	b.WriteString(pageHeader(project.Name+" - ccx", ccxconfig.Theme()))
-	b.WriteString(renderTopNav(project.EncodedName, ""))
+	b.WriteString(l.pageHeader(project.Name+" - ccx", ccxconfig.Theme()))
+	b.WriteString(l.renderTopNav(project.EncodedName, ""))
 	b.WriteString(`<div class="layout two-panel">`)
 
 	// Left panel: Projects list
 	b.WriteString(`<aside class="panel-nav">`)
-	b.WriteString(`<div class="panel-header"><a href="/">Projects</a></div>`)
+	b.WriteString(`<div class="panel-header"><a href="/">` + html.EscapeString(l.T("nav.projects")) + `</a></div>`)
 	b.WriteString(`<div class="panel-list">`)
 	for _, p := range allProjects {
 		active := ""
@@ -198,16 +198,16 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 
 	b.WriteString(`<main class="main-content">`)
 	b.WriteString(`<div class="page-header page-header-sessions">`)
-	b.WriteString(fmt.Sprintf(`<div class="breadcrumb"><a href="/">Projects</a> <span class="sep">/</span> <span class="current">%s</span></div>`, html.EscapeString(project.Name)))
+	b.WriteString(fmt.Sprintf(`<div class="breadcrumb"><a href="/">%s</a> <span class="sep">/</span> <span class="current">%s</span></div>`, html.EscapeString(l.T("nav.projects")), html.EscapeString(project.Name)))
 	b.WriteString(`<span class="page-badge badge-session">S</span>`)
 	b.WriteString(fmt.Sprintf(`<h1>%s</h1>`, html.EscapeString(project.Name)))
-	b.WriteString(fmt.Sprintf(`<div class="stats">%d sessions</div>`, len(sessions)))
+	b.WriteString(fmt.Sprintf(`<div class="stats">%s</div>`, html.EscapeString(l.T("project.sessions_count", len(sessions)))))
 	b.WriteString(`</div>`)
 
 	// Memory section (above session list)
 	if len(memFiles) > 0 {
 		b.WriteString(`<details class="mem-section" id="mem-section" open>`)
-		b.WriteString(fmt.Sprintf(`<summary class="mem-section-header"><span class="mem-icon">◇</span> Memory <span class="mem-badge">%d</span></summary>`, len(memFiles)))
+		b.WriteString(fmt.Sprintf(`<summary class="mem-section-header"><span class="mem-icon">◇</span> %s <span class="mem-badge">%d</span></summary>`, html.EscapeString(l.T("project.memory")), len(memFiles)))
 		b.WriteString(`<div class="mem-section-body">`)
 		for i, f := range memFiles {
 			provClass := "mem-file-cc"
@@ -218,8 +218,8 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 			b.WriteString(fmt.Sprintf(`<summary class="mem-file-row"><code class="mem-file-name">%s</code><span class="mem-file-path">%s</span><span class="expand-icon">▶</span></summary>`,
 				html.EscapeString(f.Name), html.EscapeString(truncatePath(f.FilePath, 50))))
 			b.WriteString(fmt.Sprintf(`<div class="file-viewer" id="mem-%d">`, i))
-			b.WriteString(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">fmt</button><button class="mode-btn active" data-mode="raw">raw</button><button class="copy-btn">copy</button></div>`)
-			b.WriteString(`<div class="file-content"><div class="loading">Loading...</div></div>`)
+			b.WriteString(fmt.Sprintf(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">%s</button><button class="mode-btn active" data-mode="raw">%s</button><button class="copy-btn">%s</button></div>`, html.EscapeString(l.T("common.fmt")), html.EscapeString(l.T("common.raw")), html.EscapeString(l.T("common.copy"))))
+			b.WriteString(`<div class="file-content"><div class="loading">` + html.EscapeString(l.T("common.loading")) + `</div></div>`)
 			b.WriteString(`</div></details>`)
 		}
 		b.WriteString(`</div></details>`)
@@ -227,16 +227,16 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 
 	b.WriteString(`<div class="controls">`)
 	b.WriteString(`<div class="search-wrap">`)
-	b.WriteString(fmt.Sprintf(`<input type="text" id="search" class="search-input" placeholder="Search sessions... (press /)" value="%s">`, html.EscapeString(search)))
+	b.WriteString(fmt.Sprintf(`<input type="text" id="search" class="search-input" placeholder="%s" value="%s">`, html.EscapeString(l.T("project.search")), html.EscapeString(search)))
 	b.WriteString(`<span class="search-spinner" id="search-spinner"></span>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="sort-controls">`)
-	b.WriteString(`<select id="provider-filter" class="sort-select" title="Filter by provider"><option value="all">All</option><option value="claude-code">Claude Code</option><option value="codex">Codex</option><option value="grok">Grok</option></select>`)
-	b.WriteString(`<span class="sort-label">Sort:</span>`)
+	b.WriteString(fmt.Sprintf(`<select id="provider-filter" class="sort-select" title="%s"><option value="all">%s</option><option value="claude-code">Claude Code</option><option value="codex">Codex</option><option value="grok">Grok</option></select>`, html.EscapeString(l.T("project.filter_provider")), html.EscapeString(l.T("project.filter_all"))))
+	b.WriteString(`<span class="sort-label">` + html.EscapeString(l.T("projects.sort")) + `</span>`)
 	b.WriteString(fmt.Sprintf(`<select id="sort" class="sort-select">
-		<option value="time"%s>Recent</option>
-		<option value="messages"%s>Messages</option>
-	</select>`, selected(sortBy, "time"), selected(sortBy, "messages")))
+		<option value="time"%s>%s</option>
+		<option value="messages"%s>%s</option>
+	</select>`, selected(sortBy, "time"), html.EscapeString(l.T("projects.sort_recent")), selected(sortBy, "messages"), html.EscapeString(l.T("project.sort_messages"))))
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 
@@ -246,7 +246,7 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 		totalTokens := s.Stats.InputTokens + s.Stats.OutputTokens
 		tokenDisplay := ""
 		if totalTokens > 0 {
-			tokenDisplay = fmt.Sprintf(`<span class="stat stat-tokens" title="Total tokens"><span class="stat-icon">⧫</span> %s</span>`, formatTokens(totalTokens))
+			tokenDisplay = fmt.Sprintf(`<span class="stat stat-tokens" title="%s"><span class="stat-icon">⧫</span> %s</span>`, html.EscapeString(l.T("project.tokens")), formatTokens(totalTokens))
 		}
 		badge := providerBadgeHTML(s.Provider)
 		provAttr := ""
@@ -269,7 +269,7 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 			provAttr, badge,
 			html.EscapeString(truncate(s.ID, 8)),
 			s.StartTime.Format("2006-01-02 15:04"),
-			formatRelativeTime(s.StartTime),
+			l.relTime(s.StartTime),
 			html.EscapeString(summary),
 			s.Stats.MessageCount, s.Stats.ToolCalls, tokenDisplay))
 	}
@@ -278,17 +278,21 @@ func renderProjectPage(project *parser.Project, sessions []*parser.Session, allP
 	b.WriteString(`</main>`)
 	b.WriteString(`</div>`)
 	b.WriteString(renderFooter())
-	b.WriteString(indexJS())
+	b.WriteString(l.indexJS())
 	if len(memFiles) > 0 {
 		b.WriteString(memSectionCSS())
-		b.WriteString(fileCardJS())
+		b.WriteString(l.fileCardJS())
 	}
-	b.WriteString(pageFooter())
+	b.WriteString(l.pageFooter())
 
 	return b.String()
 }
 
 func renderSessionPage(session *parser.Session, projectName string, allSessions []*parser.Session, memCount int, showThinking, showTools, loadAll bool, theme string, traceTurns []trace.Turn, turnTarget string) string {
+	return defaultLoc().renderSessionPage(session, projectName, allSessions, memCount, showThinking, showTools, loadAll, theme, traceTurns, turnTarget)
+}
+
+func (l loc) renderSessionPage(session *parser.Session, projectName string, allSessions []*parser.Session, memCount int, showThinking, showTools, loadAll bool, theme string, traceTurns []trace.Turn, turnTarget string) string {
 	var b strings.Builder
 
 	// Turn evidence keyed by the user anchor UUID; renderThread attaches
@@ -302,8 +306,8 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	if len(idPrefix) > 8 {
 		idPrefix = idPrefix[:8]
 	}
-	title := fmt.Sprintf("Session %s - ccx", idPrefix)
-	b.WriteString(pageHeader(title, theme))
+	title := l.T("title.session", idPrefix)
+	b.WriteString(l.pageHeader(title, theme))
 	// Hint the current session's provider to the CSS layer so the
 	// loading spinner can pick up a provider-specific accent (e.g.
 	// green for Codex). Non-session pages never set this attribute.
@@ -314,16 +318,16 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	if turnTarget != "" {
 		b.WriteString(fmt.Sprintf(`<script>document.body.dataset.ccxTarget=%q;</script>`, turnTarget))
 	}
-	b.WriteString(renderTopNav(projectName, session.ID))
+	b.WriteString(l.renderTopNav(projectName, session.ID))
 
 	// Context bar: where am I, and how do I move sideways. This
 	// replaces the old hover-expanding session rail — one navigation
 	// rail (the outline) remains; session switching is a breadcrumb
 	// concern, not a second rail.
 	b.WriteString(`<div class="context-bar">`)
-	b.WriteString(`<button class="icon-btn outline-btn" onclick="toggleOutlineDrawer()" title="Outline" aria-label="Toggle outline">☰</button>`)
-	b.WriteString(`<nav class="breadcrumb" aria-label="Breadcrumb">`)
-	b.WriteString(`<a href="/">Projects</a> <span class="sep">/</span> `)
+	b.WriteString(fmt.Sprintf(`<button class="icon-btn outline-btn" onclick="toggleOutlineDrawer()" title="%s" aria-label="%s">☰</button>`, html.EscapeString(l.T("session.outline")), html.EscapeString(l.T("session.toggle_outline"))))
+	b.WriteString(`<nav class="breadcrumb" aria-label="` + html.EscapeString(l.T("session.breadcrumb")) + `">`)
+	b.WriteString(`<a href="/">` + html.EscapeString(l.T("nav.projects")) + `</a> <span class="sep">/</span> `)
 	// Label with the human workspace name, not the slug the directory is
 	// encoded as; the full path stays available on hover.
 	b.WriteString(fmt.Sprintf(`<a href="/project/%s" title="%s">%s</a> <span class="sep">/</span> `,
@@ -333,7 +337,7 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	b.WriteString(fmt.Sprintf(`<span class="current">%s</span>`, html.EscapeString(idPrefix)))
 	b.WriteString(`</nav>`)
 	if len(allSessions) > 1 {
-		b.WriteString(`<select class="session-switcher" aria-label="Switch session" onchange="if(this.value)location.href=this.value">`)
+		b.WriteString(`<select class="session-switcher" aria-label="` + html.EscapeString(l.T("session.switch")) + `" onchange="if(this.value)location.href=this.value">`)
 		for _, s := range allSessions {
 			selected := ""
 			if s.ID == session.ID {
@@ -358,13 +362,13 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	// Conversation nav sidebar
 	b.WriteString(`<aside class="nav-sidebar" id="nav-sidebar">`)
 	b.WriteString(`<div class="sidebar-header">`)
-	b.WriteString(`<h3>Outline</h3>`)
-	b.WriteString(`<button class="icon-btn" onclick="toggleSidebar()" title="Toggle sidebar">`)
+	b.WriteString(`<h3>` + html.EscapeString(l.T("session.outline")) + `</h3>`)
+	b.WriteString(`<button class="icon-btn" onclick="toggleSidebar()" title="` + html.EscapeString(l.T("session.toggle_sidebar")) + `">`)
 	b.WriteString(`<span id="toggle-icon">◀</span>`)
 	b.WriteString(`</button>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="nav-list" id="nav-list">`)
-	renderConversationNav(&b, session.RootMessages, buildStepMap(turnMap))
+	l.renderConversationNav(&b, session.RootMessages, buildStepMap(turnMap))
 	b.WriteString(`</div>`)
 	b.WriteString(`</aside>`)
 
@@ -384,11 +388,11 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	b.WriteString(fmt.Sprintf(`<input type="checkbox" id="show-tools" style="display:none" %s>`, toolsChecked))
 
 	b.WriteString(`<div class="messages" id="messages">`)
-	renderMessages(&b, session.RootMessages, 0, showThinking, showTools, loadAll, turnMap)
+	l.renderMessages(&b, session.RootMessages, 0, showThinking, showTools, loadAll, turnMap)
 	b.WriteString(`</div>`)
 
 	// Tail spinner for watch mode
-	b.WriteString(`<div class="tail-spinner"><span class="cli-spinner-char"></span> Tailing session...</div>`)
+	b.WriteString(`<div class="tail-spinner"><span class="cli-spinner-char"></span> ` + html.EscapeString(l.T("session.tailing")) + `</div>`)
 
 	// Tail output container for watch mode
 	b.WriteString(`<div class="tail-output" id="tail-output" style="display:none"></div>`)
@@ -398,15 +402,15 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	// Timeline rail — right-edge time-axis scrubber. Narrow by default,
 	// expands on hover with a floating tooltip that snaps to the nearest
 	// tick. Click to jump. Hidden on narrow viewports.
-	renderTimelineRail(&b, session)
+	l.renderTimelineRail(&b, session)
 
 	// Bottom dock toolbar - horizontal, modern UX
 	b.WriteString(`<div class="dock-toolbar" id="dock-toolbar">`)
 	b.WriteString(`<div class="dock-group dock-nav">`)
-	b.WriteString(`<button class="dock-btn" id="tb-prev-user" title="Previous user (k)"><span class="dock-icon">↑</span><span class="dock-key">k</span></button>`)
-	b.WriteString(`<button class="dock-btn" id="tb-next-user" title="Next user (j)"><span class="dock-icon">↓</span><span class="dock-key">j</span></button>`)
-	b.WriteString(`<button class="dock-btn" id="tb-top" title="Top (g)"><span class="dock-icon">⤒</span></button>`)
-	b.WriteString(`<button class="dock-btn" id="tb-bottom" title="Bottom (G)"><span class="dock-icon">⤓</span></button>`)
+	b.WriteString(`<button class="dock-btn" id="tb-prev-user" title="` + html.EscapeString(l.T("session.prev_user")) + `"><span class="dock-icon">↑</span><span class="dock-key">k</span></button>`)
+	b.WriteString(`<button class="dock-btn" id="tb-next-user" title="` + html.EscapeString(l.T("session.next_user")) + `"><span class="dock-icon">↓</span><span class="dock-key">j</span></button>`)
+	b.WriteString(`<button class="dock-btn" id="tb-top" title="` + html.EscapeString(l.T("session.top")) + `"><span class="dock-icon">⤒</span></button>`)
+	b.WriteString(`<button class="dock-btn" id="tb-bottom" title="` + html.EscapeString(l.T("session.bottom")) + `"><span class="dock-icon">⤓</span></button>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="dock-sep"></div>`)
 	b.WriteString(`<div class="dock-group dock-view">`)
@@ -418,50 +422,50 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	if showTools {
 		toolsActive = " active"
 	}
-	b.WriteString(fmt.Sprintf(`<button class="dock-btn toggle%s" id="tb-thinking" title="Thinking (t)"><span class="dock-icon">∴</span><span class="dock-label">Think</span></button>`, thinkingActive))
-	b.WriteString(fmt.Sprintf(`<button class="dock-btn toggle%s" id="tb-tools" title="Tools (o)"><span class="dock-icon">◎</span><span class="dock-label">Tools</span></button>`, toolsActive))
+	b.WriteString(fmt.Sprintf(`<button class="dock-btn toggle%s" id="tb-thinking" title="%s"><span class="dock-icon">∴</span><span class="dock-label">%s</span></button>`, thinkingActive, html.EscapeString(l.T("session.think_title")), html.EscapeString(l.T("session.think"))))
+	b.WriteString(fmt.Sprintf(`<button class="dock-btn toggle%s" id="tb-tools" title="%s"><span class="dock-icon">◎</span><span class="dock-label">%s</span></button>`, toolsActive, html.EscapeString(l.T("session.tools_title")), html.EscapeString(l.T("session.tools"))))
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="dock-sep"></div>`)
 	b.WriteString(`<div class="dock-group dock-live">`)
-	b.WriteString(`<button class="dock-btn live-btn" id="tb-watch" title="Watch live (w)"><span class="dock-icon">◉</span><span class="dock-label">Live</span></button>`)
+	b.WriteString(`<button class="dock-btn live-btn" id="tb-watch" title="` + html.EscapeString(l.T("session.live_title")) + `"><span class="dock-icon">◉</span><span class="dock-label">` + html.EscapeString(l.T("session.live")) + `</span></button>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="dock-sep"></div>`)
 	b.WriteString(`<div class="dock-group dock-actions">`)
 	b.WriteString(`<div class="dock-dropdown">`)
-	b.WriteString(`<button class="dock-btn" id="tb-export" title="Export"><span class="dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></span><span class="dock-label">Export</span></button>`)
+	b.WriteString(`<button class="dock-btn" id="tb-export" title="` + html.EscapeString(l.T("session.export")) + `"><span class="dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></span><span class="dock-label">` + html.EscapeString(l.T("session.export")) + `</span></button>`)
 	b.WriteString(`<div class="dock-menu" id="toolbar-export-menu">`)
 	ep := fmt.Sprintf("/api/export/%s/%s", html.EscapeString(projectName), html.EscapeString(session.ID))
-	b.WriteString(fmt.Sprintf(`<a href="%s?format=md">Markdown</a>`, ep))
-	b.WriteString(fmt.Sprintf(`<a href="%s?format=html">HTML</a>`, ep))
-	b.WriteString(fmt.Sprintf(`<a href="%s?format=org">Org</a>`, ep))
-	b.WriteString(fmt.Sprintf(`<a href="%s?format=json">JSON</a>`, ep))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=md">%s</a>`, ep, html.EscapeString(l.T("session.export_md"))))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=html">%s</a>`, ep, html.EscapeString(l.T("session.export_html"))))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=org">%s</a>`, ep, html.EscapeString(l.T("session.export_org"))))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=json">%s</a>`, ep, html.EscapeString(l.T("session.export_json"))))
 	b.WriteString(`<div class="dock-menu-sep"></div>`)
-	b.WriteString(fmt.Sprintf(`<a href="%s?format=md&brief=1">Brief (md)</a>`, ep))
-	b.WriteString(fmt.Sprintf(`<a href="%s?format=html&brief=1">Brief (html)</a>`, ep))
-	b.WriteString(fmt.Sprintf(`<a href="%s?format=org&brief=1">Brief (org)</a>`, ep))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=md&brief=1">%s</a>`, ep, html.EscapeString(l.T("session.export_brief_md"))))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=html&brief=1">%s</a>`, ep, html.EscapeString(l.T("session.export_brief_html"))))
+	b.WriteString(fmt.Sprintf(`<a href="%s?format=org&brief=1">%s</a>`, ep, html.EscapeString(l.T("session.export_brief_org"))))
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
-	b.WriteString(`<button class="dock-btn" id="tb-search" title="Search (/ or f)"><span class="dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></span><span class="dock-label">Find</span></button>`)
-	b.WriteString(`<button class="dock-btn" id="tb-refresh" title="Refresh (r)"><span class="dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></span></button>`)
-	b.WriteString(`<button class="dock-btn" id="tb-info" title="Info (i)"><span class="dock-icon">ⓘ</span></button>`)
+	b.WriteString(`<button class="dock-btn" id="tb-search" title="` + html.EscapeString(l.T("session.find_title")) + `"><span class="dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></span><span class="dock-label">` + html.EscapeString(l.T("session.find")) + `</span></button>`)
+	b.WriteString(`<button class="dock-btn" id="tb-refresh" title="` + html.EscapeString(l.T("session.refresh")) + `"><span class="dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></span></button>`)
+	b.WriteString(`<button class="dock-btn" id="tb-info" title="` + html.EscapeString(l.T("session.info")) + `"><span class="dock-icon">ⓘ</span></button>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 
 	// Floating session search bar (hidden by default)
 	b.WriteString(`<div class="session-search" id="session-search">`)
 	b.WriteString(`<div class="search-row">`)
-	b.WriteString(`<input type="text" id="search-input" placeholder="Search in session...">`)
+	b.WriteString(fmt.Sprintf(`<input type="text" id="search-input" placeholder="%s">`, html.EscapeString(l.T("session.search_ph"))))
 	b.WriteString(`<span class="search-info" id="search-info"></span>`)
-	b.WriteString(`<button class="search-nav" id="search-prev" title="Previous (N)">↑</button>`)
-	b.WriteString(`<button class="search-nav" id="search-next" title="Next (n)">↓</button>`)
-	b.WriteString(`<button class="search-close" id="search-close" title="Close (Esc)">×</button>`)
+	b.WriteString(`<button class="search-nav" id="search-prev" title="` + html.EscapeString(l.T("session.prev")) + `">↑</button>`)
+	b.WriteString(`<button class="search-nav" id="search-next" title="` + html.EscapeString(l.T("session.next")) + `">↓</button>`)
+	b.WriteString(`<button class="search-close" id="search-close" title="` + html.EscapeString(l.T("session.close")) + `">×</button>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="search-filters">`)
-	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-user" checked><span>User</span></label>`)
-	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-response" checked><span>Response</span></label>`)
-	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-tools"><span>Tools</span></label>`)
-	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-agents"><span>Agents</span></label>`)
-	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-thinking"><span>Thinking</span></label>`)
+	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-user" checked><span>` + html.EscapeString(l.T("session.filter_user")) + `</span></label>`)
+	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-response" checked><span>` + html.EscapeString(l.T("session.filter_response")) + `</span></label>`)
+	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-tools"><span>` + html.EscapeString(l.T("session.filter_tools")) + `</span></label>`)
+	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-agents"><span>` + html.EscapeString(l.T("session.filter_agents")) + `</span></label>`)
+	b.WriteString(`<label class="search-chip"><input type="checkbox" id="filter-thinking"><span>` + html.EscapeString(l.T("session.filter_thinking")) + `</span></label>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 
@@ -471,55 +475,55 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 
 	// Context section
 	b.WriteString(`<div class="info-section">`)
-	b.WriteString(`<div class="info-section-header">Context</div>`)
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Project</span><a href="/project/%s">%s</a></div>`,
-		html.EscapeString(projectName), html.EscapeString(projDisplay)))
+	b.WriteString(`<div class="info-section-header">` + html.EscapeString(l.T("session.context")) + `</div>`)
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><a href="/project/%s">%s</a></div>`,
+		html.EscapeString(l.T("session.project")), html.EscapeString(projectName), html.EscapeString(projDisplay)))
 	if memCount > 0 {
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Memory</span><a href="/project/%s#mem-section" class="mem-link">%d files</a></div>`,
-			html.EscapeString(projectName), memCount))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><a href="/project/%s#mem-section" class="mem-link">%s</a></div>`,
+			html.EscapeString(l.T("session.memory")), html.EscapeString(projectName), html.EscapeString(l.T("session.memory_files", memCount))))
 	}
 	if session.Provider != "" {
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Provider</span>%s</div>`, providerBadgeHTML(session.Provider)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span>%s</div>`, html.EscapeString(l.T("session.provider")), providerBadgeHTML(session.Provider)))
 	}
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Session</span><code class="copyable">%s</code><button class="copy-btn-sm" data-copy="%s">⧉</button></div>`,
-		html.EscapeString(session.ID), html.EscapeString(session.ID)))
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><code class="copyable">%s</code><button class="copy-btn-sm" data-copy="%s">⧉</button></div>`,
+		html.EscapeString(l.T("session.session")), html.EscapeString(session.ID), html.EscapeString(session.ID)))
 	if session.Title != "" {
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Title</span><span class="info-value">%s</span></div>`, html.EscapeString(session.Title)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.title_label")), html.EscapeString(session.Title)))
 	}
 	if session.Slug != "" {
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Slug</span><code class="copyable">%s</code><button class="copy-btn-sm" data-copy="%s">⧉</button></div>`,
-			html.EscapeString(session.Slug), html.EscapeString(session.Slug)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><code class="copyable">%s</code><button class="copy-btn-sm" data-copy="%s">⧉</button></div>`,
+			html.EscapeString(l.T("session.slug")), html.EscapeString(session.Slug), html.EscapeString(session.Slug)))
 	}
 	if session.Model != "" {
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Model</span><span class="info-value">%s</span></div>`, html.EscapeString(session.Model)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.model")), html.EscapeString(session.Model)))
 	}
 	if session.Version != "" {
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Version</span><span class="info-value">%s</span></div>`, html.EscapeString(session.Version)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.version")), html.EscapeString(session.Version)))
 	}
 	if session.GitBranch != "" {
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Branch</span><code>%s</code></div>`, html.EscapeString(session.GitBranch)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><code>%s</code></div>`, html.EscapeString(l.T("session.branch")), html.EscapeString(session.GitBranch)))
 	}
 	if session.CWD != "" {
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">CWD</span><code class="info-cwd" title="%s">%s</code></div>`,
-			html.EscapeString(session.CWD), html.EscapeString(truncatePath(session.CWD, 40))))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><code class="info-cwd" title="%s">%s</code></div>`,
+			html.EscapeString(l.T("session.cwd")), html.EscapeString(session.CWD), html.EscapeString(truncatePath(session.CWD, 40))))
 	}
 	b.WriteString(`</div>`)
 
 	// Time section
 	b.WriteString(`<div class="info-section">`)
-	b.WriteString(`<div class="info-section-header">Time</div>`)
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Started</span><span class="info-value">%s</span></div>`, session.StartTime.Format("2006-01-02 15:04")))
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Duration</span><span class="info-value">%s</span></div>`, formatDuration(session.Stats.DurationSeconds)))
+	b.WriteString(`<div class="info-section-header">` + html.EscapeString(l.T("session.time")) + `</div>`)
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.started")), session.StartTime.Format("2006-01-02 15:04")))
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.duration")), formatDuration(session.Stats.DurationSeconds)))
 	b.WriteString(`</div>`)
 
 	// Activity section
 	b.WriteString(`<div class="info-section">`)
-	b.WriteString(`<div class="info-section-header">Activity</div>`)
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Messages</span><span class="info-value">%d</span></div>`, session.Stats.MessageCount))
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">User prompts</span><span class="info-value">%d</span></div>`, session.Stats.UserPrompts))
-	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Tool calls</span><span class="info-value">%d</span></div>`, session.Stats.ToolCalls))
+	b.WriteString(`<div class="info-section-header">` + html.EscapeString(l.T("session.activity")) + `</div>`)
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><span class="info-value">%d</span></div>`, html.EscapeString(l.T("session.messages")), session.Stats.MessageCount))
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><span class="info-value">%d</span></div>`, html.EscapeString(l.T("session.user_prompts")), session.Stats.UserPrompts))
+	b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><span class="info-value">%d</span></div>`, html.EscapeString(l.T("session.tool_calls")), session.Stats.ToolCalls))
 	if session.Stats.AgentSidechains > 0 {
-		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">Agent tasks</span><span class="info-value">%d</span></div>`, session.Stats.AgentSidechains))
+		b.WriteString(fmt.Sprintf(`<div class="info-row"><span class="info-label">%s</span><span class="info-value">%d</span></div>`, html.EscapeString(l.T("session.agent_tasks")), session.Stats.AgentSidechains))
 	}
 	b.WriteString(`</div>`)
 
@@ -527,28 +531,28 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	totalTokens := session.Stats.InputTokens + session.Stats.OutputTokens
 	if totalTokens > 0 {
 		b.WriteString(`<div class="info-section info-section-tokens">`)
-		b.WriteString(`<div class="info-section-header">Tokens</div>`)
-		b.WriteString(fmt.Sprintf(`<div class="info-row" title="Fresh tokens sent to API (not from cache)"><span class="info-label">Input</span><span class="info-value">%s</span></div>`, formatTokens(session.Stats.InputTokens)))
-		b.WriteString(fmt.Sprintf(`<div class="info-row" title="Tokens generated by the assistant"><span class="info-label">Output</span><span class="info-value">%s</span></div>`, formatTokens(session.Stats.OutputTokens)))
+		b.WriteString(`<div class="info-section-header">` + html.EscapeString(l.T("session.tokens")) + `</div>`)
+		b.WriteString(fmt.Sprintf(`<div class="info-row" title="%s"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.input_tip")), html.EscapeString(l.T("session.input")), formatTokens(session.Stats.InputTokens)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row" title="%s"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.output_tip")), html.EscapeString(l.T("session.output")), formatTokens(session.Stats.OutputTokens)))
 		// Show cache stats if present
 		if session.Stats.CacheReadTokens > 0 || session.Stats.CacheCreateTokens > 0 {
 			if session.Stats.CacheReadTokens > 0 {
-				b.WriteString(fmt.Sprintf(`<div class="info-row info-cache" title="Tokens read from prompt cache (90%% cheaper)"><span class="info-label">↩ Cache read</span><span class="info-value">%s</span></div>`, formatTokens(session.Stats.CacheReadTokens)))
+				b.WriteString(fmt.Sprintf(`<div class="info-row info-cache" title="%s"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.cache_read_tip")), html.EscapeString(l.T("session.cache_read")), formatTokens(session.Stats.CacheReadTokens)))
 			}
 			if session.Stats.CacheCreateTokens > 0 {
-				b.WriteString(fmt.Sprintf(`<div class="info-row info-cache" title="Tokens written to prompt cache"><span class="info-label">↪ Cache write</span><span class="info-value">%s</span></div>`, formatTokens(session.Stats.CacheCreateTokens)))
+				b.WriteString(fmt.Sprintf(`<div class="info-row info-cache" title="%s"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.cache_write_tip")), html.EscapeString(l.T("session.cache_write")), formatTokens(session.Stats.CacheCreateTokens)))
 			}
 		}
-		b.WriteString(fmt.Sprintf(`<div class="info-row info-total" title="Input + Output tokens"><span class="info-label">Total</span><span class="info-value"><strong>%s</strong></span></div>`, formatTokens(totalTokens)))
+		b.WriteString(fmt.Sprintf(`<div class="info-row info-total" title="%s"><span class="info-label">%s</span><span class="info-value"><strong>%s</strong></span></div>`, html.EscapeString(l.T("session.total_tip")), html.EscapeString(l.T("session.total")), formatTokens(totalTokens)))
 		// Cost row: priced total when pricing resolved; "n/a" with the
 		// reason when it did not. A missing row would read as free.
 		switch session.Stats.CostStatus() {
 		case "priced":
-			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="Sum of per-message USD cost using pinned list pricing"><span class="info-label">Cost</span><span class="info-value"><strong>%s</strong></span></div>`, formatCost(session.Stats.CostUSD)))
+			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="%s"><span class="info-label">%s</span><span class="info-value"><strong>%s</strong></span></div>`, html.EscapeString(l.T("session.cost_tip")), html.EscapeString(l.T("session.cost")), formatCost(session.Stats.CostUSD)))
 		case "partial":
-			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="Priced part only: %s tokens had no pricing row"><span class="info-label">Cost</span><span class="info-value"><strong>%s</strong> <span class="muted">(+%s tokens unpriced)</span></span></div>`, formatTokens(session.Stats.UnpricedTokens), formatCost(session.Stats.CostUSD), formatTokens(session.Stats.UnpricedTokens)))
+			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="%s"><span class="info-label">%s</span><span class="info-value"><strong>%s</strong> <span class="muted">%s</span></span></div>`, html.EscapeString(l.T("session.cost_partial_tip", formatTokens(session.Stats.UnpricedTokens))), html.EscapeString(l.T("session.cost")), formatCost(session.Stats.CostUSD), html.EscapeString(l.T("session.unpriced", formatTokens(session.Stats.UnpricedTokens)))))
 		case "unpriced":
-			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="Model %s has no pricing row; ccx does not guess"><span class="info-label">Cost</span><span class="info-value">n/a <span class="muted">(unpriced: %s)</span></span></div>`, html.EscapeString(session.Model), html.EscapeString(session.Model)))
+			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="%s"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.cost_unpriced_tip", session.Model)), html.EscapeString(l.T("session.cost")), l.T("session.unpriced_model_markup", html.EscapeString(session.Model))))
 		}
 		b.WriteString(`</div>`)
 	}
@@ -558,15 +562,15 @@ func renderSessionPage(session *parser.Session, projectName string, allSessions 
 	allMsgs := flattenMessages(session.RootMessages)
 	turns := parser.ComputeExchanges(allMsgs)
 	if hasBillableUsage(turns) {
-		b.WriteString(renderSpendSection(turns, session.Stats.CostUSD))
+		b.WriteString(l.renderSpendSection(turns, session.Stats.CostUSD))
 	}
 
 	b.WriteString(`</div>`)
 
 	b.WriteString(`</div>`)
 	b.WriteString(renderFooter())
-	b.WriteString(sessionJS(projectName, session.ID))
-	b.WriteString(pageFooter())
+	b.WriteString(l.sessionJS(projectName, session.ID))
+	b.WriteString(l.pageFooter())
 
 	return b.String()
 }
@@ -619,13 +623,17 @@ func splitByUserPrompts(messages []*parser.Message, chunkSize int) [][]*parser.M
 }
 
 func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, showThinking, showTools, loadAll bool, turnMap map[string]*trace.Turn) {
+	defaultLoc().renderMessages(b, messages, depth, showThinking, showTools, loadAll, turnMap)
+}
+
+func (l loc) renderMessages(b *strings.Builder, messages []*parser.Message, depth int, showThinking, showTools, loadAll bool, turnMap map[string]*trace.Turn) {
 	allMsgs := flattenMessages(messages)
 	mainMsgs := filterMainConversation(allMsgs)
 	sidechainGroups := groupSidechainsByAgent(allMsgs)
 	scMap := matchSidechainsToToolUse(mainMsgs, sidechainGroups)
 
 	if !loadAll && len(mainMsgs) > progressiveLoadThreshold {
-		renderMessagesProgressive(b, mainMsgs, showThinking, showTools, scMap, turnMap)
+		l.renderMessagesProgressive(b, mainMsgs, showThinking, showTools, scMap, turnMap)
 		return
 	}
 
@@ -643,24 +651,24 @@ func renderMessages(b *strings.Builder, messages []*parser.Message, depth int, s
 
 		if isAnchor {
 			if inThread && len(currentThread) > 0 {
-				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
+				l.renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
 			}
 			currentThread = []*parser.Message{msg}
 			inThread = true
 		} else if inThread {
 			currentThread = append(currentThread, msg)
 		} else {
-			renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
+			l.renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
 		}
 	}
 
 	if inThread && len(currentThread) > 0 {
-		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
+		l.renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
 	}
 }
 
 // renderMessagesProgressive renders large conversations with lazy loading
-func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, showThinking, showTools bool, scMap map[string]sidechainGroup, turnMap map[string]*trace.Turn) {
+func (l loc) renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, showThinking, showTools bool, scMap map[string]sidechainGroup, turnMap map[string]*trace.Turn) {
 	sections := splitByCompactBoundaries(allMsgs)
 
 	// If no compact boundaries, fall back to splitting by user prompts
@@ -685,7 +693,7 @@ func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, sh
 	if startSection > 0 {
 		b.WriteString(fmt.Sprintf(`<div class="load-earlier" id="load-earlier" data-hidden-sections="%d">`, startSection))
 		b.WriteString(`<button class="load-earlier-btn" onclick="loadEarlierMessages()">`)
-		b.WriteString(fmt.Sprintf(`<span class="load-icon">↑</span> Load earlier context (%d sections, ~%d messages)`, startSection, hiddenMsgCount))
+		b.WriteString(fmt.Sprintf(`<span class="load-icon">↑</span> %s`, html.EscapeString(l.T("session.load_earlier", startSection, hiddenMsgCount))))
 		b.WriteString(`</button></div>`)
 	}
 
@@ -711,19 +719,19 @@ func renderMessagesProgressive(b *strings.Builder, allMsgs []*parser.Message, sh
 
 		if isAnchor {
 			if inThread && len(currentThread) > 0 {
-				renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
+				l.renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
 			}
 			currentThread = []*parser.Message{msg}
 			inThread = true
 		} else if inThread {
 			currentThread = append(currentThread, msg)
 		} else {
-			renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
+			l.renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
 		}
 	}
 
 	if inThread && len(currentThread) > 0 {
-		renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
+		l.renderThread(b, currentThread, showThinking, showTools, toolResults, scMap, turnMap)
 	}
 }
 
@@ -818,8 +826,8 @@ func matchSidechainsToToolUse(mainMsgs []*parser.Message, groups []sidechainGrou
 	return out
 }
 
-func renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, showTools bool) {
-	label := "Agent"
+func (l loc) renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, showTools bool) {
+	label := l.T("sidechain.agent")
 	if g.AgentType != "" {
 		label = g.AgentType
 	}
@@ -830,13 +838,13 @@ func renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, s
 	var meta strings.Builder
 	if r := g.Result; r != nil {
 		if r.TotalTokens > 0 {
-			fmt.Fprintf(&meta, "%s tokens", formatTokens(r.TotalTokens))
+			fmt.Fprintf(&meta, "%s", l.T("sidechain.tokens", formatTokens(r.TotalTokens)))
 		}
 		if r.TotalToolUseCount > 0 {
 			if meta.Len() > 0 {
 				meta.WriteString(", ")
 			}
-			fmt.Fprintf(&meta, "%d tools", r.TotalToolUseCount)
+			fmt.Fprintf(&meta, "%s", l.T("sidechain.tools", r.TotalToolUseCount))
 		}
 		if r.TotalDurationMs > 0 {
 			if meta.Len() > 0 {
@@ -848,11 +856,11 @@ func renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, s
 			if meta.Len() > 0 {
 				meta.WriteString(", ")
 			}
-			fmt.Fprintf(&meta, "+%d lines", r.ToolStats.LinesAdded)
+			fmt.Fprintf(&meta, "%s", l.T("sidechain.lines", r.ToolStats.LinesAdded))
 		}
 	}
 	if meta.Len() == 0 {
-		fmt.Fprintf(&meta, "%d messages", len(g.Messages))
+		fmt.Fprintf(&meta, "%s", l.T("sidechain.messages", len(g.Messages)))
 	}
 
 	b.WriteString(fmt.Sprintf(`<details class="sidechain-group" id="sidechain-%s">`, html.EscapeString(g.AgentID)))
@@ -865,14 +873,14 @@ func renderInlineSidechain(b *strings.Builder, g sidechainGroup, showThinking, s
 		if msg.Kind == parser.KindToolResult {
 			continue
 		}
-		renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
+		l.renderTurnMessage(b, msg, showThinking, showTools, 0, toolResults)
 	}
 
 	b.WriteString(`</div></details>`)
 }
 
 // renderThread renders a conversation thread anchored by a USER message
-func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock, scMap map[string]sidechainGroup, turnMap map[string]*trace.Turn) {
+func (l loc) renderThread(b *strings.Builder, thread []*parser.Message, showThinking, showTools bool, toolResults map[string]parser.ContentBlock, scMap map[string]sidechainGroup, turnMap map[string]*trace.Turn) {
 	if len(thread) == 0 {
 		return
 	}
@@ -883,11 +891,11 @@ func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, sh
 	b.WriteString(`<div class="thread">`)
 
 	b.WriteString(`<div class="thread-anchor">`)
-	renderTurnMessage(b, anchor, showThinking, showTools, 0, toolResults)
+	l.renderTurnMessage(b, anchor, showThinking, showTools, 0, toolResults)
 	b.WriteString(`</div>`)
 
 	if turn := turnMap[anchor.UUID]; turn != nil {
-		renderTurnEvidence(b, turn, thread, scMap)
+		l.renderTurnEvidence(b, turn, thread, scMap)
 	}
 
 	if len(responses) > 0 {
@@ -897,11 +905,11 @@ func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, sh
 			if msg.IsSidechain {
 				level = 2
 			}
-			renderTurnMessage(b, msg, showThinking, showTools, level, toolResults)
+			l.renderTurnMessage(b, msg, showThinking, showTools, level, toolResults)
 			for _, block := range msg.Content {
 				if block.Type == "tool_use" && subagentToolSet[block.ToolName] {
 					if sc, ok := scMap[block.ToolID]; ok {
-						renderInlineSidechain(b, sc, showThinking, showTools)
+						l.renderInlineSidechain(b, sc, showThinking, showTools)
 					}
 				}
 			}
@@ -920,6 +928,10 @@ func renderThread(b *strings.Builder, thread []*parser.Message, showThinking, sh
 // is the same turn `ccx trace --turn 54` prints and the same citation
 // an audit report writes.
 func renderTurnEvidence(b *strings.Builder, turn *trace.Turn, thread []*parser.Message, scMap map[string]sidechainGroup) {
+	defaultLoc().renderTurnEvidence(b, turn, thread, scMap)
+}
+
+func (l loc) renderTurnEvidence(b *strings.Builder, turn *trace.Turn, thread []*parser.Message, scMap map[string]sidechainGroup) {
 	// Mutations grouped per edited file, in first-touch order.
 	type fileEdit struct {
 		path  string
@@ -974,21 +986,21 @@ func renderTurnEvidence(b *strings.Builder, turn *trace.Turn, thread []*parser.M
 
 	b.WriteString(fmt.Sprintf(`<details class="turn-evidence" id="turn-%d">`, turn.Index))
 	b.WriteString(`<summary class="te-chips">`)
-	b.WriteString(fmt.Sprintf(`<a class="te-permalink" href="?turn=%d" title="Permalink to turn %d — matches ccx trace numbering">#%d</a>`, turn.Index, turn.Index, turn.Index))
+	b.WriteString(fmt.Sprintf(`<a class="te-permalink" href="?turn=%d" title="%s">#%d</a>`, turn.Index, html.EscapeString(l.T("turn.permalink", turn.Index)), turn.Index))
 	if n := len(turn.Steps); n > 0 {
-		b.WriteString(fmt.Sprintf(`<span class="te-chip">%d steps</span>`, n))
+		b.WriteString(fmt.Sprintf(`<span class="te-chip">%s</span>`, html.EscapeString(l.T("turn.steps", n))))
 	}
 	if toolTotal > 0 {
-		b.WriteString(fmt.Sprintf(`<span class="te-chip">%d tools</span>`, toolTotal))
+		b.WriteString(fmt.Sprintf(`<span class="te-chip">%s</span>`, html.EscapeString(l.T("turn.tools", toolTotal))))
 	}
 	if n := len(turn.FilesEdited); n > 0 {
-		b.WriteString(fmt.Sprintf(`<span class="te-chip te-edit">%d files</span>`, n))
+		b.WriteString(fmt.Sprintf(`<span class="te-chip te-edit">%s</span>`, html.EscapeString(l.T("turn.files", n))))
 	}
 	if len(agents) > 0 {
-		b.WriteString(fmt.Sprintf(`<span class="te-chip te-agent">%d agents</span>`, len(agents)))
+		b.WriteString(fmt.Sprintf(`<span class="te-chip te-agent">%s</span>`, html.EscapeString(l.T("turn.agents", len(agents)))))
 	}
 	if turn.Errors > 0 {
-		b.WriteString(fmt.Sprintf(`<span class="te-chip te-error">%d errors</span>`, turn.Errors))
+		b.WriteString(fmt.Sprintf(`<span class="te-chip te-error">%s</span>`, html.EscapeString(l.T("turn.errors", turn.Errors))))
 	}
 	if turn.CostUSD > 0 {
 		b.WriteString(fmt.Sprintf(`<span class="te-chip te-cost">%s</span>`, formatCost(turn.CostUSD)))
@@ -1002,7 +1014,7 @@ func renderTurnEvidence(b *strings.Builder, turn *trace.Turn, thread []*parser.M
 		b.WriteString(`<div class="te-body">`)
 
 		if len(fileEdits) > 0 {
-			b.WriteString(`<div class="te-section"><div class="te-section-title">Edited</div>`)
+			b.WriteString(`<div class="te-section"><div class="te-section-title">` + html.EscapeString(l.T("turn.edited")) + `</div>`)
 			for _, fe := range fileEdits {
 				b.WriteString(`<div class="te-file">`)
 				b.WriteString(fmt.Sprintf(`<code class="te-path" title="%s">%s</code>`,
@@ -1026,12 +1038,12 @@ func renderTurnEvidence(b *strings.Builder, turn *trace.Turn, thread []*parser.M
 		}
 
 		if len(agents) > 0 {
-			b.WriteString(`<div class="te-section"><div class="te-section-title">Agents</div>`)
+			b.WriteString(`<div class="te-section"><div class="te-section-title">` + html.EscapeString(l.T("turn.agents_section")) + `</div>`)
 			for _, a := range agents {
 				g := a.group
 				name := g.AgentType
 				if name == "" {
-					name = "agent"
+					name = l.T("turn.agent_fallback")
 				}
 				b.WriteString(`<div class="te-agent-row">`)
 				b.WriteString(fmt.Sprintf(`<a class="te-link" href="#tool-%s">%s</a>`,
@@ -1048,7 +1060,7 @@ func renderTurnEvidence(b *strings.Builder, turn *trace.Turn, thread []*parser.M
 		}
 
 		if toolTotal > 0 {
-			b.WriteString(`<div class="te-section"><div class="te-section-title">Tools</div><div class="te-tools">`)
+			b.WriteString(`<div class="te-section"><div class="te-section-title">` + html.EscapeString(l.T("turn.tools_section")) + `</div><div class="te-tools">`)
 			names := make([]string, 0, len(turn.ToolCounts))
 			for name := range turn.ToolCounts {
 				names = append(names, name)
@@ -1067,7 +1079,7 @@ func renderTurnEvidence(b *strings.Builder, turn *trace.Turn, thread []*parser.M
 		}
 
 		if len(failed) > 0 {
-			b.WriteString(`<div class="te-section"><div class="te-section-title">Failed calls</div>`)
+			b.WriteString(`<div class="te-section"><div class="te-section-title">` + html.EscapeString(l.T("turn.failed")) + `</div>`)
 			for _, m := range failed {
 				label := m.Name
 				if len(m.Paths) > 0 {
@@ -1084,7 +1096,7 @@ func renderTurnEvidence(b *strings.Builder, turn *trace.Turn, thread []*parser.M
 	b.WriteString(`</details>`)
 }
 
-func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, showTools bool, level int, toolResults map[string]parser.ContentBlock) {
+func (l loc) renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, showTools bool, level int, toolResults map[string]parser.ContentBlock) {
 	// Level class for indentation
 	levelClass := ""
 	if level > 0 {
@@ -1100,7 +1112,7 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 	case parser.KindCompactSummary:
 		// Compacted context: collapsible summary
 		b.WriteString(fmt.Sprintf(`<details class="turn turn-compacted%s">`, levelClass))
-		b.WriteString(`<summary class="turn-header"><span class="turn-icon">◇</span> Context Compacted</summary>`)
+		b.WriteString(`<summary class="turn-header"><span class="turn-icon">◇</span> ` + html.EscapeString(l.T("turn.compacted")) + `</summary>`)
 		b.WriteString(`<div class="turn-body compacted-text">`)
 		for _, block := range msg.Content {
 			if block.Type == "text" {
@@ -1115,10 +1127,10 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 	case parser.KindMeta:
 		// Meta/system instructions: collapsible
 		b.WriteString(fmt.Sprintf(`<details class="turn turn-meta%s">`, levelClass))
-		b.WriteString(`<summary class="turn-header"><span class="turn-icon">▽</span> System Instructions</summary>`)
+		b.WriteString(`<summary class="turn-header"><span class="turn-icon">▽</span> ` + html.EscapeString(l.T("turn.system")) + `</summary>`)
 		b.WriteString(`<div class="turn-body">`)
 		for _, block := range msg.Content {
-			renderBlock(b, block, showThinking, showTools, toolResults)
+			l.renderBlock(b, block, showThinking, showTools, toolResults)
 		}
 		b.WriteString(`</div></details>`)
 		return
@@ -1150,13 +1162,13 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 
 	turnClass := "turn" + levelClass
 	icon := "●"
-	role := "ASSISTANT"
+	role := l.T("turn.assistant")
 
 	switch msg.Kind {
 	case parser.KindUserPrompt:
 		turnClass += " turn-user"
 		icon = "▶"
-		role = "USER"
+		role = l.T("turn.user")
 	case parser.KindAssistant:
 		turnClass += " turn-assistant"
 	default:
@@ -1166,7 +1178,7 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 	if isAgent {
 		turnClass += " turn-agent"
 		icon = "◆"
-		role = "AGENT"
+		role = l.T("turn.agent")
 	}
 
 	// Store raw content for copy/raw toggle
@@ -1181,11 +1193,11 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 		b.WriteString(fmt.Sprintf(`<span class="turn-role">%s</span>`, role))
 		b.WriteString(fmt.Sprintf(`<span class="turn-preview">%s</span>`, html.EscapeString(preview)))
 		b.WriteString(fmt.Sprintf(`<span class="turn-time">%s</span>`, msg.Timestamp.Format("15:04:05")))
-		b.WriteString(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>`)
+		b.WriteString(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">` + html.EscapeString(l.T("common.raw")) + `</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">` + html.EscapeString(l.T("common.copy")) + `</button></span>`)
 		b.WriteString(`</summary>`)
 		b.WriteString(fmt.Sprintf(`<div class="turn-body" data-raw="%s">`, html.EscapeString(rawContent)))
 		for _, block := range msg.Content {
-			renderBlock(b, block, showThinking, showTools, toolResults)
+			l.renderBlock(b, block, showThinking, showTools, toolResults)
 		}
 		b.WriteString(`</div>`)
 		b.WriteString(`</details>`)
@@ -1201,19 +1213,19 @@ func renderTurnMessage(b *strings.Builder, msg *parser.Message, showThinking, sh
 	if msg.Model != "" {
 		b.WriteString(fmt.Sprintf(`<span class="turn-model">%s</span>`, html.EscapeString(msg.Model)))
 	}
-	b.WriteString(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>`)
+	b.WriteString(`<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">` + html.EscapeString(l.T("common.raw")) + `</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">` + html.EscapeString(l.T("common.copy")) + `</button></span>`)
 	b.WriteString(`</div>`)
 
 	b.WriteString(fmt.Sprintf(`<div class="turn-body" data-raw="%s">`, html.EscapeString(rawContent)))
 	for _, block := range msg.Content {
-		renderBlock(b, block, showThinking, showTools, toolResults)
+		l.renderBlock(b, block, showThinking, showTools, toolResults)
 	}
 	b.WriteString(`</div>`)
 
 	b.WriteString(`</div>`)
 }
 
-func renderBlock(b *strings.Builder, block parser.ContentBlock, showThinking, showTools bool, toolResults map[string]parser.ContentBlock) {
+func (l loc) renderBlock(b *strings.Builder, block parser.ContentBlock, showThinking, showTools bool, toolResults map[string]parser.ContentBlock) {
 	switch block.Type {
 	case "text":
 		if block.Text != "" {
@@ -1228,7 +1240,7 @@ func renderBlock(b *strings.Builder, block parser.ContentBlock, showThinking, sh
 			openAttr = " open"
 		}
 		b.WriteString(fmt.Sprintf(`<details class="block-thinking"%s>`, openAttr))
-		b.WriteString(`<summary><span class="block-icon">∴</span> Thinking...</summary>`)
+		b.WriteString(`<summary><span class="block-icon">∴</span> ` + html.EscapeString(l.T("turn.thinking")) + `</summary>`)
 		b.WriteString(`<div class="block-content">`)
 		b.WriteString(html.EscapeString(block.Text))
 		b.WriteString(`</div></details>`)
@@ -1242,8 +1254,8 @@ func renderBlock(b *strings.Builder, block parser.ContentBlock, showThinking, sh
 		// Compact preview for common tools
 		preview := compactToolPreview(block.ToolName, block.ToolInput)
 		b.WriteString(fmt.Sprintf(`<details class="block-tool" id="tool-%s" data-tool-id="%s"%s>`, sanitizeID(block.ToolID), html.EscapeString(block.ToolID), openAttr))
-		b.WriteString(fmt.Sprintf(`<summary><span class="block-icon">●</span> %s<span class="tool-preview">%s</span><span class="tool-actions"><button class="raw-toggle">raw</button><button class="copy-btn">copy</button></span></summary>`,
-			html.EscapeString(block.ToolName), html.EscapeString(preview)))
+		b.WriteString(fmt.Sprintf(`<summary><span class="block-icon">●</span> %s<span class="tool-preview">%s</span><span class="tool-actions"><button class="raw-toggle">%s</button><button class="copy-btn">%s</button></span></summary>`,
+			html.EscapeString(block.ToolName), html.EscapeString(preview), html.EscapeString(l.T("common.raw")), html.EscapeString(l.T("common.copy"))))
 
 		// Tool input section
 		if block.ToolInput != nil {
@@ -1964,31 +1976,35 @@ func getRawContentJSON(msg *parser.Message) string {
 }
 
 func formatRelativeTime(t time.Time) string {
+	return defaultLoc().relTime(t)
+}
+
+func (l loc) relTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
 	d := time.Since(t)
 	switch {
 	case d < time.Minute:
-		return "just now"
+		return l.T("time.just_now")
 	case d < time.Hour:
 		m := int(d.Minutes())
 		if m == 1 {
-			return "1 min ago"
+			return l.T("time.min_one")
 		}
-		return fmt.Sprintf("%d mins ago", m)
+		return l.T("time.min_other", m)
 	case d < 24*time.Hour:
 		h := int(d.Hours())
 		if h == 1 {
-			return "1 hour ago"
+			return l.T("time.hour_one")
 		}
-		return fmt.Sprintf("%d hours ago", h)
+		return l.T("time.hour_other", h)
 	case d < 7*24*time.Hour:
 		days := int(d.Hours() / 24)
 		if days == 1 {
-			return "yesterday"
+			return l.T("time.yesterday")
 		}
-		return fmt.Sprintf("%d days ago", days)
+		return l.T("time.days_other", days)
 	default:
 		return t.Format("Jan 2")
 	}
@@ -2081,7 +2097,7 @@ func hasBillableUsage(turns []*parser.Exchange) bool {
 // Turns are sorted by cost desc (most expensive first) so quota hogs
 // surface immediately. Rows link to #msg-<anchor> which composes with
 // the load-earlier hash-nav fix shipped in #3.
-func renderSpendSection(turns []*parser.Exchange, sessionTotal float64) string {
+func (l loc) renderSpendSection(turns []*parser.Exchange, sessionTotal float64) string {
 	var b strings.Builder
 
 	// Sort by cost desc (stable — ties break by original turn index).
@@ -2097,7 +2113,7 @@ func renderSpendSection(turns []*parser.Exchange, sessionTotal float64) string {
 	})
 
 	b.WriteString(`<div class="info-section info-section-spend">`)
-	b.WriteString(`<div class="info-section-header">Per-turn spend</div>`)
+	b.WriteString(`<div class="info-section-header">` + html.EscapeString(l.T("spend.header")) + `</div>`)
 
 	priced := 0
 	for _, t := range sorted {
@@ -2108,7 +2124,7 @@ func renderSpendSection(turns []*parser.Exchange, sessionTotal float64) string {
 	if priced == 0 {
 		// Tokens present but no pricing matched any model (unknown model).
 		// Still useful to show token-only breakdown; label the limitation.
-		b.WriteString(`<div class="spend-note">No pricing match for model — showing token totals.</div>`)
+		b.WriteString(`<div class="spend-note">` + html.EscapeString(l.T("spend.no_pricing")) + `</div>`)
 	}
 
 	b.WriteString(`<div class="spend-list">`)
@@ -2126,15 +2142,13 @@ func renderSpendSection(turns []*parser.Exchange, sessionTotal float64) string {
 		// A turn with tokens and no priced cost is unpriced, not $0.00.
 		costLabel := formatCost(t.CostUSD)
 		if t.CostUSD == 0 {
-			costLabel = "n/a"
+			costLabel = l.T("spend.na")
 		}
 
 		b.WriteString(fmt.Sprintf(
-			`<a class="spend-row" href="#msg-%s" title="Jump to turn %d — %s tokens, %s"><span class="spend-label">%s</span><span class="spend-cost">%s</span></a>`,
+			`<a class="spend-row" href="#msg-%s" title="%s"><span class="spend-label">%s</span><span class="spend-cost">%s</span></a>`,
 			html.EscapeString(sanitizeID(t.AnchorID)),
-			t.Index,
-			tokensLabel,
-			costLabel,
+			html.EscapeString(l.T("spend.jump", t.Index, tokensLabel, costLabel)),
 			html.EscapeString(label),
 			costLabel,
 		))
@@ -2143,10 +2157,7 @@ func renderSpendSection(turns []*parser.Exchange, sessionTotal float64) string {
 
 	// Footer: total cost summary + known-models link
 	if sessionTotal > 0 {
-		b.WriteString(fmt.Sprintf(
-			`<div class="spend-footer">Session total: <strong>%s</strong></div>`,
-			formatCost(sessionTotal),
-		))
+		b.WriteString(`<div class="spend-footer">` + l.T("spend.total_markup", formatCost(sessionTotal)) + `</div>`)
 	}
 
 	b.WriteString(`</div>`)
@@ -2186,6 +2197,10 @@ func buildStepMap(turnMap map[string]*trace.Turn) map[string]*trace.Step {
 }
 
 func renderConversationNav(b *strings.Builder, messages []*parser.Message, stepMap map[string]*trace.Step) {
+	defaultLoc().renderConversationNav(b, messages, stepMap)
+}
+
+func (l loc) renderConversationNav(b *strings.Builder, messages []*parser.Message, stepMap map[string]*trace.Step) {
 	flat := flattenMessages(messages)
 	allMsgs := filterMainConversation(flat)
 	scGroups := groupSidechainsByAgent(flat)
@@ -2265,8 +2280,8 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message, stepM
 			}
 			b.WriteString(fmt.Sprintf(`<div class="nav-group" data-expanded="%s">`, expandedAttr))
 			b.WriteString(`<div class="nav-row">`)
-			b.WriteString(fmt.Sprintf(`<button type="button" class="nav-expand" aria-expanded="%s" aria-label="Toggle exchange" data-target="%s"></button>`,
-				expandedAttr, html.EscapeString(uuid)))
+			b.WriteString(fmt.Sprintf(`<button type="button" class="nav-expand" aria-expanded="%s" aria-label="%s" data-target="%s"></button>`,
+				expandedAttr, html.EscapeString(l.T("nav.toggle_exchange")), html.EscapeString(uuid)))
 			b.WriteString(fmt.Sprintf(`<a href="#msg-%s" class="nav-item nav-title nav-user" data-msg="%s">`,
 				uuid, html.EscapeString(uuid)))
 			b.WriteString(fmt.Sprintf(`<span class="nav-text">%s</span>`, html.EscapeString(preview)))
@@ -2282,21 +2297,21 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message, stepM
 			total := len(g.children)
 			if total <= maxChildren {
 				for _, child := range g.children {
-					renderNavChild(b, child, stepMap)
-					renderNavSidechainEntries(b, child, scMap)
+					l.renderNavChild(b, child, stepMap)
+					l.renderNavSidechainEntries(b, child, scMap)
 				}
 			} else {
 				head := maxChildren - 1
 				for _, child := range g.children[:head] {
-					renderNavChild(b, child, stepMap)
-					renderNavSidechainEntries(b, child, scMap)
+					l.renderNavChild(b, child, stepMap)
+					l.renderNavSidechainEntries(b, child, scMap)
 				}
 				hidden := total - head - 1
 				if hidden > 0 {
 					b.WriteString(fmt.Sprintf(`<span class="nav-more">+%d more</span>`, hidden))
 				}
-				renderNavChild(b, g.children[total-1], stepMap)
-				renderNavSidechainEntries(b, g.children[total-1], scMap)
+				l.renderNavChild(b, g.children[total-1], stepMap)
+				l.renderNavSidechainEntries(b, g.children[total-1], scMap)
 			}
 			b.WriteString(`</div>`) // .nav-children
 			b.WriteString(`</div>`) // .nav-group
@@ -2305,7 +2320,7 @@ func renderConversationNav(b *strings.Builder, messages []*parser.Message, stepM
 
 }
 
-func renderNavSidechainEntries(b *strings.Builder, msg *parser.Message, scMap map[string]sidechainGroup) {
+func (l loc) renderNavSidechainEntries(b *strings.Builder, msg *parser.Message, scMap map[string]sidechainGroup) {
 	if msg == nil || len(scMap) == 0 {
 		return
 	}
@@ -2354,7 +2369,7 @@ func getNavPreview(msg *parser.Message) string {
 // stated intent — because "response / Bash / response" is a list of message
 // kinds and tells an auditor nothing. The tool name stays as the title
 // attribute so the detail is still one hover away.
-func renderNavChild(b *strings.Builder, msg *parser.Message, stepMap map[string]*trace.Step) {
+func (l loc) renderNavChild(b *strings.Builder, msg *parser.Message, stepMap map[string]*trace.Step) {
 	switch msg.Kind {
 	case parser.KindAssistant:
 		hasTool := false
@@ -2369,7 +2384,7 @@ func renderNavChild(b *strings.Builder, msg *parser.Message, stepMap map[string]
 			}
 		}
 		if step := stepMap[msg.UUID]; step != nil && strings.TrimSpace(step.Narration) != "" {
-			renderNavStep(b, msg, step, hasTool, toolName, toolPreview)
+			l.renderNavStep(b, msg, step, hasTool, toolName, toolPreview)
 			return
 		}
 		if hasTool {
@@ -2397,7 +2412,7 @@ func renderNavChild(b *strings.Builder, msg *parser.Message, stepMap map[string]
 // The headline is the evidence; the counters beside it are what that step
 // actually did, so a reader can spot the expensive and the failing steps
 // without opening any of them.
-func renderNavStep(b *strings.Builder, msg *parser.Message, step *trace.Step, hasTool bool, toolName, toolPreview string) {
+func (l loc) renderNavStep(b *strings.Builder, msg *parser.Message, step *trace.Step, hasTool bool, toolName, toolPreview string) {
 	id := sanitizeID(msg.UUID)
 	title := toolName
 	if toolPreview != "" {
@@ -2444,23 +2459,23 @@ func stepToolCount(step *trace.Step) int {
 	return total
 }
 
-func renderSearchPage(projectsDir, query string) string {
+func (l loc) renderSearchPage(projectsDir, query string) string {
 	var b strings.Builder
 
-	b.WriteString(pageHeader("Search - ccx", ccxconfig.Theme()))
-	b.WriteString(renderTopNav("", ""))
+	b.WriteString(l.pageHeader(l.T("title.search"), ccxconfig.Theme()))
+	b.WriteString(l.renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
-	b.WriteString(renderSidebar("search"))
+	b.WriteString(l.renderSidebar("search"))
 
 	b.WriteString(`<main class="main-content">`)
 	b.WriteString(`<div class="page-header">`)
-	b.WriteString(`<h1>Global Search</h1>`)
-	b.WriteString(`<p class="stats">Search across all projects and sessions</p>`)
+	b.WriteString(`<h1>` + html.EscapeString(l.T("search.heading")) + `</h1>`)
+	b.WriteString(`<p class="stats">` + html.EscapeString(l.T("search.subtitle")) + `</p>`)
 	b.WriteString(`</div>`)
 
 	b.WriteString(`<div class="controls">`)
 	b.WriteString(`<div class="search-wrap" style="max-width:600px">`)
-	b.WriteString(fmt.Sprintf(`<input type="text" id="global-search" class="search-input" placeholder="Search projects, sessions, summaries..." value="%s" autofocus>`, html.EscapeString(query)))
+	b.WriteString(fmt.Sprintf(`<input type="text" id="global-search" class="search-input" placeholder="%s" value="%s" autofocus>`, html.EscapeString(l.T("search.placeholder")), html.EscapeString(query)))
 	b.WriteString(`<span class="search-spinner" id="search-spinner"></span>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
@@ -2470,13 +2485,13 @@ func renderSearchPage(projectsDir, query string) string {
 	b.WriteString(`</main>`)
 	b.WriteString(`</div>`)
 	b.WriteString(renderFooter())
-	b.WriteString(searchJS(query))
-	b.WriteString(pageFooter())
+	b.WriteString(l.searchJS(query))
+	b.WriteString(l.pageFooter())
 
 	return b.String()
 }
 
-func searchJS(initialQuery string) string {
+func (l loc) searchJS(initialQuery string) string {
 	return fmt.Sprintf(`
 <script>
 const searchInput = document.getElementById('global-search');
@@ -2486,7 +2501,7 @@ let searchTimeout;
 
 async function doSearch(query) {
   if (!query) {
-    resultsDiv.innerHTML = '<p class="search-hint">Type to search across all projects and sessions...<br><span style="font-size:11px;color:var(--text-muted)">Prefix with <code>cc:</code> or <code>cx:</code> to filter by provider</span></p>';
+    resultsDiv.innerHTML = '<p class="search-hint">' + t('js.search_hint') + '<br><span style="font-size:11px;color:var(--text-muted)">' + t('js.search_hint_prefix_markup') + '</span></p>';
     return;
   }
   spinner.classList.add('loading');
@@ -2495,7 +2510,7 @@ async function doSearch(query) {
     const results = await resp.json();
     renderResults(results);
   } catch (e) {
-    resultsDiv.innerHTML = '<p class="search-error">Search failed</p>';
+    resultsDiv.innerHTML = '<p class="search-error">' + t('js.search_failed') + '</p>';
   }
   spinner.classList.remove('loading');
 }
@@ -2509,7 +2524,7 @@ function providerBadge(p) {
 
 function renderResults(results) {
   if (results.length === 0) {
-    resultsDiv.innerHTML = '<p class="search-empty">No results found</p>';
+    resultsDiv.innerHTML = '<p class="search-empty">' + t('js.search_empty') + '</p>';
     return;
   }
   let html = '<div class="search-list">';
@@ -2521,7 +2536,7 @@ function renderResults(results) {
     html += '<a href="' + escapeHtml(r.url) + '" class="search-result">';
     html += badge;
     html += '<div class="result-body">';
-    html += '<div class="result-title">' + escapeHtml(r.summary || 'Untitled') + pb + '</div>';
+    html += '<div class="result-title">' + escapeHtml(r.summary || t('js.untitled')) + pb + '</div>';
     html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' &middot; ' + escapeHtml(r.time) : '') + '</div>';
     if (r.snippet) {
       html += '<div class="result-snippet">' + escapeHtml(r.snippet) + '</div>';
@@ -2587,21 +2602,21 @@ if (%q) doSearch(%q);
 `, initialQuery, initialQuery)
 }
 
-func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []ConfigFileInfo, agents []AgentInfo, skills []SkillInfo) string {
+func (l loc) renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []ConfigFileInfo, agents []AgentInfo, skills []SkillInfo) string {
 	var b strings.Builder
 
-	b.WriteString(pageHeader("Settings - ccx", ccxconfig.Theme()))
-	b.WriteString(renderTopNav("", ""))
+	b.WriteString(l.pageHeader(l.T("title.settings"), ccxconfig.Theme()))
+	b.WriteString(l.renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
-	b.WriteString(renderSidebar("settings"))
+	b.WriteString(l.renderSidebar("settings"))
 
 	b.WriteString(`<main class="main-content">`)
-	b.WriteString(`<h1>Settings</h1>`)
+	b.WriteString(`<h1>` + html.EscapeString(l.T("settings.heading")) + `</h1>`)
 
 	// ccx Provider Status
 	ccxSettings := ccxconfig.Load()
 	b.WriteString(`<section class="settings-section">`)
-	b.WriteString(`<h2><span class="section-icon">◉</span> Providers</h2>`)
+	b.WriteString(`<h2><span class="section-icon">◉</span> ` + html.EscapeString(l.T("settings.providers")) + `</h2>`)
 	b.WriteString(`<div class="provider-status-list">`)
 	type providerInfo struct {
 		id, home string
@@ -2627,18 +2642,21 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 		accentColor := ccxSettings.ProviderAccent(prov.id, "dark")
 		_, statErr := os.Stat(prov.home)
 		status := "active"
+		statusLabel := l.T("settings.status_active")
 		if statErr != nil {
 			status = "missing"
+			statusLabel = l.T("settings.status_missing")
 		}
 		if !pc.Enabled {
 			status = "disabled"
+			statusLabel = l.T("settings.status_disabled")
 		}
 		b.WriteString(fmt.Sprintf(`<div class="provider-status-card" style="--prov-accent: %s">`, accentColor))
 		b.WriteString(fmt.Sprintf(`<div class="prov-header"><strong>%s</strong>`, html.EscapeString(pc.DisplayName)))
-		b.WriteString(fmt.Sprintf(`<span class="prov-badge prov-%s">%s</span></div>`, status, status))
+		b.WriteString(fmt.Sprintf(`<span class="prov-badge prov-%s">%s</span></div>`, status, html.EscapeString(statusLabel)))
 		b.WriteString(fmt.Sprintf(`<div class="prov-detail"><code>%s</code></div>`, html.EscapeString(prov.home)))
 		if status == "active" {
-			b.WriteString(fmt.Sprintf(`<div class="prov-detail">%d sessions</div>`, prov.sessions))
+			b.WriteString(fmt.Sprintf(`<div class="prov-detail">%s</div>`, html.EscapeString(l.T("settings.sessions_count", prov.sessions))))
 		}
 		b.WriteString(`</div>`)
 	}
@@ -2647,9 +2665,10 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 
 	// ccx Configuration
 	b.WriteString(`<section class="settings-section">`)
-	b.WriteString(`<h2><span class="section-icon">●</span> ccx Configuration</h2>`)
+	b.WriteString(`<h2><span class="section-icon">●</span> ` + html.EscapeString(l.T("settings.ccx_config")) + `</h2>`)
 	b.WriteString(`<table class="settings-table">`)
 	b.WriteString(fmt.Sprintf(`<tr><td>theme</td><td><code>%s</code></td></tr>`, html.EscapeString(ccxSettings.Theme)))
+	b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td><code>%s</code></td></tr>`, html.EscapeString(l.T("settings.locale")), html.EscapeString(ccxSettings.Locale)))
 	b.WriteString(fmt.Sprintf(`<tr><td>show_thinking</td><td><code>%s</code></td></tr>`, html.EscapeString(ccxSettings.ShowThinking)))
 	b.WriteString(fmt.Sprintf(`<tr><td>default_format</td><td><code>%s</code></td></tr>`, html.EscapeString(ccxSettings.DefaultFormat)))
 	b.WriteString(fmt.Sprintf(`<tr><td>port</td><td><code>%d</code></td></tr>`, ccxSettings.Port))
@@ -2662,26 +2681,26 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 	// Claude Code global config
 	if config != nil {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(`<h2><span class="section-icon">●</span> Claude Code Global</h2>`)
+		b.WriteString(`<h2><span class="section-icon">●</span> ` + html.EscapeString(l.T("settings.claude_global")) + `</h2>`)
 		b.WriteString(`<table class="settings-table">`)
-		b.WriteString(fmt.Sprintf(`<tr><td>Theme</td><td><code>%s</code></td></tr>`, html.EscapeString(config.Theme)))
-		b.WriteString(fmt.Sprintf(`<tr><td>Editor Mode</td><td><code>%s</code></td></tr>`, html.EscapeString(config.EditorMode)))
-		b.WriteString(fmt.Sprintf(`<tr><td>Verbose</td><td><code>%v</code></td></tr>`, config.Verbose))
-		b.WriteString(fmt.Sprintf(`<tr><td>Total Startups</td><td><code>%d</code></td></tr>`, config.NumStartups))
+		b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td><code>%s</code></td></tr>`, html.EscapeString(l.T("settings.theme")), html.EscapeString(config.Theme)))
+		b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td><code>%s</code></td></tr>`, html.EscapeString(l.T("settings.editor_mode")), html.EscapeString(config.EditorMode)))
+		b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td><code>%v</code></td></tr>`, html.EscapeString(l.T("settings.verbose")), config.Verbose))
+		b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td><code>%d</code></td></tr>`, html.EscapeString(l.T("settings.total_startups")), config.NumStartups))
 		b.WriteString(`</table>`)
 		b.WriteString(`</section>`)
 	}
 
 	if len(configFiles) > 0 {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">▣</span> Config Files <span class="count">(%d)</span></h2>`, len(configFiles)))
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">▣</span> %s <span class="count">%s</span></h2>`, html.EscapeString(l.T("settings.config_files")), html.EscapeString(l.T("settings.count", len(configFiles)))))
 		b.WriteString(`<div class="file-card-list">`)
 		for i, file := range configFiles {
 			b.WriteString(fmt.Sprintf(`<details class="file-card config-card" data-path="%s" data-idx="%d">`, html.EscapeString(file.FilePath), i))
 			b.WriteString(fmt.Sprintf(`<summary><code>%s</code><span class="file-path">%s</span><span class="expand-icon">▶</span></summary>`, html.EscapeString(file.Name), html.EscapeString(file.FilePath)))
 			b.WriteString(`<div class="file-viewer" id="config-` + fmt.Sprint(i) + `">`)
-			b.WriteString(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">fmt</button><button class="mode-btn active" data-mode="raw">raw</button><button class="copy-btn">copy</button></div>`)
-			b.WriteString(`<div class="file-content"><div class="loading">Loading...</div></div>`)
+			b.WriteString(fmt.Sprintf(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">%s</button><button class="mode-btn active" data-mode="raw">%s</button><button class="copy-btn">%s</button></div>`, html.EscapeString(l.T("common.fmt")), html.EscapeString(l.T("common.raw")), html.EscapeString(l.T("common.copy"))))
+			b.WriteString(`<div class="file-content"><div class="loading">` + html.EscapeString(l.T("common.loading")) + `</div></div>`)
 			b.WriteString(`</div></details>`)
 		}
 		b.WriteString(`</div>`)
@@ -2691,7 +2710,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 	// Permissions
 	if settings != nil {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(`<h2><span class="section-icon">◐</span> Permissions</h2>`)
+		b.WriteString(`<h2><span class="section-icon">◐</span> ` + html.EscapeString(l.T("settings.permissions")) + `</h2>`)
 		b.WriteString(`<table class="settings-table">`)
 		for k, v := range settings.Permissions {
 			b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td><code>%s</code></td></tr>`, html.EscapeString(k), html.EscapeString(v)))
@@ -2701,7 +2720,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 
 		if len(settings.EnabledPlugins) > 0 {
 			b.WriteString(`<section class="settings-section">`)
-			b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◎</span> Enabled Plugins <span class="count">(%d)</span></h2>`, len(settings.EnabledPlugins)))
+			b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◎</span> %s <span class="count">%s</span></h2>`, html.EscapeString(l.T("settings.plugins")), html.EscapeString(l.T("settings.count", len(settings.EnabledPlugins)))))
 			b.WriteString(`<ul class="plugin-list">`)
 			for plugin, enabled := range settings.EnabledPlugins {
 				if enabled {
@@ -2714,7 +2733,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 
 		if len(settings.Env) > 0 {
 			b.WriteString(`<section class="settings-section">`)
-			b.WriteString(`<h2><span class="section-icon">◇</span> Environment</h2>`)
+			b.WriteString(`<h2><span class="section-icon">◇</span> ` + html.EscapeString(l.T("settings.environment")) + `</h2>`)
 			b.WriteString(`<table class="settings-table">`)
 			for k, v := range settings.Env {
 				b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td><code>%s</code></td></tr>`, html.EscapeString(k), html.EscapeString(v)))
@@ -2727,14 +2746,14 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 	// Agents - expandable with file content viewer
 	if len(agents) > 0 {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◆</span> Agents <span class="count">(%d)</span></h2>`, len(agents)))
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◆</span> %s <span class="count">%s</span></h2>`, html.EscapeString(l.T("settings.agents")), html.EscapeString(l.T("settings.count", len(agents)))))
 		b.WriteString(`<div class="file-card-list">`)
 		for i, agent := range agents {
 			b.WriteString(fmt.Sprintf(`<details class="file-card agent-card" data-path="%s" data-idx="%d">`, html.EscapeString(agent.FilePath), i))
 			b.WriteString(fmt.Sprintf(`<summary><code>%s</code><span class="file-path">%s</span><span class="expand-icon">▶</span></summary>`, html.EscapeString(agent.Name), html.EscapeString(agent.FilePath)))
 			b.WriteString(`<div class="file-viewer" id="agent-` + fmt.Sprint(i) + `">`)
-			b.WriteString(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">fmt</button><button class="mode-btn active" data-mode="raw">raw</button><button class="copy-btn">copy</button></div>`)
-			b.WriteString(`<div class="file-content"><div class="loading">Loading...</div></div>`)
+			b.WriteString(fmt.Sprintf(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">%s</button><button class="mode-btn active" data-mode="raw">%s</button><button class="copy-btn">%s</button></div>`, html.EscapeString(l.T("common.fmt")), html.EscapeString(l.T("common.raw")), html.EscapeString(l.T("common.copy"))))
+			b.WriteString(`<div class="file-content"><div class="loading">` + html.EscapeString(l.T("common.loading")) + `</div></div>`)
 			b.WriteString(`</div></details>`)
 		}
 		b.WriteString(`</div>`)
@@ -2744,7 +2763,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 	// Skills - expandable with file content viewer
 	if len(skills) > 0 {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◈</span> Skills <span class="count">(%d)</span></h2>`, len(skills)))
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◈</span> %s <span class="count">%s</span></h2>`, html.EscapeString(l.T("settings.skills")), html.EscapeString(l.T("settings.count", len(skills)))))
 		b.WriteString(`<div class="file-card-list">`)
 		for i, skill := range skills {
 			// For skills, show skill.md inside the directory
@@ -2752,8 +2771,8 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 			b.WriteString(fmt.Sprintf(`<details class="file-card skill-card" data-path="%s" data-idx="%d">`, html.EscapeString(skillFile), i))
 			b.WriteString(fmt.Sprintf(`<summary><code>%s</code><span class="file-path">%s</span><span class="expand-icon">▶</span></summary>`, html.EscapeString(skill.Name), html.EscapeString(skill.Path)))
 			b.WriteString(`<div class="file-viewer" id="skill-` + fmt.Sprint(i) + `">`)
-			b.WriteString(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">fmt</button><button class="mode-btn active" data-mode="raw">raw</button><button class="copy-btn">copy</button></div>`)
-			b.WriteString(`<div class="file-content"><div class="loading">Loading...</div></div>`)
+			b.WriteString(fmt.Sprintf(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">%s</button><button class="mode-btn active" data-mode="raw">%s</button><button class="copy-btn">%s</button></div>`, html.EscapeString(l.T("common.fmt")), html.EscapeString(l.T("common.raw")), html.EscapeString(l.T("common.copy"))))
+			b.WriteString(`<div class="file-content"><div class="loading">` + html.EscapeString(l.T("common.loading")) + `</div></div>`)
 			b.WriteString(`</div></details>`)
 		}
 		b.WriteString(`</div>`)
@@ -2764,7 +2783,7 @@ func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []
 	b.WriteString(`</div>`)
 	b.WriteString(renderFooter())
 	b.WriteString(settingsPageCSS())
-	b.WriteString(pageFooter())
+	b.WriteString(l.pageFooter())
 
 	return b.String()
 }
@@ -2893,7 +2912,7 @@ document.querySelectorAll('.file-card').forEach(card => {
       content.dataset.loaded = '1';
       showRaw(content, data.content); // Default to raw view
     } catch (e) {
-      content.innerHTML = '<div class="error">Failed to load file</div>';
+      content.innerHTML = '<div class="error">' + t('js.failed_load') + '</div>';
     }
   });
 });
@@ -2972,8 +2991,8 @@ document.querySelectorAll('.file-toolbar .copy-btn').forEach(btn => {
       text = content.innerText || content.textContent || '';
     }
     navigator.clipboard.writeText(text);
-    this.textContent = 'copied!';
-    setTimeout(() => this.textContent = 'copy', 1500);
+    this.textContent = t('js.copied');
+    setTimeout(() => this.textContent = t('js.copy'), 1500);
   });
 });
 </script>`
@@ -3069,7 +3088,7 @@ func memSectionCSS() string {
 </style>`
 }
 
-func fileCardJS() string {
+func (l loc) fileCardJS() string {
 	return `<script>
 document.querySelectorAll('.mem-file, .file-card').forEach(card => {
   card.addEventListener('toggle', async function() {
@@ -3087,7 +3106,7 @@ document.querySelectorAll('.mem-file, .file-card').forEach(card => {
       content.dataset.loaded = '1';
       content.innerHTML = '<pre class="source-raw">' + escapeHtmlMem(data.content) + '</pre>';
     } catch (e) {
-      content.innerHTML = '<div style="color:var(--text-muted);font-style:italic">Failed to load file</div>';
+      content.innerHTML = '<div style="color:var(--text-muted);font-style:italic">' + t('js.failed_load') + '</div>';
     }
   });
 });
@@ -3147,33 +3166,33 @@ document.querySelectorAll('.mem-file .file-toolbar .copy-btn, .file-card .file-t
     const content = viewer.querySelector('.file-content');
     const raw = content.dataset.raw || content.innerText || '';
     navigator.clipboard.writeText(raw);
-    this.textContent = 'copied!';
-    setTimeout(() => this.textContent = 'copy', 1500);
+    this.textContent = t('js.copied');
+    setTimeout(() => this.textContent = t('js.copy'), 1500);
   });
 });
 </script>`
 }
 
-func renderMemoryPage(data *MemoryData) string {
+func (l loc) renderMemoryPage(data *MemoryData) string {
 	var b strings.Builder
 
-	b.WriteString(pageHeader("Memory - ccx", ccxconfig.Theme()))
-	b.WriteString(renderTopNav("", ""))
+	b.WriteString(l.pageHeader(l.T("title.memory"), ccxconfig.Theme()))
+	b.WriteString(l.renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
-	b.WriteString(renderSidebar("memory"))
+	b.WriteString(l.renderSidebar("memory"))
 
 	b.WriteString(`<main class="main-content">`)
-	b.WriteString(fmt.Sprintf(`<h1>Memory <span class="mem-count">(%d files)</span></h1>`, data.TotalFiles))
+	b.WriteString(fmt.Sprintf(`<h1>%s <span class="mem-count">%s</span></h1>`, html.EscapeString(l.T("memory.heading")), html.EscapeString(l.T("memory.files_count", data.TotalFiles))))
 
 	idx := 0
 
 	// Section 1: Global Instructions
 	if len(data.Global) > 0 {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◇</span> Global Instructions <span class="count">(%d)</span></h2>`, len(data.Global)))
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◇</span> %s <span class="count">%s</span></h2>`, html.EscapeString(l.T("memory.global")), html.EscapeString(l.T("settings.count", len(data.Global)))))
 		b.WriteString(`<div class="file-card-list">`)
 		for _, f := range data.Global {
-			renderMemoryFileCard(&b, f, idx)
+			l.renderMemoryFileCard(&b, f, idx)
 			idx++
 		}
 		b.WriteString(`</div></section>`)
@@ -3182,10 +3201,10 @@ func renderMemoryPage(data *MemoryData) string {
 	// Section 2: User Rules
 	if len(data.Rules) > 0 {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◆</span> User Rules <span class="count">(%d)</span></h2>`, len(data.Rules)))
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◆</span> %s <span class="count">%s</span></h2>`, html.EscapeString(l.T("memory.rules")), html.EscapeString(l.T("settings.count", len(data.Rules)))))
 		b.WriteString(`<div class="file-card-list">`)
 		for _, f := range data.Rules {
-			renderMemoryFileCard(&b, f, idx)
+			l.renderMemoryFileCard(&b, f, idx)
 			idx++
 		}
 		b.WriteString(`</div></section>`)
@@ -3198,7 +3217,7 @@ func renderMemoryPage(data *MemoryData) string {
 			totalProjectFiles += len(p.Files)
 		}
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◈</span> Project Memory <span class="count">(%d projects, %d files)</span></h2>`, len(data.Projects), totalProjectFiles))
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◈</span> %s <span class="count">%s</span></h2>`, html.EscapeString(l.T("memory.project")), html.EscapeString(l.T("memory.project_count", len(data.Projects), totalProjectFiles))))
 
 		for _, proj := range data.Projects {
 			badge := `<span class="prov-pill prov-pill-cc">CC</span>`
@@ -3210,7 +3229,7 @@ func renderMemoryPage(data *MemoryData) string {
 				html.EscapeString(proj.Name), badge, html.EscapeString(proj.Path)))
 			b.WriteString(`<div class="file-card-list">`)
 			for _, f := range proj.Files {
-				renderMemoryFileCard(&b, f, idx)
+				l.renderMemoryFileCard(&b, f, idx)
 				idx++
 			}
 			b.WriteString(`</div></div>`)
@@ -3221,30 +3240,30 @@ func renderMemoryPage(data *MemoryData) string {
 	// Section 4: Codex Memories
 	if len(data.CodexMem) > 0 {
 		b.WriteString(`<section class="settings-section">`)
-		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◌</span> Codex Memories <span class="count">(%d)</span></h2>`, len(data.CodexMem)))
+		b.WriteString(fmt.Sprintf(`<h2><span class="section-icon">◌</span> %s <span class="count">%s</span></h2>`, html.EscapeString(l.T("memory.codex")), html.EscapeString(l.T("settings.count", len(data.CodexMem)))))
 		b.WriteString(`<div class="file-card-list">`)
 		for _, f := range data.CodexMem {
-			renderMemoryFileCard(&b, f, idx)
+			l.renderMemoryFileCard(&b, f, idx)
 			idx++
 		}
 		b.WriteString(`</div></section>`)
 	}
 
 	if data.TotalFiles == 0 {
-		b.WriteString(`<div class="empty-state">No memory or instruction files found.</div>`)
+		b.WriteString(`<div class="empty-state">` + html.EscapeString(l.T("memory.empty")) + `</div>`)
 	}
 
 	b.WriteString(`</main>`)
 	b.WriteString(`</div>`)
 	b.WriteString(renderFooter())
-	b.WriteString(indexJS())
+	b.WriteString(l.indexJS())
 	b.WriteString(memoryPageCSS())
-	b.WriteString(pageFooter())
+	b.WriteString(l.pageFooter())
 
 	return b.String()
 }
 
-func renderMemoryFileCard(b *strings.Builder, f MemoryFile, idx int) {
+func (l loc) renderMemoryFileCard(b *strings.Builder, f MemoryFile, idx int) {
 	provClass := "mem-card-cc"
 	if f.Provider == "codex" {
 		provClass = "mem-card-cx"
@@ -3253,8 +3272,8 @@ func renderMemoryFileCard(b *strings.Builder, f MemoryFile, idx int) {
 	b.WriteString(fmt.Sprintf(`<summary><code>%s</code><span class="file-path">%s</span><span class="expand-icon">▶</span></summary>`,
 		html.EscapeString(f.Name), html.EscapeString(f.FilePath)))
 	b.WriteString(fmt.Sprintf(`<div class="file-viewer" id="mem-%d">`, idx))
-	b.WriteString(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">fmt</button><button class="mode-btn active" data-mode="raw">raw</button><button class="copy-btn">copy</button></div>`)
-	b.WriteString(`<div class="file-content"><div class="loading">Loading...</div></div>`)
+	b.WriteString(fmt.Sprintf(`<div class="file-toolbar"><button class="mode-btn" data-mode="fmt">%s</button><button class="mode-btn active" data-mode="raw">%s</button><button class="copy-btn">%s</button></div>`, html.EscapeString(l.T("common.fmt")), html.EscapeString(l.T("common.raw")), html.EscapeString(l.T("common.copy"))))
+	b.WriteString(`<div class="file-content"><div class="loading">` + html.EscapeString(l.T("common.loading")) + `</div></div>`)
 	b.WriteString(`</div></details>`)
 }
 
@@ -3279,25 +3298,26 @@ func memoryPageCSS() string {
 </style>`
 }
 
-func renderTopNav(projectName, sessionID string) string {
+func (l loc) renderTopNav(projectName, sessionID string) string {
 	var b strings.Builder
 	b.WriteString(`<header class="top-nav">`)
 	b.WriteString(`<div class="top-nav-inner">`)
 	b.WriteString(`<div class="nav-left">`)
 	b.WriteString(`<a href="/" class="brand"><span class="brand-cc">cc</span><span class="brand-x">x</span></a>`)
-	b.WriteString(`<span class="brand-sub">for agent sessions</span>`)
+	b.WriteString(`<span class="brand-sub">` + html.EscapeString(l.T("nav.brand_sub")) + `</span>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="nav-center">`)
 	b.WriteString(`<div class="global-search">`)
-	b.WriteString(`<input type="text" id="global-search" class="global-search-input" placeholder="Search all... (press /)" autocomplete="off">`)
+	b.WriteString(fmt.Sprintf(`<input type="text" id="global-search" class="global-search-input" placeholder="%s" autocomplete="off">`, html.EscapeString(l.T("nav.search_all"))))
 	b.WriteString(`<div id="search-results" class="search-results"></div>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="nav-right">`)
 	b.WriteString(`<a href="https://x.com/ericwang42" target="_blank" rel="noopener noreferrer" class="icon-btn" title="@ericwang42"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg></a>`)
 	b.WriteString(`<a href="https://github.com/thevibeworks/ccx" target="_blank" rel="noopener noreferrer" class="icon-btn" title="GitHub"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>`)
-	b.WriteString(`<button class="icon-btn" id="theme-toggle" title="Toggle theme (d)">◐</button>`)
-	b.WriteString(`<a href="/settings" class="icon-btn" title="Settings">◎</a>`)
+	b.WriteString(l.langSwitcher())
+	b.WriteString(fmt.Sprintf(`<button class="icon-btn" id="theme-toggle" title="%s">◐</button>`, html.EscapeString(l.T("nav.theme"))))
+	b.WriteString(fmt.Sprintf(`<a href="/settings" class="icon-btn" title="%s">◎</a>`, html.EscapeString(l.T("nav.settings"))))
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</header>`)
@@ -3314,7 +3334,7 @@ func renderFooter() string {
 </footer>`
 }
 
-func renderSidebar(active string) string {
+func (l loc) renderSidebar(active string) string {
 	var b strings.Builder
 
 	b.WriteString(`<aside class="sidebar">`)
@@ -3323,12 +3343,12 @@ func renderSidebar(active string) string {
 	items := []struct {
 		href, label, key string
 	}{
-		{"/", "Projects", "projects"},
-		{"/sessions", "Sessions", "sessions"},
-		{"/search", "Search", "search"},
-		{"/insights", "Insights", "insights"},
-		{"/memory", "Memory", "memory"},
-		{"/settings", "Settings", "settings"},
+		{"/", l.T("nav.projects"), "projects"},
+		{"/sessions", l.T("nav.sessions"), "sessions"},
+		{"/search", l.T("nav.search"), "search"},
+		{"/insights", l.T("nav.insights"), "insights"},
+		{"/memory", l.T("nav.memory"), "memory"},
+		{"/settings", l.T("nav.settings"), "settings"},
 	}
 
 	for _, item := range items {
@@ -3352,13 +3372,14 @@ func selected(current, value string) string {
 	return ""
 }
 
-func pageHeader(title, theme string) string {
+func (l loc) pageHeader(title, theme string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en" data-theme="%s">
+<html lang="%s" data-theme="%s">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>(function(){var t=localStorage.getItem('ccx-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
+%s
 <title>%s</title>
 %s
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
@@ -3376,7 +3397,7 @@ func pageHeader(title, theme string) string {
 </style>
 </head>
 <body>
-`, theme, html.EscapeString(title), faviconLink(), cssStyles())
+`, l.Code(), theme, l.i18nScript(), html.EscapeString(title), faviconLink(), cssStyles())
 }
 
 // renderNotFoundPage emits a styled 404 page with a pre-filled
@@ -3425,29 +3446,33 @@ func renderNotFoundPage(w http.ResponseWriter, r *http.Request, kind, detail str
 		"&title=" + url.QueryEscape(title) +
 		"&body=" + url.QueryEscape(bodyTemplate)
 
+	l := locFrom(r)
+	kindLabel := l.T("notfound.kind_" + kind)
+	if kindLabel == "notfound.kind_"+kind {
+		kindLabel = kind
+	}
+
 	var b strings.Builder
-	b.WriteString(pageHeader("ccx — not found", ccxconfig.Theme()))
-	b.WriteString(renderTopNav("", ""))
+	b.WriteString(l.pageHeader(l.T("title.not_found"), ccxconfig.Theme()))
+	b.WriteString(l.renderTopNav("", ""))
 	b.WriteString(`<main class="nf-main">`)
 	b.WriteString(`<div class="nf-box">`)
 	b.WriteString(`<div class="nf-glyph" aria-hidden="true">404</div>`)
-	b.WriteString(`<h1 class="nf-title">Can't find this ` + html.EscapeString(kind) + `.</h1>`)
+	b.WriteString(`<h1 class="nf-title">` + html.EscapeString(l.T("notfound.title", kindLabel)) + `</h1>`)
 	if detail != "" {
 		b.WriteString(`<p class="nf-detail">` + html.EscapeString(detail) + `</p>`)
 	}
 	b.WriteString(`<pre class="nf-url">` + html.EscapeString(failingURL) + `</pre>`)
 	b.WriteString(`<p class="nf-note">`)
-	b.WriteString(`This can happen if the session was deleted, if ccx's project index is stale, `)
-	b.WriteString(`or — more interestingly — if we broke something. If you didn't expect this, `)
-	b.WriteString(`please tell us:`)
+	b.WriteString(html.EscapeString(l.T("notfound.note")))
 	b.WriteString(`</p>`)
 	b.WriteString(`<div class="nf-actions">`)
 	b.WriteString(`<a class="nf-btn nf-primary" href="` + html.EscapeString(issueURL) + `" target="_blank" rel="noopener noreferrer">`)
 	b.WriteString(`<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:middle;margin-right:6px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`)
-	b.WriteString(`Report this bug`)
+	b.WriteString(html.EscapeString(l.T("notfound.report")))
 	b.WriteString(`</a>`)
-	b.WriteString(`<a class="nf-btn" href="/">← All projects</a>`)
-	b.WriteString(`<a class="nf-btn" href="/search">Search sessions</a>`)
+	b.WriteString(`<a class="nf-btn" href="/">` + html.EscapeString(l.T("notfound.all_projects")) + `</a>`)
+	b.WriteString(`<a class="nf-btn" href="/search">` + html.EscapeString(l.T("notfound.search")) + `</a>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`</main>`)
@@ -3462,14 +3487,25 @@ func faviconLink() string {
 	return `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23111'/%3E%3Ctext x='3' y='23' font-family='ui-monospace,monospace' font-weight='800' font-size='14'%3E%3Ctspan fill='%23fff'%3Ecc%3C/tspan%3E%3Ctspan fill='%23c65d3e'%3Ex%3C/tspan%3E%3C/text%3E%3C/svg%3E">`
 }
 
-func pageFooter() string {
+func (l loc) pageFooter() string {
 	return `
 <div id="loading-overlay" class="loading-overlay">
   <div class="cli-spinner">
     <span class="cli-spinner-char"></span>
-    <span id="spinner-verb">Loading</span>
+    <span id="spinner-verb">` + html.EscapeString(l.T("common.loading_verb")) + `</span>
   </div>
 </div>
+<script>
+(function(){
+  const sel = document.getElementById('lang-switch');
+  if (!sel) return;
+  sel.addEventListener('change', function() {
+    const url = new URL(window.location.href);
+    url.searchParams.set('lang', this.value);
+    window.location.href = url.toString();
+  });
+})();
+</script>
 <script>
 // Global loading overlay control
 const loadingOverlay = document.getElementById('loading-overlay');
@@ -3523,7 +3559,7 @@ func cssStyles() string {
 	return string(data)
 }
 
-func indexJS() string {
+func (l loc) indexJS() string {
 	return `
 <script>
 let searchTimeout;
@@ -3614,7 +3650,7 @@ if (globalSearchInput && searchResults) {
             let html = '<a href="' + safeUrl + '" class="search-result">';
             html += badge;
             html += '<div class="result-body">';
-            html += '<div class="result-title">' + escapeHtml(r.summary || 'Untitled') + pb + '</div>';
+            html += '<div class="result-title">' + escapeHtml(r.summary || t('js.untitled')) + pb + '</div>';
             html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' &middot; ' + escapeHtml(r.time) : '') + '</div>';
             if (r.snippet) {
               html += '<div class="result-snippet">' + escapeHtml(r.snippet) + '</div>';
@@ -3624,7 +3660,7 @@ if (globalSearchInput && searchResults) {
           }).join('');
           searchResults.classList.add('active');
         } else {
-          searchResults.innerHTML = '<div class="search-result"><span class="result-badge badge-message">?</span><div class="result-body"><div class="result-title">No results</div></div></div>';
+          searchResults.innerHTML = '<div class="search-result"><span class="result-badge badge-message">?</span><div class="result-body"><div class="result-title">' + t('js.no_results') + '</div></div></div>';
           searchResults.classList.add('active');
         }
       } catch (err) {
@@ -3668,7 +3704,7 @@ if (backTop) {
 `
 }
 
-func sessionJS(projectName, sessionID string) string {
+func (l loc) sessionJS(projectName, sessionID string) string {
 	return fmt.Sprintf(`
 <script>
 const projectName = %q;
@@ -3681,7 +3717,7 @@ function loadEarlierMessages() {
   const btn = document.querySelector('.load-earlier');
   if (btn) {
     btn.classList.add('loading');
-    btn.querySelector('.load-earlier-btn').innerHTML = '<span class="load-icon">↻</span> Loading...';
+    btn.querySelector('.load-earlier-btn').innerHTML = '<span class="load-icon">↻</span> ' + t('js.loading');
   }
   // Persist active search across the reload, so "search full history" picks up where it was
   const pendingQuery = document.getElementById('search-input')?.value;
@@ -3850,7 +3886,7 @@ if (globalSearchInput && searchResults) {
             let html = '<a href="' + safeUrl + '" class="search-result">';
             html += badge;
             html += '<div class="result-body">';
-            html += '<div class="result-title">' + escapeHtml(r.summary || 'Untitled') + pb + '</div>';
+            html += '<div class="result-title">' + escapeHtml(r.summary || t('js.untitled')) + pb + '</div>';
             html += '<div class="result-meta">' + escapeHtml(r.project || '') + (r.time ? ' &middot; ' + escapeHtml(r.time) : '') + '</div>';
             if (r.snippet) {
               html += '<div class="result-snippet">' + escapeHtml(r.snippet) + '</div>';
@@ -3860,7 +3896,7 @@ if (globalSearchInput && searchResults) {
           }).join('');
           searchResults.classList.add('active');
         } else {
-          searchResults.innerHTML = '<div class="search-empty">No results for "' + escapeHtml(query) + '"</div>';
+          searchResults.innerHTML = '<div class="search-empty">' + t('js.no_results') + ' "' + escapeHtml(query) + '"</div>';
           searchResults.classList.add('active');
         }
       } catch (err) {
@@ -3949,9 +3985,9 @@ function copyBlock(e) {
   let text = '';
   pres.forEach(pre => { text += pre.textContent + '\n'; });
   navigator.clipboard.writeText(text.trim()).then(() => {
-    btn.textContent = 'copied!';
+    btn.textContent = t('js.copied');
     btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1500);
+    setTimeout(() => { btn.textContent = t('js.copy'); btn.classList.remove('copied'); }, 1500);
   });
 }
 
@@ -4043,8 +4079,8 @@ function copyTurn(e, btn) {
     text = body.innerText || body.textContent || '';
   }
   navigator.clipboard.writeText(text);
-  btn.textContent = 'copied!';
-  setTimeout(() => btn.textContent = 'copy', 1500);
+  btn.textContent = t('js.copied');
+  setTimeout(() => btn.textContent = t('js.copy'), 1500);
 }
 
 // jumpToAnchor is the single entry point for "scroll this message into
@@ -4249,7 +4285,7 @@ function appendTailMessage(data) {
         '<span class="turn-role">USER</span>' +
         '<span class="turn-preview">' + escapeHtml(preview) + '</span>' +
         '<span class="turn-time">' + timestamp + '</span>' +
-        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>' +
+        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">' + t('js.raw') + '</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">' + t('js.copy') + '</button></span>' +
       '</summary>' +
       '<div class="turn-body" data-rawb64="' + rawB64 + '">' +
         renderContentBlocks(content) +
@@ -4269,7 +4305,7 @@ function appendTailMessage(data) {
         '<span class="turn-icon">○</span>' +
         '<span class="turn-role">' + escapeHtml(resultToolName) + '</span>' +
         '<span class="turn-time">' + timestamp + '</span>' +
-        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>' +
+        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">' + t('js.raw') + '</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">' + t('js.copy') + '</button></span>' +
       '</div>' +
       '<div class="turn-body" data-rawb64="' + rawB64 + '">' +
         renderContentBlocks(content) +
@@ -4290,7 +4326,7 @@ function appendTailMessage(data) {
         '<span class="turn-role">' + role + '</span>' +
         '<span class="turn-time">' + timestamp + '</span>' +
         (model ? '<span class="turn-model">' + escapeHtml(model) + '</span>' : '') +
-        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">raw</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">copy</button></span>' +
+        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">' + t('js.raw') + '</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">' + t('js.copy') + '</button></span>' +
       '</div>' +
       '<div class="turn-body" data-rawb64="' + rawB64 + '">' +
         renderContentBlocks(content) +
@@ -4355,7 +4391,7 @@ function renderContentBlocks(content, forceExpand) {
         html += '<details class="block-tool" id="tool-' + sanitizeID(toolId) + '"' + toolOpen + '>' +
           '<summary><span class="block-icon">●</span> ' + escapeHtml(toolName) +
           '<span class="tool-preview">' + escapeHtml(inputPreview) + '</span>' +
-          '<span class="tool-actions"><button class="raw-toggle">raw</button><button class="copy-btn">copy</button></span></summary>' +
+          '<span class="tool-actions"><button class="raw-toggle">' + t('js.raw') + '</button><button class="copy-btn">' + t('js.copy') + '</button></span></summary>' +
           '<div class="tool-section tool-input-section">' +
             '<div class="section-label">input</div>' +
             renderToolInputJS(toolName, block.input) +
@@ -5445,7 +5481,7 @@ function updateSearchInfo() {
     const hiddenLoader = document.getElementById('load-earlier');
     const hasQuery = searchInput && searchInput.value && searchInput.value.trim().length >= 2;
     if (hiddenLoader && hasQuery) {
-      searchInfo.innerHTML = 'No matches in visible range — <a href="#" id="search-load-all" class="search-load-all-link">search full history</a>';
+      searchInfo.innerHTML = t('js.no_matches_hidden') + ' <a href="#" id="search-load-all" class="search-load-all-link">' + t('js.search_full') + '</a>';
       const link = document.getElementById('search-load-all');
       if (link) {
         link.addEventListener('click', (e) => {
@@ -5454,7 +5490,7 @@ function updateSearchInfo() {
         });
       }
     } else {
-      searchInfo.textContent = 'No matches';
+      searchInfo.textContent = t('js.no_matches');
     }
   } else {
     searchInfo.textContent = (searchIdx + 1) + '/' + searchMatches.length;

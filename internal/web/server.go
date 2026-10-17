@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"os"
@@ -116,8 +117,9 @@ func Serve(addr string, backend provider.Backend) error {
 	// File content API (for agents/skills)
 	mux.HandleFunc("/api/file", handleAPIFile)
 
-	// Wrap with logging middleware
-	handler := logRequest(mux)
+	// Locale first so every page (and the cookie) sees the same choice,
+	// then request logging.
+	handler := localeMiddleware(logRequest(mux))
 
 	server := &http.Server{
 		Addr:         addr,
@@ -211,7 +213,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderIndexPage(projects, totalSessions, search, sortBy))
+	fmt.Fprint(w, locFrom(r).renderIndexPage(projects, totalSessions, search, sortBy))
 }
 
 func handleProject(w http.ResponseWriter, r *http.Request) {
@@ -270,7 +272,7 @@ func handleProject(w http.ResponseWriter, r *http.Request) {
 	memFiles := loadProjectMemory(project.EncodedName)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderProjectPage(project, sessions, allProjects, memFiles, search, sortBy))
+	fmt.Fprint(w, locFrom(r).renderProjectPage(project, sessions, allProjects, memFiles, search, sortBy))
 }
 
 func handleSession(w http.ResponseWriter, r *http.Request) {
@@ -336,7 +338,7 @@ func handleSession(w http.ResponseWriter, r *http.Request) {
 	memCount := len(loadProjectMemory(projectName))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderSessionPage(fullSession, projectName, allSessions, memCount, showThinking, showTools, loadAll, theme, traceTurns, turnTarget))
+	fmt.Fprint(w, locFrom(r).renderSessionPage(fullSession, projectName, allSessions, memCount, showThinking, showTools, loadAll, theme, traceTurns, turnTarget))
 }
 
 // resolveTurnTarget maps a ?turn= value ("54" or "54.10", the trace
@@ -378,7 +380,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 	skills := loadSkills()
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderSettingsPage(settings, globalConfig, configFiles, agents, skills))
+	fmt.Fprint(w, locFrom(r).renderSettingsPage(settings, globalConfig, configFiles, agents, skills))
 }
 
 func loadAgents() []AgentInfo {
@@ -437,7 +439,7 @@ func loadSkills() []SkillInfo {
 func handleMemory(w http.ResponseWriter, r *http.Request) {
 	data := loadMemories()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderMemoryPage(data))
+	fmt.Fprint(w, locFrom(r).renderMemoryPage(data))
 }
 
 func loadMemories() *MemoryData {
@@ -1129,7 +1131,7 @@ func handleSearchPage(w http.ResponseWriter, r *http.Request) {
 	query := q.Get("q")
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderSearchPage(strings.Join(providerHomes, ", "), query))
+	fmt.Fprint(w, locFrom(r).renderSearchPage(strings.Join(providerHomes, ", "), query))
 }
 
 // exportSafePermalinks rewrites turn permalinks for standalone files:
@@ -1181,7 +1183,7 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=session-%s.html", truncate(sessionID, 8)))
-		page := renderSessionPage(fullSession, projectName, nil, 0, true, true, true, "light", trace.Analyze(fullSession).Turns, "")
+		page := locFrom(r).renderSessionPage(fullSession, projectName, nil, 0, true, true, true, "light", trace.Analyze(fullSession).Turns, "")
 		fmt.Fprint(w, exportSafePermalinks(page))
 	case "md", "markdown":
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
@@ -1203,6 +1205,7 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPISearch(w http.ResponseWriter, r *http.Request) {
+	l := locFrom(r)
 	rawQuery := strings.TrimSpace(r.URL.Query().Get("q"))
 	if rawQuery == "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -1278,7 +1281,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 					Summary:  truncateSummary(s.Summary, 80),
 					Project:  projDisplay,
 					Provider: s.Provider,
-					Time:     formatAge(s.StartTime),
+					Time:     l.age(s.StartTime),
 					Type:     "session",
 					Priority: 1,
 				})
@@ -1291,7 +1294,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 					Summary:  truncateSummary(s.Summary, 80),
 					Project:  projDisplay,
 					Provider: s.Provider,
-					Time:     formatAge(s.StartTime),
+					Time:     l.age(s.StartTime),
 					Type:     "session",
 					Priority: 0,
 				})
@@ -1304,7 +1307,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 					Summary:  truncateSummary(s.Summary, 80),
 					Project:  projDisplay,
 					Provider: s.Provider,
-					Time:     formatAge(s.StartTime),
+					Time:     l.age(s.StartTime),
 					Type:     "session",
 					Priority: 2,
 				})
@@ -1327,7 +1330,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 						Summary:   truncateSummary(s.Summary, 60),
 						Project:   projDisplay,
 						Provider:  s.Provider,
-						Time:      formatAge(s.StartTime),
+						Time:      l.age(s.StartTime),
 						Type:      "message",
 						Snippet:   snippet,
 						MessageID: msgID,
@@ -1680,20 +1683,20 @@ func getFirstTextContent(msg *parser.Message) string {
 	return ""
 }
 
-func formatAge(t time.Time) string {
+func (l loc) age(t time.Time) string {
 	if t.IsZero() {
-		return "N/A"
+		return l.T("time.na")
 	}
 	d := time.Since(t)
 	switch {
 	case d < time.Minute:
-		return "just now"
+		return l.T("time.just_now")
 	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+		return l.T("time.age_min", int(d.Minutes()))
 	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
+		return l.T("time.age_hour", int(d.Hours()))
 	case d < 7*24*time.Hour:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+		return l.T("time.age_day", int(d.Hours()/24))
 	default:
 		return t.Format("2006-01-02")
 	}
@@ -1710,22 +1713,25 @@ func handleInsights(w http.ResponseWriter, r *http.Request) {
 		theme = config.Theme()
 	}
 
+	l := locFrom(r)
 	var b strings.Builder
-	b.WriteString(pageHeader("Insights", theme))
-	b.WriteString(renderTopNav("", ""))
+	b.WriteString(l.pageHeader(l.T("title.insights"), theme))
+	b.WriteString(l.renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
-	b.WriteString(renderSidebar("insights"))
+	b.WriteString(l.renderSidebar("insights"))
 	b.WriteString(`<main class="main-content">`)
-	b.WriteString(`<div class="page-header"><h1>Insights</h1></div>`)
+	b.WriteString(`<div class="page-header"><h1>` + html.EscapeString(l.T("nav.insights")) + `</h1></div>`)
 
 	if len(reports) == 0 {
-		b.WriteString(`<p style="color:#6b7280;padding:24px">No insight reports yet. Generate one with: <code>ccx insight --scope week --all</code></p>`)
+		b.WriteString(`<p style="color:#6b7280;padding:24px">` + l.T("insights.empty_markup") + `</p>`)
 	} else {
+		th := `style="text-align:left;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280"`
+		thRight := `style="text-align:right;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280"`
 		b.WriteString(`<table style="width:100%;border-collapse:collapse;font-size:13px">`)
-		b.WriteString(`<tr><th style="text-align:left;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280">Report</th>`)
-		b.WriteString(`<th style="text-align:left;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280">Scope</th>`)
-		b.WriteString(`<th style="text-align:right;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280">Size</th>`)
-		b.WriteString(`<th style="text-align:left;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280">Created</th></tr>`)
+		b.WriteString(`<tr><th ` + th + `>` + html.EscapeString(l.T("insights.report")) + `</th>`)
+		b.WriteString(`<th ` + th + `>` + html.EscapeString(l.T("insights.scope")) + `</th>`)
+		b.WriteString(`<th ` + thRight + `>` + html.EscapeString(l.T("insights.size")) + `</th>`)
+		b.WriteString(`<th ` + th + `>` + html.EscapeString(l.T("insights.created")) + `</th></tr>`)
 		for _, rpt := range reports {
 			size := fmt.Sprintf("%.0fKB", float64(rpt.Size)/1024)
 			b.WriteString(fmt.Sprintf(`<tr style="cursor:pointer" onclick="location='/insights/%s'">`,
@@ -1734,7 +1740,7 @@ func handleInsights(w http.ResponseWriter, r *http.Request) {
 				rpt.Name, rpt.Name))
 			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid var(--border)">%s</td>`, rpt.Scope))
 			b.WriteString(fmt.Sprintf(`<td style="text-align:right;padding:6px 8px;border-bottom:1px solid var(--border);font-family:monospace">%s</td>`, size))
-			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid var(--border)">%s</td>`, formatAge(rpt.CreatedAt)))
+			b.WriteString(fmt.Sprintf(`<td style="padding:6px 8px;border-bottom:1px solid var(--border)">%s</td>`, l.age(rpt.CreatedAt)))
 			b.WriteString(`</tr>`)
 		}
 		b.WriteString(`</table>`)

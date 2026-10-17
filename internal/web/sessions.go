@@ -372,7 +372,7 @@ func handleSessionsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderSessionsPage(projects, view))
+	fmt.Fprint(w, locFrom(r).renderSessionsPage(projects, view))
 }
 
 type sessionsView struct {
@@ -405,82 +405,82 @@ func formatCount(n int) string {
 	return b.String()
 }
 
-func renderSessionsPage(projects []*parser.Project, v sessionsView) string {
+func (l loc) renderSessionsPage(projects []*parser.Project, v sessionsView) string {
 	sq := v.Query
 	var b strings.Builder
 
-	b.WriteString(pageHeader("Sessions - ccx", ccxconfig.Theme()))
-	b.WriteString(renderTopNav("", ""))
+	b.WriteString(l.pageHeader(l.T("title.sessions"), ccxconfig.Theme()))
+	b.WriteString(l.renderTopNav("", ""))
 	b.WriteString(`<div class="layout">`)
-	b.WriteString(renderSidebar("sessions"))
+	b.WriteString(l.renderSidebar("sessions"))
 
 	b.WriteString(`<main class="main-content">`)
 	b.WriteString(`<div class="page-header page-header-sessions">`)
 	b.WriteString(`<span class="page-badge badge-session">S</span>`)
-	b.WriteString(`<h1>Sessions</h1>`)
+	b.WriteString(`<h1>` + html.EscapeString(l.T("sessions.heading")) + `</h1>`)
 	if sq.Filtered() {
-		b.WriteString(fmt.Sprintf(`<div class="stats">%s of %s sessions · %d projects</div>`,
-			formatCount(v.MatchTotal), formatCount(v.CorpusSessions), v.MatchProjects))
+		b.WriteString(fmt.Sprintf(`<div class="stats">%s</div>`,
+			html.EscapeString(l.T("sessions.stats_filtered", formatCount(v.MatchTotal), formatCount(v.CorpusSessions), v.MatchProjects))))
 	} else {
-		b.WriteString(fmt.Sprintf(`<div class="stats">%s sessions across %d projects</div>`,
-			formatCount(v.CorpusSessions), v.CorpusProjects))
+		b.WriteString(fmt.Sprintf(`<div class="stats">%s</div>`,
+			html.EscapeString(l.T("sessions.stats_all", formatCount(v.CorpusSessions), v.CorpusProjects))))
 	}
 	b.WriteString(`</div>`)
 
-	b.WriteString(renderSessionsControls(projects, sq))
-	b.WriteString(renderFilterChips(projects, sq))
+	b.WriteString(l.renderSessionsControls(projects, sq))
+	b.WriteString(l.renderFilterChips(projects, sq))
 
 	if v.Shown == 0 {
 		if sq.Filtered() {
-			b.WriteString(`<div class="empty-state">No sessions match these filters.<br><a href="/sessions">Clear filters</a></div>`)
+			b.WriteString(`<div class="empty-state">` + html.EscapeString(l.T("sessions.empty_filtered")) + `<br><a href="/sessions">` + html.EscapeString(l.T("sessions.clear_filters")) + `</a></div>`)
 		} else {
-			b.WriteString(`<div class="empty-state">No sessions found. ccx reads ~/.claude, ~/.codex and ~/.grok — start an agent session first.</div>`)
+			b.WriteString(`<div class="empty-state">` + html.EscapeString(l.T("sessions.empty")) + `</div>`)
 		}
 	} else {
 		for _, g := range v.Groups {
 			b.WriteString(`<section class="sgroup">`)
 			if g.Label != "" {
-				renderGroupHead(&b, g, sq.GroupBy)
+				l.renderGroupHead(&b, g, sq.GroupBy)
 			}
 			b.WriteString(`<div class="session-rows">`)
 			for _, e := range g.Entries {
-				renderSessionRow(&b, e, sq.GroupBy)
+				l.renderSessionRow(&b, e, sq.GroupBy)
 			}
 			b.WriteString(`</div></section>`)
 		}
 	}
 
-	b.WriteString(renderSessionsFooter(sq, v))
+	b.WriteString(l.renderSessionsFooter(sq, v))
 
 	b.WriteString(`</main>`)
 	b.WriteString(`</div>`)
 	b.WriteString(renderFooter())
-	b.WriteString(indexJS())
+	b.WriteString(l.indexJS())
 	b.WriteString(sessionsJS())
-	b.WriteString(pageFooter())
+	b.WriteString(l.pageFooter())
 
 	return b.String()
 }
 
-func renderSessionsControls(projects []*parser.Project, sq sessionsQuery) string {
+func (l loc) renderSessionsControls(projects []*parser.Project, sq sessionsQuery) string {
 	var b strings.Builder
 	prov := sq.Filter.Filter.Provider
 
 	b.WriteString(`<form method="get" action="/sessions" id="s-form" class="controls controls-wrap">`)
 	b.WriteString(`<div class="search-wrap">`)
-	b.WriteString(fmt.Sprintf(`<input type="text" id="s-q" name="q" class="search-input" placeholder="Filter sessions... (press /)" value="%s">`, html.EscapeString(sq.Search)))
+	b.WriteString(fmt.Sprintf(`<input type="text" id="s-q" name="q" class="search-input" placeholder="%s" value="%s">`, html.EscapeString(l.T("sessions.filter")), html.EscapeString(sq.Search)))
 	b.WriteString(`<span class="search-spinner" id="search-spinner"></span>`)
 	b.WriteString(`</div>`)
 	b.WriteString(`<div class="sort-controls">`)
 
-	b.WriteString(fmt.Sprintf(`<select id="s-provider" name="provider" class="sort-select" title="Filter by provider">
-		<option value="">All providers</option>
+	b.WriteString(fmt.Sprintf(`<select id="s-provider" name="provider" class="sort-select" title="%s">
+		<option value="">%s</option>
 		<option value="claude-code"%s>Claude Code</option>
 		<option value="codex"%s>Codex</option>
 		<option value="grok"%s>Grok</option>
-	</select>`, selected(prov, "claude-code"), selected(prov, "codex"), selected(prov, "grok")))
+	</select>`, html.EscapeString(l.T("project.filter_provider")), html.EscapeString(l.T("sessions.all_providers")), selected(prov, "claude-code"), selected(prov, "codex"), selected(prov, "grok")))
 
-	b.WriteString(`<select id="s-project" name="project" class="sort-select" title="Filter by project"><option value="">All projects</option>`)
+	b.WriteString(fmt.Sprintf(`<select id="s-project" name="project" class="sort-select" title="%s"><option value="">%s</option>`, html.EscapeString(l.T("sessions.group_project")), html.EscapeString(l.T("sessions.all_projects"))))
 	for _, p := range projects {
 		b.WriteString(fmt.Sprintf(`<option value="%s"%s>%s (%d)</option>`,
 			html.EscapeString(p.EncodedName), selected(sq.Project, p.EncodedName),
@@ -488,34 +488,34 @@ func renderSessionsControls(projects []*parser.Project, sq sessionsQuery) string
 	}
 	b.WriteString(`</select>`)
 
-	b.WriteString(`<span class="sort-label">Group:</span>`)
+	b.WriteString(`<span class="sort-label">` + html.EscapeString(l.T("sessions.group")) + `</span>`)
 	b.WriteString(fmt.Sprintf(`<select id="s-group" name="group" class="sort-select">
-		<option value="">None</option>
-		<option value="project"%s>Project</option>
-		<option value="day"%s>Day</option>
-		<option value="provider"%s>Provider</option>
-		<option value="model"%s>Model</option>
-	</select>`, selected(sq.GroupBy, "project"), selected(sq.GroupBy, "day"), selected(sq.GroupBy, "provider"), selected(sq.GroupBy, "model")))
+		<option value="">%s</option>
+		<option value="project"%s>%s</option>
+		<option value="day"%s>%s</option>
+		<option value="provider"%s>%s</option>
+		<option value="model"%s>%s</option>
+	</select>`, html.EscapeString(l.T("sessions.group_none")), selected(sq.GroupBy, "project"), html.EscapeString(l.T("sessions.group_project")), selected(sq.GroupBy, "day"), html.EscapeString(l.T("sessions.group_day")), selected(sq.GroupBy, "provider"), html.EscapeString(l.T("sessions.group_provider")), selected(sq.GroupBy, "model"), html.EscapeString(l.T("sessions.group_model"))))
 
-	b.WriteString(`<span class="sort-label">Sort:</span>`)
+	b.WriteString(`<span class="sort-label">` + html.EscapeString(l.T("projects.sort")) + `</span>`)
 	b.WriteString(fmt.Sprintf(`<select id="s-sort" name="sort" class="sort-select">
-		<option value="">Recent</option>
-		<option value="messages"%s>Messages</option>
-		<option value="prompts"%s>Prompts</option>
-		<option value="tokens"%s>Tokens</option>
-	</select>`, selected(sq.SortBy, "messages"), selected(sq.SortBy, "prompts"), selected(sq.SortBy, "tokens")))
+		<option value="">%s</option>
+		<option value="messages"%s>%s</option>
+		<option value="prompts"%s>%s</option>
+		<option value="tokens"%s>%s</option>
+	</select>`, html.EscapeString(l.T("projects.sort_recent")), selected(sq.SortBy, "messages"), html.EscapeString(l.T("project.sort_messages")), selected(sq.SortBy, "prompts"), html.EscapeString(l.T("sessions.sort_prompts")), selected(sq.SortBy, "tokens"), html.EscapeString(l.T("sessions.sort_tokens"))))
 
-	b.WriteString(`<noscript><button type="submit" class="sort-select">Apply</button></noscript>`)
+	b.WriteString(`<noscript><button type="submit" class="sort-select">` + html.EscapeString(l.T("sessions.apply")) + `</button></noscript>`)
 	b.WriteString(`</div>`)
 
 	open := ""
 	if sq.Model != "" || sq.After != "" || sq.Before != "" {
 		open = " open"
 	}
-	b.WriteString(fmt.Sprintf(`<details class="filter-more"%s><summary>More filters</summary><div class="filter-more-body">`, open))
-	b.WriteString(fmt.Sprintf(`<label class="filter-field"><span class="sort-label">Model</span><input type="text" id="s-model" name="model" class="filter-input" placeholder="e.g. opus" value="%s"></label>`, html.EscapeString(sq.Model)))
-	b.WriteString(fmt.Sprintf(`<label class="filter-field"><span class="sort-label">After</span><input type="date" id="s-after" name="after" class="filter-input" value="%s"></label>`, html.EscapeString(sq.After)))
-	b.WriteString(fmt.Sprintf(`<label class="filter-field"><span class="sort-label">Before</span><input type="date" id="s-before" name="before" class="filter-input" value="%s"></label>`, html.EscapeString(sq.Before)))
+	b.WriteString(fmt.Sprintf(`<details class="filter-more"%s><summary>%s</summary><div class="filter-more-body">`, open, html.EscapeString(l.T("sessions.more_filters"))))
+	b.WriteString(fmt.Sprintf(`<label class="filter-field"><span class="sort-label">%s</span><input type="text" id="s-model" name="model" class="filter-input" placeholder="%s" value="%s"></label>`, html.EscapeString(l.T("sessions.model")), html.EscapeString(l.T("sessions.model_ph")), html.EscapeString(sq.Model)))
+	b.WriteString(fmt.Sprintf(`<label class="filter-field"><span class="sort-label">%s</span><input type="date" id="s-after" name="after" class="filter-input" value="%s"></label>`, html.EscapeString(l.T("sessions.after")), html.EscapeString(sq.After)))
+	b.WriteString(fmt.Sprintf(`<label class="filter-field"><span class="sort-label">%s</span><input type="date" id="s-before" name="before" class="filter-input" value="%s"></label>`, html.EscapeString(l.T("sessions.before")), html.EscapeString(sq.Before)))
 	b.WriteString(`</div></details>`)
 
 	b.WriteString(`</form>`)
@@ -524,7 +524,7 @@ func renderSessionsControls(projects []*parser.Project, sq sessionsQuery) string
 
 // renderFilterChips makes every active filter visible and clearable
 // without JS — each x is a link to the same URL minus that param.
-func renderFilterChips(projects []*parser.Project, sq sessionsQuery) string {
+func (l loc) renderFilterChips(projects []*parser.Project, sq sessionsQuery) string {
 	type chip struct{ param, label, value string }
 	var chips []chip
 	if sq.Search != "" {
@@ -559,16 +559,16 @@ func renderFilterChips(projects []*parser.Project, sq sessionsQuery) string {
 	var b strings.Builder
 	b.WriteString(`<div class="filter-chips">`)
 	for _, c := range chips {
-		b.WriteString(fmt.Sprintf(`<span class="filter-chip">%s: <b>%s</b><a class="filter-chip-x" href="%s" aria-label="remove %s filter">x</a></span>`,
+		b.WriteString(fmt.Sprintf(`<span class="filter-chip">%s: <b>%s</b><a class="filter-chip-x" href="%s" aria-label="%s">x</a></span>`,
 			c.label, html.EscapeString(c.value),
-			html.EscapeString(sessionsPageURL(sq, c.param, "")), c.label))
+			html.EscapeString(sessionsPageURL(sq, c.param, "")), html.EscapeString(l.T("sessions.remove_filter", c.label))))
 	}
-	b.WriteString(`<a class="filter-clear" href="/sessions">Clear all</a>`)
+	b.WriteString(`<a class="filter-clear" href="/sessions">` + html.EscapeString(l.T("sessions.clear_all")) + `</a>`)
 	b.WriteString(`</div>`)
 	return b.String()
 }
 
-func renderGroupHead(b *strings.Builder, g *sessionGroup, mode string) {
+func (l loc) renderGroupHead(b *strings.Builder, g *sessionGroup, mode string) {
 	b.WriteString(`<div class="sgroup-head">`)
 	if mode == "provider" {
 		b.WriteString(providerBadgeHTML(g.Key))
@@ -579,9 +579,9 @@ func renderGroupHead(b *strings.Builder, g *sessionGroup, mode string) {
 		yesterday := time.Now().Local().AddDate(0, 0, -1).Format("2006-01-02")
 		switch g.Key {
 		case today:
-			label += `<span class="sgroup-day-hint"> · today</span>`
+			label += `<span class="sgroup-day-hint"> · ` + html.EscapeString(l.T("sessions.today")) + `</span>`
 		case yesterday:
-			label += `<span class="sgroup-day-hint"> · yesterday</span>`
+			label += `<span class="sgroup-day-hint"> · ` + html.EscapeString(l.T("sessions.yesterday")) + `</span>`
 		}
 	}
 	if g.Href != "" {
@@ -590,24 +590,24 @@ func renderGroupHead(b *strings.Builder, g *sessionGroup, mode string) {
 		b.WriteString(fmt.Sprintf(`<span class="sgroup-label">%s</span>`, label))
 	}
 
-	count := "1 session"
+	count := l.T("sessions.session_one")
 	if n := len(g.Entries); n != 1 {
-		count = fmt.Sprintf("%s sessions", formatCount(n))
+		count = l.T("sessions.session_other", formatCount(n))
 	}
 	// Everything past the count collapses at the 700px breakpoint.
 	var extra []string
 	if mode != "project" && g.ProjectCount() > 0 {
 		if g.ProjectCount() == 1 {
-			extra = append(extra, "1 project")
+			extra = append(extra, l.T("sessions.project_one"))
 		} else {
-			extra = append(extra, fmt.Sprintf("%d projects", g.ProjectCount()))
+			extra = append(extra, l.T("sessions.project_other", g.ProjectCount()))
 		}
 	}
 	if g.Tokens > 0 {
-		extra = append(extra, formatTokens(g.Tokens)+" tok")
+		extra = append(extra, formatTokens(g.Tokens)+" "+l.T("sessions.tok"))
 	}
 	if mode == "project" && !g.Latest.IsZero() {
-		extra = append(extra, formatAge(g.Latest))
+		extra = append(extra, l.age(g.Latest))
 	}
 	b.WriteString(`<span class="sgroup-meta">` + count)
 	if len(extra) > 0 {
@@ -626,10 +626,17 @@ func sessionRowLabel(s *parser.Session) string {
 	if s.Summary != "" {
 		return s.Summary
 	}
-	return "(no summary)"
+	return ""
 }
 
-func renderSessionRow(b *strings.Builder, e sessionEntry, groupBy string) {
+func (l loc) sessionRowLabel(s *parser.Session) string {
+	if label := sessionRowLabel(s); label != "" {
+		return label
+	}
+	return l.T("sessions.no_summary")
+}
+
+func (l loc) renderSessionRow(b *strings.Builder, e sessionEntry, groupBy string) {
 	s := e.Session
 	enc := ""
 	if e.Project != nil {
@@ -647,19 +654,19 @@ func renderSessionRow(b *strings.Builder, e sessionEntry, groupBy string) {
 		s.EndTime.Format("15:04"),
 		formatDuration(dur))
 	if s.Stats.ToolCalls > 0 {
-		tip += fmt.Sprintf(" | %d tool calls", s.Stats.ToolCalls)
+		tip += " | " + l.T("sessions.tool_calls", s.Stats.ToolCalls)
 	}
-	tip += " | " + sessionRowLabel(s)
+	tip += " | " + l.sessionRowLabel(s)
 
 	stat := func(n int, unit, extraClass string) string {
 		if n <= 0 {
-			return fmt.Sprintf(`<span class="srow-stat srow-none%s" title="not reported by this provider">-</span>`, extraClass)
+			return fmt.Sprintf(`<span class="srow-stat srow-none%s" title="%s">-</span>`, extraClass, html.EscapeString(l.T("sessions.not_reported")))
 		}
 		return fmt.Sprintf(`<span class="srow-stat%s">%s %s</span>`, extraClass, formatCount(n), unit)
 	}
-	tokCell := `<span class="srow-stat srow-none" title="not reported by this provider">-</span>`
+	tokCell := fmt.Sprintf(`<span class="srow-stat srow-none" title="%s">-</span>`, html.EscapeString(l.T("sessions.not_reported")))
 	if tok := s.Stats.InputTokens + s.Stats.OutputTokens; tok > 0 {
-		tokCell = fmt.Sprintf(`<span class="srow-stat">%s tok</span>`, formatTokens(tok))
+		tokCell = fmt.Sprintf(`<span class="srow-stat">%s %s</span>`, formatTokens(tok), html.EscapeString(l.T("sessions.tok")))
 	}
 
 	var meta strings.Builder
@@ -677,10 +684,10 @@ func renderSessionRow(b *strings.Builder, e sessionEntry, groupBy string) {
 		}
 		meta.WriteString(fmt.Sprintf(`<span class="srow-model">%s</span>`, html.EscapeString(model)))
 	}
-	meta.WriteString(stat(s.Stats.MessageCount, "msg", ""))
-	promptUnit := "prompts"
+	meta.WriteString(stat(s.Stats.MessageCount, l.T("sessions.msg"), ""))
+	promptUnit := l.T("sessions.prompt_other")
 	if s.Stats.UserPrompts == 1 {
-		promptUnit = "prompt"
+		promptUnit = l.T("sessions.prompt_one")
 	}
 	meta.WriteString(stat(s.Stats.UserPrompts, promptUnit, " srow-stat-prompts"))
 	meta.WriteString(tokCell)
@@ -693,32 +700,36 @@ func renderSessionRow(b *strings.Builder, e sessionEntry, groupBy string) {
 		html.EscapeString(enc), html.EscapeString(s.ID),
 		html.EscapeString(tip),
 		providerBadgeHTML(s.Provider),
-		html.EscapeString(sessionRowLabel(s)),
+		html.EscapeString(l.sessionRowLabel(s)),
 		s.EndTime.Format("2006-01-02 15:04"),
-		formatRelativeTime(s.EndTime),
+		l.relTime(s.EndTime),
 		meta.String())
 }
 
 // renderSessionsFooter states the truncation honestly: what is
 // shown, what matched, and the links to widen the window.
 func renderSessionsFooter(sq sessionsQuery, v sessionsView) string {
-	matching := " matching"
-	if !sq.Filtered() {
-		matching = ""
+	return defaultLoc().renderSessionsFooter(sq, v)
+}
+
+func (l loc) renderSessionsFooter(sq sessionsQuery, v sessionsView) string {
+	matching := ""
+	if sq.Filtered() {
+		matching = l.T("sessions.matching")
 	}
 
 	var b strings.Builder
 	b.WriteString(`<div class="list-footer">`)
 	if v.Shown < v.MatchTotal {
-		b.WriteString(fmt.Sprintf(`<span>Showing %s of %s%s sessions</span>`,
-			formatCount(v.Shown), formatCount(v.MatchTotal), matching))
+		b.WriteString(fmt.Sprintf(`<span>%s</span>`,
+			html.EscapeString(l.T("sessions.showing_of", formatCount(v.Shown), formatCount(v.MatchTotal), matching))))
 		if v.MatchTotal > 500 && sq.Limit < 500 {
-			b.WriteString(fmt.Sprintf(`<a href="%s">Show 500</a>`, html.EscapeString(sessionsPageURL(sq, "limit", "500"))))
+			b.WriteString(fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(sessionsPageURL(sq, "limit", "500")), html.EscapeString(l.T("sessions.show_500"))))
 		}
-		b.WriteString(fmt.Sprintf(`<a href="%s">Show all %s (slower)</a>`,
-			html.EscapeString(sessionsPageURL(sq, "limit", "0")), formatCount(v.MatchTotal)))
+		b.WriteString(fmt.Sprintf(`<a href="%s">%s</a>`,
+			html.EscapeString(sessionsPageURL(sq, "limit", "0")), html.EscapeString(l.T("sessions.show_all", formatCount(v.MatchTotal)))))
 	} else if v.Shown > 0 {
-		b.WriteString(fmt.Sprintf(`<span>Showing all %s%s sessions</span>`, formatCount(v.Shown), matching))
+		b.WriteString(fmt.Sprintf(`<span>%s</span>`, html.EscapeString(l.T("sessions.showing_all", formatCount(v.Shown), matching))))
 	}
 	b.WriteString(`</div>`)
 	return b.String()

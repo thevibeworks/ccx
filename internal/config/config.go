@@ -65,6 +65,12 @@ func Theme() string {
 	return viper.GetString("theme")
 }
 
+// Locale is the configured UI language: auto, en, or zh-CN.
+// Empty and "auto" mean "detect from the request".
+func Locale() string {
+	return viper.GetString("locale")
+}
+
 func SyntaxHighlight() bool {
 	return viper.GetBool("rendering.syntax_highlight")
 }

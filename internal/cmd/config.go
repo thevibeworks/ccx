@@ -24,6 +24,7 @@ var configShowCmd = &cobra.Command{
 		fmt.Printf("claude_code_home: %s\n", config.ClaudeHome())
 		fmt.Printf("codex_home: %s\n", config.CodexHome())
 		fmt.Printf("theme: %s\n", config.Theme())
+		fmt.Printf("locale: %s\n", config.Locale())
 		fmt.Printf("rendering.syntax_highlight: %v\n", config.SyntaxHighlight())
 		fmt.Printf("rendering.show_thinking: %s\n", config.ShowThinking())
 		fmt.Printf("rendering.code_theme: %s\n", config.CodeTheme())
@@ -79,6 +80,7 @@ var configInitCmd = &cobra.Command{
 # codex_home: ~/.codex
 
 theme: dark              # dark | light | auto
+locale: auto             # auto | en | zh-CN
 
 rendering:
   syntax_highlight: true

@@ -7,6 +7,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- **Web UI Simplified Chinese.** The session viewer chrome — nav, sidebar, project/session lists, search, settings, memory, insights, session dock, info panel, 404 — is translated. Pick 中文 in the language switcher, pass `?lang=zh-CN`, set `locale: zh-CN` in `~/.config/ccx/config.yaml`, or let `Accept-Language` choose. English stays the default. Traditional Chinese is not a catalog yet.
+
 ## [0.18.0] - 2026-10-17
 
 ### Added

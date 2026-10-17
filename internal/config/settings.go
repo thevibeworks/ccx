@@ -8,6 +8,7 @@ type Settings struct {
 	GrokHome   string
 
 	Theme           string
+	Locale          string
 	SyntaxHighlight bool
 	ShowThinking    string
 	CodeTheme       string
@@ -54,6 +55,7 @@ func Load() *Settings {
 		CodexHome:       CodexHome(),
 		GrokHome:        GrokHome(),
 		Theme:           viper.GetString("theme"),
+		Locale:          viper.GetString("locale"),
 		SyntaxHighlight: viper.GetBool("rendering.syntax_highlight"),
 		ShowThinking:    viper.GetString("rendering.show_thinking"),
 		CodeTheme:       viper.GetString("rendering.code_theme"),

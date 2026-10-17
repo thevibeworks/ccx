@@ -287,6 +287,35 @@ code, pre, .session-id, .model-badge {
 }
 .icon-btn:hover { color: var(--text); border-color: var(--text-muted); }
 
+.lang-switch-wrap { display: flex; align-items: center; }
+.lang-switch {
+  appearance: none;
+  background: var(--bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.lang-switch:hover, .lang-switch:focus {
+  color: var(--text);
+  border-color: var(--text-muted);
+  outline: none;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .site-footer {
   padding: 16px 24px;
   background: var(--bg-secondary);

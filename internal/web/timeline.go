@@ -402,16 +402,20 @@ func buildSatellites(ex *parser.Exchange) []satelliteMarker {
 // positions just to the left of the primary notch so they don't fight
 // for the same pixel column.
 func renderTimelineRail(b *strings.Builder, session *parser.Session) {
+	defaultLoc().renderTimelineRail(b, session)
+}
+
+func (l loc) renderTimelineRail(b *strings.Builder, session *parser.Session) {
 	ticks := enrichTicksWithCost(computeTimelineTicks(session), session)
 
 	if len(ticks) == 0 {
-		b.WriteString(`<aside class="timeline-rail has-no-ticks" id="timeline-rail" aria-label="Session timeline">`)
-		b.WriteString(`<div class="timeline-spine timeline-empty">exchanges</div>`)
+		b.WriteString(`<aside class="timeline-rail has-no-ticks" id="timeline-rail" aria-label="` + html.EscapeString(l.T("timeline.label")) + `">`)
+		b.WriteString(`<div class="timeline-spine timeline-empty">` + html.EscapeString(l.T("timeline.exchanges")) + `</div>`)
 		b.WriteString(`</aside>`)
 		return
 	}
 
-	b.WriteString(`<aside class="timeline-rail" id="timeline-rail" aria-label="Session timeline">`)
+	b.WriteString(`<aside class="timeline-rail" id="timeline-rail" aria-label="` + html.EscapeString(l.T("timeline.label")) + `">`)
 	b.WriteString(fmt.Sprintf(`<div class="timeline-spine" id="timeline-spine" data-tick-count="%d" style="--tick-count: %d">`, len(ticks), len(ticks)))
 
 	for _, line := range computeTimelineGridlines(len(ticks)) {

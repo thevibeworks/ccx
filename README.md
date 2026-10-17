@@ -100,6 +100,7 @@ ccx doctor                       # Check setup
 ```yaml
 # ~/.config/ccx/config.yaml
 theme: dark
+locale: auto             # auto | en | zh-CN
 show_thinking: collapsed
 default_format: html
 providers:
