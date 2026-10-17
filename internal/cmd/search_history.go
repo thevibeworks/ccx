@@ -107,7 +107,8 @@ func scanPromptHistoryFile(provider, path string, m textMatcher, knownSessions m
 
 type promptLine struct {
 	SessionID string
-	project   string
+	project   string // workspace basename
+	workspace string // absolute path; claude-code only
 	time      time.Time
 	text      string
 }
@@ -131,6 +132,7 @@ func decodePromptLine(provider, line string) (promptLine, bool) {
 		out := promptLine{SessionID: rec.SessionID, text: rec.Display}
 		if rec.Project != "" {
 			out.project = filepath.Base(rec.Project)
+			out.workspace = rec.Project
 		}
 		if rec.Timestamp > 0 {
 			out.time = time.UnixMilli(rec.Timestamp).UTC()
