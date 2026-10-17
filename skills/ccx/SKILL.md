@@ -1,12 +1,6 @@
 ---
 name: ccx
-description: >
-  Session viewer for Claude Code, Codex, and Grok. Use this skill when working
-  with agent session files, browsing conversation history, exporting
-  transcripts, inspecting memory/instruction files, or analyzing AI
-  interactions. Triggers on: session management, conversation export,
-  transcript viewing, memory inspection, Claude Code debugging, Codex session
-  viewing, Grok session viewing.
+description: "Session viewer for Claude Code, Codex, and Grok: browse conversation history, export transcripts, inspect memory and instruction files, analyze AI interactions. Triggers: session management, conversation export, transcript viewing, memory inspection, agent session debugging."
 ---
 
 # ccx - Session Viewer for Agent CLIs

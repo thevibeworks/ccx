@@ -1,14 +1,6 @@
 ---
 name: ccx-recap
-description: >
-  What did the agent actually do? Recap a coding-agent session or a
-  time window from ccx evidence: the story, the decisions, what was
-  verified vs merely claimed, mistakes and cost. Use after stepping
-  away from an autonomous run, at end of day, or whenever the human
-  asks "what happened", "what did it do", "recap", "summarize the
-  session", or "what did I work on today/this week". Routing: this
-  skill answers "what happened"; for "what went wrong / what should
-  change", use ccx-retro.
+description: "Recap what a coding-agent session or time window actually did from ccx evidence: story, decisions, verified vs merely claimed, mistakes, cost. Use for 'what happened', 'what did it do', 'recap', 'summarize the session', 'what did I work on today/this week'. For 'what went wrong', use ccx-retro."
 ---
 
 # ccx-recap
