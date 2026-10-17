@@ -341,3 +341,21 @@ func TestSessionStats_CostStatusSeparatesUnpricedFromFree(t *testing.T) {
 		}
 	}
 }
+
+func TestComputeCost_SplitsCacheWriteByTTL(t *testing.T) {
+	pricing := &ModelPricing{InputPer1M: 5, OutputPer1M: 25, CacheReadPer1M: 0.5, CacheWritePer1M: 6.25, CacheWrite1hPer1M: 10}
+	usage := &MessageUsage{CacheCreateTokens: 1_000_000, CacheCreate1hTokens: 250_000}
+	if got, want := ComputeCost(usage, pricing), 750_000*6.25/1e6+250_000*10/1e6; got != want {
+		t.Errorf("ComputeCost = %v, want %v", got, want)
+	}
+	// A vendor with one write rate bills every write token at it.
+	flat := &ModelPricing{CacheWritePer1M: 6.25}
+	if got, want := ComputeCost(usage, flat), 6.25; got != want {
+		t.Errorf("ComputeCost (no 1h rate) = %v, want %v", got, want)
+	}
+	// The 1h subset can never exceed the total.
+	over := &MessageUsage{CacheCreateTokens: 100, CacheCreate1hTokens: 500}
+	if got, want := ComputeCost(over, pricing), 100*10/1e6; got != want {
+		t.Errorf("ComputeCost (1h > total) = %v, want %v", got, want)
+	}
+}

@@ -38,7 +38,7 @@ type Project struct {
 // struct versions silently, so without this stamp an upgraded binary
 // keeps serving parses produced by the old code until the source
 // session file itself happens to change.
-const CacheFormatVersion = 6 // 5: pricing rows for Claude 5 / GPT-5.6, SessionStats.UnpricedTokens; 6: Codex quick parse prices token_count totals
+const CacheFormatVersion = 10 // 5: pricing rows for Claude 5 / GPT-5.6, SessionStats.UnpricedTokens; 6: Codex quick parse prices token_count totals; 7-9: skipped, stamped by unreleased development builds with other shapes; 10: usage counted once per API response (Message.ResponseID), 5m/1h cache-write split
 
 type Session struct {
 	ID           string
@@ -144,10 +144,15 @@ type MessageUsage struct {
 	InputTokens       int
 	OutputTokens      int
 	CacheReadTokens   int
-	CacheCreateTokens int
-	ReasoningTokens   int     // Codex-only (GPT-5 reasoning); 0 for Claude
-	CostUSD           float64 // 0 if model is unknown to the pricing table
-	Priced            bool    // false when the model had no pricing row (CostUSD is then "unknown", not 0)
+	CacheCreateTokens int // every cache-write token, both TTLs
+	// CacheCreate1hTokens is the part of CacheCreateTokens written with
+	// the 1-hour TTL, which Anthropic bills at twice the 5-minute rate.
+	// Zero when the producer did not split the figure; the whole write
+	// is then priced at the 5-minute rate, the cheaper reading.
+	CacheCreate1hTokens int
+	ReasoningTokens     int     // Codex-only (GPT-5 reasoning); 0 for Claude
+	CostUSD             float64 // 0 if model is unknown to the pricing table
+	Priced              bool    // false when the model had no pricing row (CostUSD is then "unknown", not 0)
 }
 
 // Total returns the sum of all token categories.
@@ -177,7 +182,15 @@ type Message struct {
 	Model       string // Model ID (e.g., claude-sonnet-4-5-20250929)
 	Subtype     string // For system messages: compact_boundary, local_command
 
-	Usage          *MessageUsage       // Per-message API token usage + cost. nil if absent.
+	// ResponseID is the producer's id for the API response this record
+	// was cut from. Claude Code writes one response as several records
+	// (one per content block) that share it; usage is counted once per
+	// ResponseID, on the last record, and the earlier records carry
+	// Usage == nil. Empty for producers that write one record per
+	// response or report no id.
+	ResponseID string `json:",omitempty"`
+
+	Usage          *MessageUsage       // Token usage + cost, once per API response. nil on the other records of the same response, and when absent.
 	SubAgentResult *SubAgentResultData // Sub-agent summary from toolUseResult. nil for non-agent tool results.
 
 	RawJSON string // Original JSONL line verbatim
@@ -255,9 +268,19 @@ type usageData struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	// CacheCreation splits the write by TTL. Absent on older records;
+	// then the whole write is priced at the 5-minute rate.
+	CacheCreation *struct {
+		Ephemeral5m int `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1h int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
 }
 
 type messagePayload struct {
+	// ID is the API's message id. Claude Code writes one API response
+	// as several records (one per content block) sharing it; that is
+	// how ccx knows to count the usage once.
+	ID      string     `json:"id"`
 	Role    string     `json:"role"`
 	Content any        `json:"content"` // string or []contentBlock
 	Model   string     `json:"model"`   // Model ID for assistant messages
