@@ -23,7 +23,6 @@ func TestIndexPage_ChineseQuery(t *testing.T) {
 	body := w.Body.String()
 	for _, want := range []string{
 		`lang="zh-CN"`,
-		`translate="no"`,
 		"项目",
 		"会话",
 		"设置",
@@ -37,6 +36,16 @@ func TestIndexPage_ChineseQuery(t *testing.T) {
 	}
 	if strings.Contains(body, "<h1>Projects</h1>") {
 		t.Error("Chinese index still has English Projects heading")
+	}
+	// Browser translation stays available for languages ccx does not ship.
+	for _, unwanted := range []string{`translate="no"`, "notranslate"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("page disables browser translation: found %q", unwanted)
+		}
+	}
+	// Only the keys client JS reads are inlined, not the whole catalog.
+	if strings.Contains(body, `"nav.projects"`) || !strings.Contains(body, `"js.copy"`) {
+		t.Error("CCX_I18N should carry js.* keys only")
 	}
 
 	cookies := w.Result().Cookies()

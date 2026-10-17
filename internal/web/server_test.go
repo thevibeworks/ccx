@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -134,7 +135,7 @@ func TestHandleSession_NotFoundRendersReportBugPageWithSessionDetail(t *testing.
 		t.Fatalf("status = %d, want 404", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "Can't find this session") {
+	if !strings.Contains(html.UnescapeString(body), "Can't find this session") {
 		t.Errorf("missing session headline, got: %s", truncateForLog(body))
 	}
 	if !strings.Contains(body, "019d8f43-8d5") {
@@ -1457,5 +1458,39 @@ func TestHandleAPIRelated(t *testing.T) {
 	handleAPIRelated(w, httptest.NewRequest("GET", "/api/related/only-one-part", nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("malformed path status %d", w.Code)
+	}
+}
+
+func TestHandleAPISearchAgesFollowTheRequestLanguage(t *testing.T) {
+	dir := setupTestDir(t)
+	setTestBackend(dir)
+	recent := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)
+	line := `{"type":"user","timestamp":"` + recent + `","uuid":"u1","message":{"content":"localized age probe"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "projects", "-test-project", "recent-session-1.jsonl"), []byte(line), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	for lang, want := range map[string]string{"en": "m ago", "zh-CN": "分钟前"} {
+		req := httptest.NewRequest("GET", "/api/search?q=probe&lang="+lang, nil)
+		w := httptest.NewRecorder()
+		handleAPISearch(w, req)
+
+		var result struct {
+			Results []struct {
+				Time string `json:"time"`
+			} `json:"results"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatalf("%s: parse error: %v", lang, err)
+		}
+		found := false
+		for _, r := range result.Results {
+			if strings.Contains(r.Time, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: no result time contains %q: %+v", lang, want, result.Results)
+		}
 	}
 }

@@ -6,9 +6,8 @@
 package i18n
 
 import (
-	"context"
 	"fmt"
-	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -23,8 +22,6 @@ const CookieName = "ccx-lang"
 
 // QueryParam is the URL parameter that selects a language (?lang=zh-CN).
 const QueryParam = "lang"
-
-type ctxKey struct{}
 
 // Translator looks up catalog strings for one locale.
 type Translator struct {
@@ -81,6 +78,7 @@ func Keys() []string {
 	for k := range catalogs[En] {
 		keys = append(keys, k)
 	}
+	sort.Strings(keys)
 	return keys
 }
 
@@ -95,12 +93,6 @@ func Catalog(code string) map[string]string {
 		out[k] = v
 	}
 	return out
-}
-
-// Supported reports whether code (after Normalize) has a catalog.
-func Supported(code string) bool {
-	_, ok := catalogs[Normalize(code)]
-	return ok && Normalize(code) != ""
 }
 
 // Locales is the UI language list, source locale first.
@@ -128,38 +120,20 @@ func Normalize(code string) string {
 	switch low {
 	case "auto", "default":
 		return ""
-	case "en", "en-us", "en-gb", "en-au":
-		return En
-	case "zh", "zh-cn", "zh-hans", "zh-hans-cn", "zh-sg":
+	case "zh", "zh-cn", "zh-sg", "zh-hans":
 		return ZhCN
 	}
-	// zh-TW / zh-Hant are not a catalog yet — do not silently
-	// serve Simplified Chinese for a Traditional request.
+	// Every English region reads the English catalog.
+	if low == "en" || strings.HasPrefix(low, "en-") {
+		return En
+	}
+	// Simplified script in any region (zh-Hans-HK) reads zh-CN. zh-TW /
+	// zh-Hant are not a catalog yet; do not serve Simplified Chinese for a
+	// Traditional request.
+	if strings.HasPrefix(low, "zh-hans-") {
+		return ZhCN
+	}
 	return ""
-}
-
-// WithLocale stores the translator on ctx.
-func WithLocale(ctx context.Context, t *Translator) context.Context {
-	return context.WithValue(ctx, ctxKey{}, t)
-}
-
-// FromContext returns the translator stored on ctx, or English.
-func FromContext(ctx context.Context) *Translator {
-	if ctx == nil {
-		return Default()
-	}
-	if t, ok := ctx.Value(ctxKey{}).(*Translator); ok && t != nil {
-		return t
-	}
-	return Default()
-}
-
-// FromRequest is FromContext(r.Context()).
-func FromRequest(r *http.Request) *Translator {
-	if r == nil {
-		return Default()
-	}
-	return FromContext(r.Context())
 }
 
 var catalogs = map[string]map[string]string{

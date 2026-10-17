@@ -39,3 +39,22 @@ call them directly.
 - =zh-TW= / =zh-Hant= do not fall through to Simplified Chinese.
 - Pages emit =translate="no"= and =google= =notranslate= so browser
   auto-translate does not fight the in-app locale.
+
+** Review changes (2026-10-17, maintainers)
+Pushed onto this PR before merge; the notes above describe the PR as
+submitted.
+- =FIX= Browser translation stays on: no =translate="no"=, no
+  =notranslate= meta. They disabled it for every language ccx does not
+  ship, and for session transcripts.
+- =FIX= Accept-Language: any =en-*= region is English (=en-CA,zh;q=0.5=
+  picked Chinese), =zh-Hans-*= is Simplified, and =q=0= entries are
+  skipped as "not acceptable".
+- =FIX= The top-nav search API formats ages in the request's language.
+- =CHANGE= One detection path: =locFrom= detects; the middleware only
+  persists an explicit =?lang= as the cookie. The request-context
+  plumbing and the test-only English wrappers are gone.
+- =CHANGE= One escaper, =html.EscapeString=. Catalog values that carry
+  markup end in =_markup=, and a test holds every other value free of
+  =<=.
+- =CHANGE= Pages inline only the =js.*= keys client JS reads, not the
+  whole catalog. Nine unused keys removed.

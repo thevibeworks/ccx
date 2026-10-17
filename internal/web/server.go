@@ -1205,6 +1205,7 @@ func handleAPIExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAPISearch(w http.ResponseWriter, r *http.Request) {
+	l := locFrom(r)
 	rawQuery := strings.TrimSpace(r.URL.Query().Get("q"))
 	if rawQuery == "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -1280,7 +1281,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 					Summary:  truncateSummary(s.Summary, 80),
 					Project:  projDisplay,
 					Provider: s.Provider,
-					Time:     formatAge(s.StartTime),
+					Time:     l.age(s.StartTime),
 					Type:     "session",
 					Priority: 1,
 				})
@@ -1293,7 +1294,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 					Summary:  truncateSummary(s.Summary, 80),
 					Project:  projDisplay,
 					Provider: s.Provider,
-					Time:     formatAge(s.StartTime),
+					Time:     l.age(s.StartTime),
 					Type:     "session",
 					Priority: 0,
 				})
@@ -1306,7 +1307,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 					Summary:  truncateSummary(s.Summary, 80),
 					Project:  projDisplay,
 					Provider: s.Provider,
-					Time:     formatAge(s.StartTime),
+					Time:     l.age(s.StartTime),
 					Type:     "session",
 					Priority: 2,
 				})
@@ -1329,7 +1330,7 @@ func handleAPISearch(w http.ResponseWriter, r *http.Request) {
 						Summary:   truncateSummary(s.Summary, 60),
 						Project:   projDisplay,
 						Provider:  s.Provider,
-						Time:      formatAge(s.StartTime),
+						Time:      l.age(s.StartTime),
 						Type:      "message",
 						Snippet:   snippet,
 						MessageID: msgID,
@@ -1682,10 +1683,6 @@ func getFirstTextContent(msg *parser.Message) string {
 	return ""
 }
 
-func formatAge(t time.Time) string {
-	return defaultLoc().age(t)
-}
-
 func (l loc) age(t time.Time) string {
 	if t.IsZero() {
 		return l.T("time.na")
@@ -1726,7 +1723,7 @@ func handleInsights(w http.ResponseWriter, r *http.Request) {
 	b.WriteString(`<div class="page-header"><h1>` + html.EscapeString(l.T("nav.insights")) + `</h1></div>`)
 
 	if len(reports) == 0 {
-		b.WriteString(`<p style="color:#6b7280;padding:24px">` + l.T("insights.empty") + `</p>`)
+		b.WriteString(`<p style="color:#6b7280;padding:24px">` + l.T("insights.empty_markup") + `</p>`)
 	} else {
 		th := `style="text-align:left;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280"`
 		thRight := `style="text-align:right;padding:6px 8px;border-bottom:2px solid #e5e5e0;font-size:11px;text-transform:uppercase;color:#6b7280"`

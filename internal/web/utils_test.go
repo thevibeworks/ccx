@@ -365,22 +365,22 @@ func TestExportMessageTxtAssistantWithTools(t *testing.T) {
 }
 
 func TestFormatAge(t *testing.T) {
-	if formatAge(time.Time{}) != "N/A" {
+	if defaultLoc().age(time.Time{}) != "N/A" {
 		t.Error("zero time should be N/A")
 	}
-	if got := formatAge(time.Now().Add(-30 * time.Second)); got != "just now" {
+	if got := defaultLoc().age(time.Now().Add(-30 * time.Second)); got != "just now" {
 		t.Errorf("30s ago = %q, want just now", got)
 	}
-	if got := formatAge(time.Now().Add(-5 * time.Minute)); !contains(got, "m ago") {
+	if got := defaultLoc().age(time.Now().Add(-5 * time.Minute)); !contains(got, "m ago") {
 		t.Errorf("5m ago = %q, want Xm ago", got)
 	}
-	if got := formatAge(time.Now().Add(-3 * time.Hour)); !contains(got, "h ago") {
+	if got := defaultLoc().age(time.Now().Add(-3 * time.Hour)); !contains(got, "h ago") {
 		t.Errorf("3h ago = %q, want Xh ago", got)
 	}
-	if got := formatAge(time.Now().Add(-2 * 24 * time.Hour)); !contains(got, "d ago") {
+	if got := defaultLoc().age(time.Now().Add(-2 * 24 * time.Hour)); !contains(got, "d ago") {
 		t.Errorf("2d ago = %q, want Xd ago", got)
 	}
-	if got := formatAge(time.Now().Add(-30 * 24 * time.Hour)); contains(got, "ago") {
+	if got := defaultLoc().age(time.Now().Add(-30 * 24 * time.Hour)); contains(got, "ago") {
 		t.Errorf("30d ago = %q, want date format", got)
 	}
 }

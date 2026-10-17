@@ -105,10 +105,6 @@ func parseProviderQuery(q string) (provider, query string) {
 	return "", q
 }
 
-func renderIndexPage(projects []*parser.Project, totalSessions int, search, sortBy string) string {
-	return defaultLoc().renderIndexPage(projects, totalSessions, search, sortBy)
-}
-
 func (l loc) renderIndexPage(projects []*parser.Project, totalSessions int, search, sortBy string) string {
 	var b strings.Builder
 
@@ -174,10 +170,6 @@ func (l loc) renderIndexPage(projects []*parser.Project, totalSessions int, sear
 	b.WriteString(l.pageFooter())
 
 	return b.String()
-}
-
-func renderProjectPage(project *parser.Project, sessions []*parser.Session, allProjects []*parser.Project, memFiles []MemoryFile, search, sortBy string) string {
-	return defaultLoc().renderProjectPage(project, sessions, allProjects, memFiles, search, sortBy)
 }
 
 func (l loc) renderProjectPage(project *parser.Project, sessions []*parser.Session, allProjects []*parser.Project, memFiles []MemoryFile, search, sortBy string) string {
@@ -560,7 +552,7 @@ func (l loc) renderSessionPage(session *parser.Session, projectName string, allS
 		case "partial":
 			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="%s"><span class="info-label">%s</span><span class="info-value"><strong>%s</strong> <span class="muted">%s</span></span></div>`, html.EscapeString(l.T("session.cost_partial_tip", formatTokens(session.Stats.UnpricedTokens))), html.EscapeString(l.T("session.cost")), formatCost(session.Stats.CostUSD), html.EscapeString(l.T("session.unpriced", formatTokens(session.Stats.UnpricedTokens)))))
 		case "unpriced":
-			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="%s"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.cost_unpriced_tip", session.Model)), html.EscapeString(l.T("session.cost")), l.T("session.unpriced_model", html.EscapeString(session.Model))))
+			b.WriteString(fmt.Sprintf(`<div class="info-row info-cost" title="%s"><span class="info-label">%s</span><span class="info-value">%s</span></div>`, html.EscapeString(l.T("session.cost_unpriced_tip", session.Model)), html.EscapeString(l.T("session.cost")), l.T("session.unpriced_model_markup", html.EscapeString(session.Model))))
 		}
 		b.WriteString(`</div>`)
 	}
@@ -2165,7 +2157,7 @@ func (l loc) renderSpendSection(turns []*parser.Exchange, sessionTotal float64) 
 
 	// Footer: total cost summary + known-models link
 	if sessionTotal > 0 {
-		b.WriteString(`<div class="spend-footer">` + l.T("spend.total", formatCost(sessionTotal)) + `</div>`)
+		b.WriteString(`<div class="spend-footer">` + l.T("spend.total_markup", formatCost(sessionTotal)) + `</div>`)
 	}
 
 	b.WriteString(`</div>`)
@@ -2467,10 +2459,6 @@ func stepToolCount(step *trace.Step) int {
 	return total
 }
 
-func renderSearchPage(projectsDir, query string) string {
-	return defaultLoc().renderSearchPage(projectsDir, query)
-}
-
 func (l loc) renderSearchPage(projectsDir, query string) string {
 	var b strings.Builder
 
@@ -2513,7 +2501,7 @@ let searchTimeout;
 
 async function doSearch(query) {
   if (!query) {
-    resultsDiv.innerHTML = '<p class="search-hint">' + t('js.search_hint') + '<br><span style="font-size:11px;color:var(--text-muted)">' + t('js.search_hint_prefix') + '</span></p>';
+    resultsDiv.innerHTML = '<p class="search-hint">' + t('js.search_hint') + '<br><span style="font-size:11px;color:var(--text-muted)">' + t('js.search_hint_prefix_markup') + '</span></p>';
     return;
   }
   spinner.classList.add('loading');
@@ -2612,10 +2600,6 @@ if (%q) doSearch(%q);
 .search-list .search-result:hover { border-color: var(--primary); background: var(--bg-tertiary); }
 </style>
 `, initialQuery, initialQuery)
-}
-
-func renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []ConfigFileInfo, agents []AgentInfo, skills []SkillInfo) string {
-	return defaultLoc().renderSettingsPage(settings, config, configFiles, agents, skills)
 }
 
 func (l loc) renderSettingsPage(settings *Settings, config *GlobalConfig, configFiles []ConfigFileInfo, agents []AgentInfo, skills []SkillInfo) string {
@@ -3189,10 +3173,6 @@ document.querySelectorAll('.mem-file .file-toolbar .copy-btn, .file-card .file-t
 </script>`
 }
 
-func renderMemoryPage(data *MemoryData) string {
-	return defaultLoc().renderMemoryPage(data)
-}
-
 func (l loc) renderMemoryPage(data *MemoryData) string {
 	var b strings.Builder
 
@@ -3392,17 +3372,12 @@ func selected(current, value string) string {
 	return ""
 }
 
-func pageHeader(title, theme string) string {
-	return defaultLoc().pageHeader(title, theme)
-}
-
 func (l loc) pageHeader(title, theme string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
-<html lang="%s" data-theme="%s" translate="no">
+<html lang="%s" data-theme="%s">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="google" content="notranslate">
 <script>(function(){var t=localStorage.getItem('ccx-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 %s
 <title>%s</title>
@@ -3483,7 +3458,7 @@ func renderNotFoundPage(w http.ResponseWriter, r *http.Request, kind, detail str
 	b.WriteString(`<main class="nf-main">`)
 	b.WriteString(`<div class="nf-box">`)
 	b.WriteString(`<div class="nf-glyph" aria-hidden="true">404</div>`)
-	b.WriteString(`<h1 class="nf-title">` + ui(l.T("notfound.title", kindLabel)) + `</h1>`)
+	b.WriteString(`<h1 class="nf-title">` + html.EscapeString(l.T("notfound.title", kindLabel)) + `</h1>`)
 	if detail != "" {
 		b.WriteString(`<p class="nf-detail">` + html.EscapeString(detail) + `</p>`)
 	}
@@ -4310,7 +4285,7 @@ function appendTailMessage(data) {
         '<span class="turn-role">USER</span>' +
         '<span class="turn-preview">' + escapeHtml(preview) + '</span>' +
         '<span class="turn-time">' + timestamp + '</span>' +
-        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">' + t('common.raw') + '</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">' + t('js.copy') + '</button></span>' +
+        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">' + t('js.raw') + '</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">' + t('js.copy') + '</button></span>' +
       '</summary>' +
       '<div class="turn-body" data-rawb64="' + rawB64 + '">' +
         renderContentBlocks(content) +
@@ -4330,7 +4305,7 @@ function appendTailMessage(data) {
         '<span class="turn-icon">○</span>' +
         '<span class="turn-role">' + escapeHtml(resultToolName) + '</span>' +
         '<span class="turn-time">' + timestamp + '</span>' +
-        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">' + t('common.raw') + '</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">' + t('js.copy') + '</button></span>' +
+        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">' + t('js.raw') + '</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">' + t('js.copy') + '</button></span>' +
       '</div>' +
       '<div class="turn-body" data-rawb64="' + rawB64 + '">' +
         renderContentBlocks(content) +
@@ -4351,7 +4326,7 @@ function appendTailMessage(data) {
         '<span class="turn-role">' + role + '</span>' +
         '<span class="turn-time">' + timestamp + '</span>' +
         (model ? '<span class="turn-model">' + escapeHtml(model) + '</span>' : '') +
-        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">' + t('common.raw') + '</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">' + t('js.copy') + '</button></span>' +
+        '<span class="turn-actions"><button class="turn-raw-btn" onclick="toggleTurnRaw(event,this)">' + t('js.raw') + '</button><button class="turn-copy-btn" onclick="copyTurn(event,this)">' + t('js.copy') + '</button></span>' +
       '</div>' +
       '<div class="turn-body" data-rawb64="' + rawB64 + '">' +
         renderContentBlocks(content) +
@@ -4416,7 +4391,7 @@ function renderContentBlocks(content, forceExpand) {
         html += '<details class="block-tool" id="tool-' + sanitizeID(toolId) + '"' + toolOpen + '>' +
           '<summary><span class="block-icon">●</span> ' + escapeHtml(toolName) +
           '<span class="tool-preview">' + escapeHtml(inputPreview) + '</span>' +
-          '<span class="tool-actions"><button class="raw-toggle">' + t('common.raw') + '</button><button class="copy-btn">' + t('js.copy') + '</button></span></summary>' +
+          '<span class="tool-actions"><button class="raw-toggle">' + t('js.raw') + '</button><button class="copy-btn">' + t('js.copy') + '</button></span></summary>' +
           '<div class="tool-section tool-input-section">' +
             '<div class="section-label">input</div>' +
             renderToolInputJS(toolName, block.input) +

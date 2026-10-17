@@ -405,10 +405,6 @@ func formatCount(n int) string {
 	return b.String()
 }
 
-func renderSessionsPage(projects []*parser.Project, v sessionsView) string {
-	return defaultLoc().renderSessionsPage(projects, v)
-}
-
 func (l loc) renderSessionsPage(projects []*parser.Project, v sessionsView) string {
 	sq := v.Query
 	var b strings.Builder

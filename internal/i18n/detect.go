@@ -66,6 +66,9 @@ func matchAcceptLanguage(header string) string {
 				q = v
 			}
 		}
+		if q <= 0 {
+			continue // q=0 means "not acceptable"
+		}
 		code := Normalize(strings.TrimSpace(name))
 		if code == "" {
 			// Prefix match: zh-HK → no Traditional catalog, skip.

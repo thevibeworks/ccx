@@ -106,9 +106,14 @@ func TestNormalize(t *testing.T) {
 		{"auto", ""},
 		{"en", En},
 		{"EN-US", En},
+		{"en-CA", En},
+		{"en-IN", En},
+		{"english", ""},
 		{"zh", ZhCN},
 		{"zh_CN", ZhCN},
 		{"zh-Hans", ZhCN},
+		{"zh-Hans-HK", ZhCN},
+		{"zh-SG", ZhCN},
 		{"zh-TW", ""},
 		{"zh-Hant", ""},
 		{"fr", ""},
@@ -158,13 +163,33 @@ func TestDetectPrecedence(t *testing.T) {
 	}
 }
 
-func TestFromContext(t *testing.T) {
-	req := httptest.NewRequest("GET", "/", nil)
-	if FromRequest(req).Code() != En {
-		t.Fatal("empty context should be English")
+func TestAcceptLanguageEnglishRegionsAndUnacceptable(t *testing.T) {
+	tests := []struct {
+		header, want string
+	}{
+		{"en-CA,zh;q=0.5", En}, // any English region outranks a lower zh
+		{"en-IN,zh-CN;q=0.8", En},
+		{"fr,zh;q=0", En}, // q=0 is "not acceptable", never a pick
+		{"zh-CN;q=0, en;q=0.1", En},
+		{"fr,zh;q=0.5", ZhCN}, // no fr catalog; zh is still acceptable
 	}
-	req = req.WithContext(WithLocale(req.Context(), For(ZhCN)))
-	if FromRequest(req).Code() != ZhCN {
-		t.Fatal("context locale not recovered")
+	for _, tt := range tests {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Accept-Language", tt.header)
+		if tr, _ := Detect(req, ""); tr.Code() != tt.want {
+			t.Errorf("Accept-Language %q = %s, want %s", tt.header, tr.Code(), tt.want)
+		}
+	}
+}
+
+// Catalog values are escaped by callers, except keys ending in _markup,
+// which carry markup and must only be formatted with escaped arguments.
+func TestOnlyHTMLKeysCarryMarkup(t *testing.T) {
+	for code, cat := range catalogs {
+		for key, value := range cat {
+			if strings.Contains(value, "<") != strings.HasSuffix(key, "_markup") {
+				t.Errorf("%s %s = %q: markup belongs only in keys ending in _markup", code, key, value)
+			}
+		}
 	}
 }

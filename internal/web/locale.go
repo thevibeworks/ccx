@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"html"
 	"net/http"
 	"strings"
 
@@ -41,17 +42,20 @@ func (l loc) Code() string {
 	return l.tr.Code()
 }
 
-// localeMiddleware resolves the UI language, persists an explicit
-// ?lang= choice, and stores the translator on the request context.
+// localeMiddleware persists an explicit ?lang= choice as a cookie.
+// Pages resolve their language with locFrom, so detection has one path.
 func localeMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tr, fromQuery := i18n.Detect(r, config.Locale())
-		if fromQuery {
-			http.SetCookie(w, i18n.Cookie(tr.Code()))
+		if code := i18n.Normalize(r.URL.Query().Get(i18n.QueryParam)); code != "" {
+			http.SetCookie(w, i18n.Cookie(code))
 		}
-		next.ServeHTTP(w, r.WithContext(i18n.WithLocale(r.Context(), tr)))
+		next.ServeHTTP(w, r)
 	})
 }
+
+// jsKeyPrefix marks the catalog keys client JS reads through t().
+// Only those are inlined, so a page does not carry the whole catalog.
+const jsKeyPrefix = "js."
 
 // i18nScript emits window.CCX_I18N / CCX_LOCALE / t() for client JS.
 func (l loc) i18nScript() string {
@@ -59,6 +63,11 @@ func (l loc) i18nScript() string {
 	cat := i18n.Catalog(code)
 	if cat == nil {
 		cat = i18n.Catalog(i18n.En)
+	}
+	for k := range cat {
+		if !strings.HasPrefix(k, jsKeyPrefix) {
+			delete(cat, k)
+		}
 	}
 	raw, err := json.Marshal(cat)
 	if err != nil {
@@ -79,54 +88,20 @@ func strconvQuote(s string) string {
 }
 
 func (l loc) langSwitcher() string {
+	label := html.EscapeString(l.T("nav.language"))
 	var b strings.Builder
 	b.WriteString(`<label class="lang-switch-wrap">`)
-	b.WriteString(`<span class="visually-hidden">`)
-	b.WriteString(htmlText(l.T("nav.language")))
-	b.WriteString(`</span>`)
-	b.WriteString(`<select class="lang-switch" id="lang-switch" title="`)
-	b.WriteString(htmlText(l.T("nav.language")))
-	b.WriteString(`" aria-label="`)
-	b.WriteString(htmlText(l.T("nav.language")))
-	b.WriteString(`">`)
+	b.WriteString(`<span class="visually-hidden">` + label + `</span>`)
+	b.WriteString(`<select class="lang-switch" id="lang-switch" title="` + label + `" aria-label="` + label + `">`)
 	for _, opt := range i18n.Locales() {
 		sel := ""
 		if opt.Code == l.Code() {
 			sel = " selected"
 		}
-		// Labels stay in their own script so the switcher is recognizable
-		// regardless of the active locale (English / 简体中文).
-		label := opt.Label
-		if opt.Code == i18n.ZhCN {
-			label = l.T("nav.lang_zh")
-		} else {
-			label = l.T("nav.lang_en")
-		}
-		b.WriteString(`<option value="`)
-		b.WriteString(htmlText(opt.Code))
-		b.WriteString(`"`)
-		b.WriteString(sel)
-		b.WriteString(`>`)
-		b.WriteString(htmlText(label))
-		b.WriteString(`</option>`)
+		// Each language is named in its own script (English / 简体中文),
+		// so the switcher reads the same in every locale.
+		b.WriteString(`<option value="` + html.EscapeString(opt.Code) + `"` + sel + `>` + html.EscapeString(opt.Label) + `</option>`)
 	}
 	b.WriteString(`</select></label>`)
 	return b.String()
-}
-
-func htmlText(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	s = strings.ReplaceAll(s, `"`, "&quot;")
-	return s
-}
-
-// ui escapes catalog text for HTML body content. Apostrophes stay
-// literal so tests and readers see "Can't" rather than "Can&#39;t".
-func ui(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	return s
 }
