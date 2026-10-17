@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -15,8 +16,14 @@ import (
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Validate environment and configuration",
-	Long:  `Check that ccx is properly configured and can access session sources.`,
-	RunE:  runDoctor,
+	Long: `Check that ccx is properly configured and can access session sources.
+
+Also checks that the record is whole: Claude Code's transcript
+retention (cleanupPeriodDays; the default deletes after 30 days), and
+whether every session named in prompt history still has a transcript
+on disk. A month that fell out of the store is listed with its prompt
+and session counts.`,
+	RunE: runDoctor,
 }
 
 func runDoctor(cmd *cobra.Command, args []string) error {
@@ -52,6 +59,18 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		fmt.Printf("[OK] Claude Code home: %s\n", claudeHome)
 		if _, err := os.Stat(claudeHome + "/settings.json"); err == nil {
 			fmt.Println("[OK] Claude Code settings.json: found")
+		}
+		switch days, set, err := claudeRetention(claudeHome); {
+		case err != nil:
+			warnings = append(warnings, fmt.Sprintf("Claude Code settings.json unreadable, retention unknown: %v", err))
+		case !set:
+			warnings = append(warnings, fmt.Sprintf(
+				"Claude Code retention is the default: transcripts older than %d days (file mtime) are deleted. Set \"cleanupPeriodDays\" in %s to keep them",
+				days, filepath.Join(claudeHome, "settings.json")))
+		case days == 0:
+			warnings = append(warnings, "Claude Code cleanupPeriodDays is 0: no transcripts are written at all")
+		default:
+			fmt.Printf("[OK] Claude Code retention: cleanupPeriodDays=%d (user settings)\n", days)
 		}
 	} else {
 		warnings = append(warnings, fmt.Sprintf("Claude Code home not found: %s", claudeHome))
@@ -93,6 +112,12 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		warnings = append(warnings, fmt.Sprintf("Grok home not found: %s", grokHome))
+	}
+
+	// Does the store still hold what prompt history says happened?
+	prompts, _ := readPromptHistory(promptHistoryFiles(claudeHome, codexHome), "", time.Local)
+	if len(prompts) > 0 {
+		warnings = append(warnings, reportCoverage(transcriptCoverage(prompts, transcriptIDs(claudeHome, codexHome), time.Local))...)
 	}
 
 	fmt.Println()
