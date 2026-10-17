@@ -18,7 +18,6 @@ func ParseSession(filePath string) (*Session, error) {
 
 	var messages []*Message
 	var summaryFromFile string
-	var totalInputTokens, totalOutputTokens, totalCacheRead, totalCacheCreate int
 	var sessionSlug, sessionTitle, sessionVersion, sessionBranch, sessionCWD string
 	logicalParents := make(map[string]string) // compact_boundary UUID -> logical parent UUID
 	scanner := bufio.NewScanner(file)
@@ -38,18 +37,6 @@ func ParseSession(filePath string) (*Session, error) {
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
 			parseErrors++
 			continue
-		}
-
-		// Accumulate usage stats (check both top-level and message.usage)
-		usage := raw.Usage
-		if usage == nil && raw.Message.Usage != nil {
-			usage = raw.Message.Usage
-		}
-		if usage != nil {
-			totalInputTokens += usage.InputTokens
-			totalOutputTokens += usage.OutputTokens
-			totalCacheRead += usage.CacheReadInputTokens
-			totalCacheCreate += usage.CacheCreationInputTokens
 		}
 
 		// Extract session metadata from first message that has it
@@ -102,21 +89,21 @@ func ParseSession(filePath string) (*Session, error) {
 	for _, msg := range messages {
 		msg.ParentUUID = resolveLogicalParent(msg.ParentUUID, logicalParents)
 	}
+	collapseResponseUsage(messages)
 
 	rootMessages := buildMessageTree(messages)
 	stats := computeStats(messages)
 
-	// Add token usage stats
-	stats.InputTokens = totalInputTokens
-	stats.OutputTokens = totalOutputTokens
-	stats.CacheReadTokens = totalCacheRead
-	stats.CacheCreateTokens = totalCacheCreate
-
-	// Session cost is the sum of per-message costs. We compute it post-parse
-	// so the session total is guaranteed equal to the sum of per-turn costs
-	// the UI renders (single source of truth).
+	// Session totals are the sum of per-message usage, which after the
+	// collapse is one figure per API response. Computed here so the
+	// session total is guaranteed equal to the sum of per-turn costs
+	// every surface renders (single source of truth).
 	for _, msg := range messages {
 		if msg.Usage != nil {
+			stats.InputTokens += msg.Usage.InputTokens
+			stats.OutputTokens += msg.Usage.OutputTokens
+			stats.CacheReadTokens += msg.Usage.CacheReadTokens
+			stats.CacheCreateTokens += msg.Usage.CacheCreateTokens
 			stats.CostUSD += msg.Usage.CostUSD
 			if !msg.Usage.Priced {
 				stats.UnpricedTokens += msg.Usage.Total()
@@ -210,17 +197,9 @@ func parseMessage(raw rawMessage) *Message {
 		usage = raw.Usage
 	}
 	if usage != nil {
-		mu := &MessageUsage{
-			InputTokens:       usage.InputTokens,
-			OutputTokens:      usage.OutputTokens,
-			CacheReadTokens:   usage.CacheReadInputTokens,
-			CacheCreateTokens: usage.CacheCreationInputTokens,
-		}
-		pricing := LookupPricing(msg.Model)
-		mu.CostUSD = ComputeCost(mu, pricing)
-		mu.Priced = pricing != nil
-		msg.Usage = mu
+		msg.Usage = priceUsage(usage.toUsage(), msg.Model)
 	}
+	msg.ResponseID = raw.Message.ID
 
 	msg.Content = parseContent(raw.Message.Content)
 	msg.Kind = classifyMessage(msg, raw)
@@ -545,6 +524,7 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 
 	var firstTime, lastTime time.Time
 	foundSummary := false
+	var usageByResponse responseUsage
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -565,6 +545,7 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 			CWD              string     `json:"cwd"`
 			Usage            *usageData `json:"usage"`
 			Message          struct {
+				ID      string     `json:"id"`
 				Content any        `json:"content"`
 				Model   string     `json:"model"`
 				Usage   *usageData `json:"usage"`
@@ -575,30 +556,15 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 			continue
 		}
 
-		// Accumulate token usage (check both top-level and message.usage)
+		// Usage is one figure per API response, and the last record of
+		// a response carries the final one (see collapseResponseUsage).
+		// Same rule as the full parse, so list totals equal view totals.
 		usage := raw.Usage
 		if usage == nil && raw.Message.Usage != nil {
 			usage = raw.Message.Usage
 		}
 		if usage != nil {
-			stats.InputTokens += usage.InputTokens
-			stats.OutputTokens += usage.OutputTokens
-			stats.CacheReadTokens += usage.CacheReadInputTokens
-			stats.CacheCreateTokens += usage.CacheCreationInputTokens
-
-			// Accumulate cost using the same pricing path the full parser uses,
-			// so session-list totals match the session-view total.
-			mu := &MessageUsage{
-				InputTokens:       usage.InputTokens,
-				OutputTokens:      usage.OutputTokens,
-				CacheReadTokens:   usage.CacheReadInputTokens,
-				CacheCreateTokens: usage.CacheCreationInputTokens,
-			}
-			if pricing := LookupPricing(raw.Message.Model); pricing != nil {
-				stats.CostUSD += ComputeCost(mu, pricing)
-			} else {
-				stats.UnpricedTokens += mu.Total()
-			}
+			usageByResponse.set(raw.Message.ID, usage.toUsage(), raw.Message.Model)
 		}
 
 		// Extract metadata from first message that has it
@@ -681,6 +647,7 @@ func quickParseSession(filePath string) (summary string, startTime, endTime time
 	if summary == "" {
 		summary = "(no summary)"
 	}
+	usageByResponse.addTo(&stats)
 
 	return summary, firstTime, lastTime, stats, meta
 }
@@ -787,6 +754,7 @@ func parseSidechainFile(filePath string) []*Message {
 			messages = append(messages, msg)
 		}
 	}
+	collapseResponseUsage(messages)
 	return messages
 }
 

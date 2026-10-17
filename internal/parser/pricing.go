@@ -19,7 +19,11 @@ type ModelPricing struct {
 	InputPer1M      float64 // USD per 1,000,000 input tokens
 	OutputPer1M     float64 // USD per 1,000,000 output tokens
 	CacheReadPer1M  float64 // USD per 1,000,000 cache-read input tokens
-	CacheWritePer1M float64 // USD per 1,000,000 cache-creation input tokens
+	CacheWritePer1M float64 // USD per 1,000,000 cache-creation input tokens (5-minute TTL)
+	// CacheWrite1hPer1M prices the 1-hour TTL cache write, 2x input on
+	// every Anthropic tier. Zero means the vendor has one write rate,
+	// and every cache-write token is billed at CacheWritePer1M.
+	CacheWrite1hPer1M float64
 }
 
 // Named Claude cost tiers — mirror the constants in Claude Code's
@@ -30,22 +34,27 @@ var (
 	costTier_3_15 = ModelPricing{
 		InputPer1M: 3.00, OutputPer1M: 15.00,
 		CacheReadPer1M: 0.30, CacheWritePer1M: 3.75,
+		CacheWrite1hPer1M: 6.00,
 	}
 	costTier_15_75 = ModelPricing{
 		InputPer1M: 15.00, OutputPer1M: 75.00,
 		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
+		CacheWrite1hPer1M: 30.00,
 	}
 	costTier_5_25 = ModelPricing{
 		InputPer1M: 5.00, OutputPer1M: 25.00,
 		CacheReadPer1M: 0.50, CacheWritePer1M: 6.25,
+		CacheWrite1hPer1M: 10.00,
 	}
 	costHaiku_35 = ModelPricing{
 		InputPer1M: 0.80, OutputPer1M: 4.00,
 		CacheReadPer1M: 0.08, CacheWritePer1M: 1.00,
+		CacheWrite1hPer1M: 1.60,
 	}
 	costHaiku_45 = ModelPricing{
 		InputPer1M: 1.00, OutputPer1M: 5.00,
 		CacheReadPer1M: 0.10, CacheWritePer1M: 1.25,
+		CacheWrite1hPer1M: 2.00,
 	}
 
 	// Fable 5 tier. Input/output ($10/$50 per MTok) are VERIFIED against the
@@ -57,6 +66,7 @@ var (
 	costTier_10_50 = ModelPricing{
 		InputPer1M: 10.00, OutputPer1M: 50.00,
 		CacheReadPer1M: 1.00, CacheWritePer1M: 12.50, // 0.1x / 1.25x of input (standard ratio)
+		CacheWrite1hPer1M: 20.00,
 	}
 
 	// Sonnet 5 tier: $2/$10 per MTok, VERIFIED against the claude-api
@@ -66,6 +76,7 @@ var (
 	costTier_2_10 = ModelPricing{
 		InputPer1M: 2.00, OutputPer1M: 10.00,
 		CacheReadPer1M: 0.20, CacheWritePer1M: 2.50,
+		CacheWrite1hPer1M: 4.00,
 	}
 
 	// Codex / GPT-5.x tiers.
@@ -334,7 +345,16 @@ func ComputeCost(u *MessageUsage, p *ModelPricing) float64 {
 	cost += float64(u.InputTokens) * p.InputPer1M / perMillion
 	cost += float64(u.OutputTokens) * p.OutputPer1M / perMillion
 	cost += float64(u.CacheReadTokens) * p.CacheReadPer1M / perMillion
-	cost += float64(u.CacheCreateTokens) * p.CacheWritePer1M / perMillion
+	write5m, write1h := u.CacheCreateTokens, 0
+	if p.CacheWrite1hPer1M > 0 && u.CacheCreate1hTokens > 0 {
+		write1h = u.CacheCreate1hTokens
+		if write1h > write5m {
+			write1h = write5m
+		}
+		write5m -= write1h
+	}
+	cost += float64(write5m) * p.CacheWritePer1M / perMillion
+	cost += float64(write1h) * p.CacheWrite1hPer1M / perMillion
 	return cost
 }
 
