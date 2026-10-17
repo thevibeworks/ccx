@@ -16,8 +16,9 @@ they do not know.
 | `ccx.turn.v1`    | `ccx trace --turn N`         | One turn with full step evidence, plus the sidechain entries that turn references, plus warnings. |
 | `ccx.trace.v2`   | `ccx trace --full`           | Complete evidence bundle: all turns/steps, sidechains, git correlation, workspace context, `related` sessions, stats, warnings. Large. |
 | `ccx.related.v1` | `ccx related --json`, `GET /api/related/<project>/<session>` | The anchor session's connections to the other sessions of its workspace: `related[]` of `{session_id, provider, summary, start, end, strength, relations[]}`, plus `total`/`shown`. Each relation is `{kind, count?, paths?, evidence[], truncated?}`; evidence items are `{session_id, message_id, time, path?, quote?}`. Kinds: `forked_from`/`fork_of`, `mentions`/`mentioned_by`, `handoff_from`/`handoff_to`, `builds_on`/`built_on_by`, `overlaps`, `previous`/`next`. Strength is `strong`/`medium`/`weak`. |
-| `ccx.log.v1`     | `ccx log --json`             | Time-scoped records across sessions with pre-computed `days[]` / `providers[]` / `workspaces[]` aggregates. Record `kind` is provider-normalized: `user_prompt` and `assistant_message` are the visible conversation only (Claude command markers/echoes/notifications are `command`/`command_output`/`notification`, injected meta is `meta`, compaction carriers `compact_summary`; Codex 0.147 raw `response_item` messages are `model_input`/`model_output` and duplicated legacy events `legacy_message`). `tool_call` records carry `tool`, `path` (when the call named one) and a `Tool: argument` `text`. With `--kind`/`--match`, `metrics.records` stays scope-wide, `metrics.records_matched` reports the narrowed count before any limit, and `truncated` is measured against the matched count. |
+| `ccx.log.v1`     | `ccx log --json`             | Time-scoped records across sessions with pre-computed `days[]` / `providers[]` / `workspaces[]` aggregates. Record `kind` is provider-normalized: `user_prompt` and `assistant_message` are the visible conversation only (a subagent's brief — user-role text on a sidechain or in a `subagents/` file, written by the parent agent — is `agent_prompt`; Claude command markers/echoes/notifications are `command`/`command_output`/`notification`, injected meta is `meta`, compaction carriers `compact_summary`; Codex 0.147 raw `response_item` messages are `model_input`/`model_output` and duplicated legacy events `legacy_message`). `tool_call` records carry `tool`, `path` (when the call named one) and a `Tool: argument` `text`. With `--kind`/`--match`, `metrics.records` stays scope-wide, `metrics.records_matched` reports the narrowed count before any limit, and `truncated` is measured against the matched count. `-C N` adds up to N neighbors per match from the same transcript, flagged `"context": true`; they are returned but never counted in `records_matched` or the aggregates. |
 | `ccx.insight.v1` | `ccx insight --json`         | The window digest: `sessions[]` (one per logical session — a Claude session and its subagent files fold together) with `prompts[]` (`{time, line, text}`, first 6 / last 2, `prompts_omitted`), `final_answer`, `edits` + `edited_paths[]` (capped, `edited_paths_truncated`), `commits`, `interrupts`, `denials`, `tokens`, `cost_usd`, `unpriced_tokens`, `cost_status`, `model`, `summary`, `relation`; rollups `workspaces[]` (with `session_ids[]`), `days[]`, `providers[]`, `models[]`; `metrics` including `cost_coverage` (priced tokens / all tokens), `priced_sessions`, `unpriced_sessions`. `records[]` only with `--records`. Cost and tokens are whole-session figures from the provider's accounting, never sliced to the window. |
+| `ccx.me.v1`      | `ccx me --json`              | The human's profile, counted from prompt history alone (no session files, no model): `sources[]` (the history files read), `span` (first/last, prompts, `calendar_days`, `active_days`, `providers[]`), `tempo` (`hours[24]` by clock hour, weekday/weekend prompts per active day, `median_day_start`/`median_day_end`, `longest_streak`, `breaks[]` of 2+ idle days), `months[]` (prompts, active days, workspaces, `new_workspaces`, `median_workspaces_per_day`, `median_chars`, `cjk_share`/`question_share` over prose, `command_share`/`late_share` over all prompts, `median_day_end`, `terms{}`), `commands[]`, `repeats[]` (short prompts typed at least twice), `openers[]` (first word), `rewinds` (`count`, `paired`, `resent`, `resent_longer`/`resent_shorter`, `median_seconds_before`), `resends`, `workspaces` (`total`, `lifespans` by active days, `switches`, `top[]`), `terms[]` (one per `--term`). Shares are fractions 0-1. A day runs 05:00-05:00 (`tempo.day_start_hour`), so clock strings past `24:00` are after midnight. Workspace figures cover Claude Code only: Codex history records no workspace. |
 
 ## Versioning policy
 
@@ -75,6 +76,18 @@ correction/sentiment/importance flags — v1 shipped keyword-based
 `correction_signals` and mislabeled background-task notifications as
 user pushback. Interpretation belongs to the consumer reading
 `user_text` with comprehension.
+
+### Two records of the human
+
+Session files and prompt history are different records with different
+lifetimes. `log` and `insight` read session files. Claude Code deletes
+those after `cleanupPeriodDays` (default 30, by file mtime) and never
+touches `history.jsonl`; on one store that ran on the default until May,
+January has 1,953 prompts on record and a transcript for 332 of them.
+`me` reads history only, so its counts are whole where the
+session-derived ones have holes. `ccx doctor` lists the holes. Do not
+reconcile the two records by adding them; a prompt in a surviving
+session is in both.
 
 ### Evidence budgets
 
