@@ -46,6 +46,11 @@ type Options struct {
 	// records list (and the aggregates built from it) narrow.
 	Kinds []string
 	Match func(rawLine string) bool
+	// Context keeps up to N records on each side of every match, from
+	// the same source file, flagged Record.Context — grep -C. A match
+	// alone ("turn aborted: interrupted") does not say what the agent
+	// was doing or what the human said next. Ignored without a filter.
+	Context int
 }
 
 type Bundle struct {
@@ -150,6 +155,8 @@ type Record struct {
 	ParentUUID  string    `json:"parent_uuid,omitempty"`
 	IsSidechain bool      `json:"is_sidechain,omitempty"`
 	IsSubagent  bool      `json:"is_subagent,omitempty"`
+	// Context marks a neighbor kept by Options.Context, not a match.
+	Context bool `json:"context,omitempty"`
 	// Tool and Path are set on tool_call records: the tool name (Bash,
 	// Edit, exec_command, ...) and the workspace path it targeted when
 	// the call named one. Text carries "Tool: argument" so a consumer
@@ -258,6 +265,8 @@ func Collect(sources []Source, opts Options) (*Bundle, error) {
 		return scans[i].Records[0].Timestamp.Before(scans[j].Records[0].Timestamp)
 	})
 
+	filtered := len(opts.Kinds) > 0 || opts.Match != nil
+	keep := recordFilter(opts.Kinds)
 	for _, scan := range scans {
 		session := SessionSlice{
 			ID:          scan.SessionID,
@@ -275,7 +284,14 @@ func Collect(sources []Source, opts Options) (*Bundle, error) {
 			Relation:    relationFor(scan.Start, scan.End, opts.Start, opts.End),
 		}
 		bundle.Sessions = append(bundle.Sessions, session)
-		bundle.Records = append(bundle.Records, scan.Records...)
+		records := scan.Records
+		if filtered {
+			// Per file, before the global sort: context is the
+			// neighbors in this transcript, not whatever another
+			// session logged in the same second.
+			records = selectRecords(records, keep, opts.Context)
+		}
+		bundle.Records = append(bundle.Records, records...)
 	}
 	sort.SliceStable(bundle.Records, func(i, j int) bool {
 		if bundle.Records[i].Timestamp.Equal(bundle.Records[j].Timestamp) {
@@ -286,12 +302,17 @@ func Collect(sources []Source, opts Options) (*Bundle, error) {
 		}
 		return bundle.Records[i].Timestamp.Before(bundle.Records[j].Timestamp)
 	})
-	filtered := len(opts.Kinds) > 0 || opts.Match != nil
-	if filtered {
-		bundle.Records = filterRecords(bundle.Records, opts.Kinds)
+	matches := bundle.Records
+	if filtered && opts.Context > 0 {
+		matches = make([]Record, 0, len(bundle.Records))
+		for _, r := range bundle.Records {
+			if !r.Context {
+				matches = append(matches, r)
+			}
+		}
 	}
-	matched := len(bundle.Records)
-	bundle.Days, bundle.Providers, bundle.Workspaces = aggregateRecords(bundle.Records, now.Location())
+	matched := len(matches)
+	bundle.Days, bundle.Providers, bundle.Workspaces = aggregateRecords(matches, now.Location())
 	if opts.Limit > 0 && len(bundle.Records) > opts.Limit {
 		bundle.Records = bundle.Records[:opts.Limit]
 	}
@@ -306,25 +327,48 @@ func Collect(sources []Source, opts Options) (*Bundle, error) {
 	return bundle, nil
 }
 
-// filterRecords keeps records that passed Match and are of one of the
-// kinds (kind demotion has already run, so "user_prompt" means the
+// recordFilter reports whether a record passed Match and is of one of
+// the kinds (kind demotion has already run, so "user_prompt" means the
 // visible conversation on every provider).
-func filterRecords(records []Record, kinds []string) []Record {
+func recordFilter(kinds []string) func(Record) bool {
 	want := make(map[string]bool, len(kinds))
 	for _, k := range kinds {
 		if k = strings.TrimSpace(k); k != "" {
 			want[k] = true
 		}
 	}
-	out := records[:0]
-	for _, r := range records {
-		if !r.matched {
+	return func(r Record) bool {
+		return r.matched && (len(want) == 0 || want[r.Kind])
+	}
+}
+
+// selectRecords keeps the records of one file that pass keep, plus up
+// to context neighbors on each side marked Context. Records stay in
+// file order and each appears once: the after-window stops at the next
+// match, so overlapping windows merge and a match is never a neighbor.
+func selectRecords(records []Record, keep func(Record) bool, context int) []Record {
+	var out []Record
+	next := 0 // first index not yet emitted
+	for i, r := range records {
+		if !keep(r) {
 			continue
 		}
-		if len(want) > 0 && !want[r.Kind] {
-			continue
+		for j := max(i-context, next); j < i; j++ {
+			c := records[j]
+			c.Context = true
+			out = append(out, c)
 		}
 		out = append(out, r)
+		next = i + 1
+		for j := next; j <= i+context && j < len(records); j++ {
+			if keep(records[j]) {
+				break // the loop reaches it as a match
+			}
+			c := records[j]
+			c.Context = true
+			out = append(out, c)
+			next = j + 1
+		}
 	}
 	return out
 }
@@ -492,6 +536,12 @@ func scanFile(source Source, filePath string, opts Options) (*fileScan, error) {
 		record.Line = lineNo
 		if strings.Contains(filePath, string(filepath.Separator)+"subagents"+string(filepath.Separator)) {
 			record.IsSubagent = true
+		}
+		if record.Kind == "user_prompt" && (record.IsSidechain || record.IsSubagent) {
+			// A subagent's brief is user-role, but the parent agent
+			// wrote it. Counted as a prompt it inflated "the humans in
+			// the loop" by a fifth to a half, month after month.
+			record.Kind = "agent_prompt"
 		}
 		if opts.IncludeRaw {
 			record.RawJSON = json.RawMessage([]byte(line))
