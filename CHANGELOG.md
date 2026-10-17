@@ -7,6 +7,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-17
+
 ### Added
 - **`ccx me`: what the prompt record says about the human at the keyboard.** Every other command describes the agent; this one reads only what you typed and counts it (`ccx.me.v1`, no model, no judgment): working hours and median day start/end, the longest streak and every break of 2+ idle days, and per month the prompt length, CJK / question / command / late-night shares, workspaces touched per day and new ones started. Steering is measured too: slash commands, `/rewind` read as "I take that back" (how many seconds after the prompt, and how often the same prompt comes back edited — longer or shorter), near-verbatim resends within the hour, and how often consecutive prompts change workspace. `--term name=regex` trends any habit of speech by month, so ccx ships no word list. The source is prompt history, not session files: history outlives session cleanup, so a 14-month profile of 21k prompts takes 2 s where a session scan takes 100 s and can only see the transcripts still on disk (on one store, January: 1,953 prompts on record, 332 with a transcript). A day runs 05:00-05:00, so a night session is not split into two days. (dogfood 2026-09-30)
 - **`log -C/--context N` shows what a match interrupted.** With `--kind` or `--match`, keeps N records on each side of every match from the same transcript, flagged `"context": true` (text view: `ctx <kind>`); `records_matched` and the aggregates still count matches only. An interrupt alone reads "turn aborted: interrupted"; with `-C 2` it shows what the agent was doing and what the human typed next. (dogfood 2026-09-30)

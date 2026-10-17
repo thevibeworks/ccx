@@ -1,0 +1,35 @@
+* [2026-10-17] Dev Log: Release 0.18.0                 :RELEASE:
+
+** Context
+0.17.0 shipped the cost-coverage work and still overstated Claude Code
+cost. Claude Code writes one API response as several transcript records
+that repeat its usage, and ccx summed every record. The rule that
+matches the wire was already written on the agent-registry branch; it
+is backported here without the rest of that branch.
+
+** Changes
+- Count Claude Code usage once per API response, in the full parse,
+  the quick parse, and sub-agent files. Price 1-hour cache writes at
+  twice the input rate.
+- Add =ccx me=, a profile of the human built from prompt history.
+- =ccx doctor= reports transcript retention and months where prompt
+  history names sessions that are no longer on disk.
+- =log -C/--context N= keeps neighbors around each match. =--since=
+  alone runs until now. Sub-agent briefs are =agent_prompt=.
+- The bundled ccx and ccx-recap skills carry their one-line
+  descriptions.
+
+** Compatibility
+Claude Code cost falls against 0.17.0: about 2.2x at the median over
+17 sessions, 1.3x to 3.1x. Session-list cost covers the main transcript
+only; =trace= totals include sub-agent transcripts. =log --kind
+user_prompt= no longer counts sub-agent briefs; select =agent_prompt=
+for them. The parse cache format changes, so the first run re-parses
+every session.
+
+** Validation
+Formatting, vet, race tests, and lint ran in CI on both pull requests
+and locally on the merged tree. The backported rule was compared on 17
+real sessions against the registry branch, which was checked against a
+wire capture, and matched on every one. Verify published archives and
+the tagged Go install after publication.
