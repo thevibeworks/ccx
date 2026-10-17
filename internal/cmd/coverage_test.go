@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +46,26 @@ func TestTranscriptCoverageCountsWhatFellOutOfTheStore(t *testing.T) {
 	}
 	if small := (coverageRow{Prompts: 5, PromptsOnDisk: 0}); small.gap() {
 		t.Errorf("a month with a handful of prompts is noise, not a gap")
+	}
+}
+
+func TestReportCoverageNamesEachProvidersTranscriptDir(t *testing.T) {
+	rows := []coverageRow{
+		{Provider: "claude-code", Month: "2026-01", Prompts: 40, PromptsOnDisk: 0, Sessions: 2},
+		{Provider: "codex", Month: "2026-01", Prompts: 40, PromptsOnDisk: 0, Sessions: 2},
+	}
+	stdout := os.Stdout
+	os.Stdout, _ = os.Open(os.DevNull)
+	warnings := reportCoverage(rows)
+	os.Stdout = stdout
+	if len(warnings) != 2 {
+		t.Fatalf("warnings = %q", warnings)
+	}
+	if !strings.Contains(warnings[0], "<backup>/projects/ <home>/projects/") {
+		t.Errorf("claude-code hint = %q", warnings[0])
+	}
+	if !strings.Contains(warnings[1], "<backup>/sessions/ <home>/sessions/") {
+		t.Errorf("codex keeps transcripts under sessions/, hint = %q", warnings[1])
 	}
 }
 

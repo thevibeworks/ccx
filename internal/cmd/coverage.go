@@ -180,11 +180,16 @@ func reportCoverage(rows []coverageRow) []string {
 				fmt.Fprintf(w, "     %s\t%d\t%d\t%d\t%d\t\n", r.Month, r.Prompts, r.PromptsOnDisk, r.Sessions, r.SessionsOnDisk)
 			}
 			w.Flush()
+			// Claude Code keeps transcripts under projects/, Codex under sessions/.
+			dir := "projects"
+			if provider == "codex" {
+				dir = "sessions"
+			}
 			warnings = append(warnings, fmt.Sprintf(
 				"%s: %d prompts in %d sessions (%s to %s) have no transcript on disk. "+
 					"What was typed survives in prompt history (ccx me, ccx search --content); what the agent did does not. "+
-					"A backup restores it: rsync -a --ignore-existing <backup>/projects/ <home>/projects/",
-				provider, missingPrompts, missingSessions, first, last))
+					"A backup restores it: rsync -a --ignore-existing <backup>/%s/ <home>/%s/",
+				provider, missingPrompts, missingSessions, first, last, dir, dir))
 		}
 		if unattributed > 0 {
 			fmt.Printf("     %d %s prompts predate session ids in history and cannot be checked\n", unattributed, provider)
