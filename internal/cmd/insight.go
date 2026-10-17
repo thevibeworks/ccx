@@ -193,7 +193,10 @@ func insightCommand(cmd *cobra.Command, args []string) string {
 	parts := []string{"ccx insight"}
 	parts = append(parts, args...)
 	if insightSince != "" || insightUntil != "" {
-		parts = append(parts, "--since", insightSince, "--until", insightUntil)
+		parts = append(parts, "--since", insightSince)
+		if insightUntil != "" {
+			parts = append(parts, "--until", insightUntil)
+		}
 	} else {
 		parts = append(parts, "--scope", insightScope)
 	}
